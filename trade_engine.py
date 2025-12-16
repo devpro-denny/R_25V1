@@ -318,7 +318,7 @@ class TradeEngine:
     
     async def get_trade_status(self, contract_id: str) -> Optional[Dict]:
         """
-        Get current status of a trade - FIXED: Removed subscribe parameter
+        Get current status of a trade - FIXED: Better status detection
         
         Args:
             contract_id: Contract ID
@@ -345,19 +345,36 @@ class TradeEngine:
             contract = response["proposal_open_contract"]
             
             # Extract status with fallback
-            trade_status = contract.get('status', 'unknown')
-            if trade_status is None:
-                trade_status = 'unknown'
+            trade_status = contract.get('status', None)
+            is_sold = contract.get('is_sold', 0) == 1
+            profit = float(contract.get('profit', 0))
+            
+            # ⭐ IMPROVED: Determine status from profit if status is None/unknown ⭐
+            if trade_status is None or trade_status == '' or trade_status == 'unknown':
+                if is_sold:
+                    # Trade is closed, determine win/loss from P&L
+                    if profit > 0:
+                        trade_status = 'won'
+                        logger.debug(f"Status derived: WON (profit: {profit})")
+                    elif profit < 0:
+                        trade_status = 'lost'
+                        logger.debug(f"Status derived: LOST (profit: {profit})")
+                    else:
+                        trade_status = 'sold'
+                        logger.debug(f"Status derived: SOLD (profit: {profit})")
+                else:
+                    # Trade still open
+                    trade_status = 'open'
             
             status_info = {
                 'contract_id': contract_id,
                 'status': trade_status,
                 'current_price': float(contract.get('current_spot', 0)),
                 'entry_price': float(contract.get('entry_spot', 0)),
-                'profit': float(contract.get('profit', 0)),
+                'profit': profit,
                 'bid_price': float(contract.get('bid_price', 0)),
                 'buy_price': float(contract.get('buy_price', 0)),
-                'is_sold': contract.get('is_sold', 0) == 1
+                'is_sold': is_sold
             }
             
             return status_info
@@ -367,14 +384,15 @@ class TradeEngine:
             return None
     
     async def monitor_trade(self, contract_id: str, trade_info: Dict,
-                          max_duration: int = 3600) -> Optional[Dict]:
+                          max_duration: int = 3600, risk_manager=None) -> Optional[Dict]:
         """
-        Monitor an active trade until it closes
+        Monitor an active trade until it closes - WITH DYNAMIC EXIT LOGIC
         
         Args:
             contract_id: Contract ID to monitor
             trade_info: Original trade information (for notifications)
             max_duration: Maximum duration in seconds
+            risk_manager: RiskManager instance for dynamic exit checks
         
         Returns:
             Final trade result dictionary
@@ -384,6 +402,8 @@ class TradeEngine:
             monitor_interval = config.MONITOR_INTERVAL
             last_status_log = datetime.now()
             status_log_interval = 30  # Log status every 30 seconds
+            
+            previous_price = trade_info.get('entry_price', 0.0)
             
             logger.info(f"👁️ Monitoring trade {contract_id}...")
             
@@ -411,12 +431,49 @@ class TradeEngine:
                     await asyncio.sleep(monitor_interval)
                     continue
                 
-                # Check if trade is closed
+                # ⭐ NEW: Check dynamic exit conditions ⭐
+                if risk_manager is not None:
+                    current_pnl = status['profit']
+                    current_price = status['current_price']
+                    
+                    exit_check = risk_manager.should_close_trade(
+                        current_pnl, 
+                        current_price, 
+                        previous_price
+                    )
+                    
+                    if exit_check['should_close']:
+                        logger.info(f"🎯 {exit_check['message']}")
+                        # Force close the trade
+                        await self.close_trade(contract_id)
+                        # Get final status
+                        await asyncio.sleep(2)  # Wait for close to process
+                        final_status = await self.get_trade_status(contract_id)
+                        if final_status:
+                            if notifier is not None:
+                                try:
+                                    await notifier.notify_trade_closed(final_status, trade_info)
+                                except Exception as e:
+                                    logger.error(f"❌ Close notification failed: {e}")
+                            return final_status
+                    
+                    # Update previous price for next iteration
+                    previous_price = current_price
+                
+                # Check if trade is closed naturally
                 if status['is_sold'] or status['status'] in ['sold', 'won', 'lost']:
-                    # FIXED: Handle None status gracefully
+                    # ⭐ IMPROVED: Better status determination ⭐
                     trade_status = status.get('status', 'closed')
-                    if trade_status is None:
-                        trade_status = 'closed'
+                    final_pnl = status.get('profit', 0)
+                    
+                    # If status is still unclear, derive from P&L
+                    if trade_status in [None, '', 'unknown', 'closed']:
+                        if final_pnl > 0:
+                            trade_status = 'won'
+                        elif final_pnl < 0:
+                            trade_status = 'lost'
+                        else:
+                            trade_status = 'sold'
                     
                     emoji = get_status_emoji(trade_status)
                     logger.info(f"{emoji} Trade closed | Status: {trade_status.upper()}")
@@ -438,7 +495,17 @@ class TradeEngine:
                 # Log detailed status every 30 seconds
                 time_since_last_log = (datetime.now() - last_status_log).total_seconds()
                 if time_since_last_log >= status_log_interval:
-                    logger.info(f"📊 Status Update | P&L: {format_currency(current_pnl)} | Price: {current_price:.2f} | Elapsed: {int(elapsed)}s")
+                    log_msg = f"📊 Status Update | P&L: {format_currency(current_pnl)} | Price: {current_price:.2f} | Elapsed: {int(elapsed)}s"
+                    
+                    # ⭐ NEW: Add exit strategy info to log ⭐
+                    if risk_manager is not None:
+                        exit_status = risk_manager.get_exit_status(current_pnl)
+                        if exit_status['trailing_stop_active']:
+                            log_msg += f" | Trail: {format_currency(exit_status['trailing_stop_level'])}"
+                        elif exit_status['percentage_to_target'] >= 70:
+                            log_msg += f" | {exit_status['percentage_to_target']:.0f}% to target"
+                    
+                    logger.info(log_msg)
                     last_status_log = datetime.now()
                 
                 # Wait before next check
@@ -449,15 +516,21 @@ class TradeEngine:
             import traceback
             logger.error(traceback.format_exc())
             return None
+                
+        except Exception as e:
+            logger.error(f"❌ Error monitoring trade: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            return None
     
     async def execute_trade(self, signal: Dict, risk_manager) -> Optional[Dict]:
         """
         Execute complete trade cycle: open, monitor, close
-        FIXED: Now accepts risk_manager to record trades
+        WITH DYNAMIC EXIT LOGIC
         
         Args:
             signal: Trading signal dictionary
-            risk_manager: RiskManager instance to record trades
+            risk_manager: RiskManager instance to record trades and handle exits
         
         Returns:
             Final trade result or None if failed
@@ -479,12 +552,19 @@ class TradeEngine:
             # Record trade opening with risk manager
             risk_manager.record_trade_open(trade_info)
             
-            # Monitor trade until it closes
+            # Monitor trade until it closes (pass risk_manager for dynamic exits)
             final_status = await self.monitor_trade(
                 trade_info['contract_id'],
                 trade_info,
-                max_duration=config.MAX_TRADE_DURATION
+                max_duration=config.MAX_TRADE_DURATION,
+                risk_manager=risk_manager  # ⭐ Pass risk_manager for dynamic exit checks ⭐
             )
+            
+            # CRITICAL: If monitoring failed, unlock the trade slot
+            if final_status is None:
+                logger.error("❌ Monitoring failed - unlocking trade slot")
+                risk_manager.has_active_trade = False
+                risk_manager.active_trade = None
             
             return final_status
             
@@ -492,4 +572,13 @@ class TradeEngine:
             logger.error(f"❌ Error executing trade: {e}")
             import traceback
             logger.error(traceback.format_exc())
+            
+            # CRITICAL: Unlock trade slot on any error
+            try:
+                risk_manager.has_active_trade = False
+                risk_manager.active_trade = None
+                logger.info("🔓 Trade slot unlocked after error")
+            except:
+                pass
+            
             return None

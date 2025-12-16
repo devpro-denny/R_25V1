@@ -1,7 +1,6 @@
 """
 Telegram Notifier for Deriv R_25 Trading Bot
 Sends trade notifications via Telegram
-telegram_notifier.py
 """
 
 import os

@@ -1,7 +1,7 @@
 """
 Risk Manager for Deriv R_25 Trading Bot
 Manages trading limits, cooldowns, and risk parameters
-risk_manager.py - WITH 1 CONCURRENT TRADE LIMIT
+risk_manager.py - WITH PERCENTAGE-BASED DYNAMIC EXIT & TRAILING STOP
 """
 
 from datetime import datetime, timedelta
@@ -12,7 +12,7 @@ from utils import setup_logger, format_currency
 logger = setup_logger()
 
 class RiskManager:
-    """Manages all risk-related operations"""
+    """Manages all risk-related operations with percentage-based dynamic exit logic"""
     
     def __init__(self):
         """Initialize RiskManager with default settings"""
@@ -30,6 +30,16 @@ class RiskManager:
         self.active_trade: Optional[Dict] = None
         self.has_active_trade = False
         
+        # ⭐ NEW: PERCENTAGE-BASED Dynamic exit settings ⭐
+        self.early_exit_threshold = 0.80  # Exit at 80% of target profit if reversal
+        self.trailing_stop_activation_pct = 0.75  # Activate trailing stop at 75% of target
+        self.trailing_stop_distance_pct = 0.15  # Trail 15% below peak profit
+        
+        # ⭐ NEW: Trailing stop tracking ⭐
+        self.peak_profit: float = 0.0
+        self.trailing_stop_active: bool = False
+        self.trailing_stop_level: float = 0.0
+        
         # Statistics
         self.total_trades = 0
         self.winning_trades = 0
@@ -40,7 +50,10 @@ class RiskManager:
         self.max_drawdown = 0.0
         self.peak_balance = 0.0
         
-        logger.info("[OK] Risk Manager initialized (Max concurrent trades: 1)")
+        logger.info("[OK] Risk Manager initialized (Percentage-Based Dynamic Exit)")
+        logger.info(f"   Early exit: {self.early_exit_threshold*100:.0f}% of target")
+        logger.info(f"   Trailing stop: Activates at {self.trailing_stop_activation_pct*100:.0f}% of target")
+        logger.info(f"   Trailing distance: {self.trailing_stop_distance_pct*100:.0f}% below peak")
     
     def reset_daily_stats(self):
         """Reset daily statistics at start of new day"""
@@ -56,6 +69,7 @@ class RiskManager:
             # Clear active trade tracking for new day
             self.active_trade = None
             self.has_active_trade = False
+            self._reset_trailing_stop()
     
     def can_trade(self) -> tuple[bool, str]:
         """
@@ -159,8 +173,167 @@ class RiskManager:
         self.active_trade = trade_record
         self.has_active_trade = True
         
+        # ⭐ NEW: Reset trailing stop for new trade ⭐
+        self._reset_trailing_stop()
+        
         logger.info(f"📝 Trade recorded: {trade_info.get('direction')} @ {trade_info.get('entry_price')}")
         logger.info(f"🔒 Active trade locked (1/1 concurrent trades)")
+        
+        # ⭐ NEW: Log dynamic exit thresholds ⭐
+        target_profit = trade_record['take_profit']
+        trailing_activation = target_profit * self.trailing_stop_activation_pct
+        early_exit_level = target_profit * self.early_exit_threshold
+        
+        logger.info(f"📊 Dynamic Exit Levels:")
+        logger.info(f"   Trailing Stop Activates: {format_currency(trailing_activation)} ({self.trailing_stop_activation_pct*100:.0f}% of target)")
+        logger.info(f"   Early Exit Threshold: {format_currency(early_exit_level)} ({self.early_exit_threshold*100:.0f}% of target)")
+    
+    def _reset_trailing_stop(self):
+        """Reset trailing stop tracking"""
+        self.peak_profit = 0.0
+        self.trailing_stop_active = False
+        self.trailing_stop_level = 0.0
+    
+    def should_close_trade(self, current_pnl: float, current_price: float, 
+                          previous_price: float) -> Dict:
+        """
+        ⭐ NEW: Check if trade should be closed based on PERCENTAGE-BASED dynamic exit rules ⭐
+        
+        Args:
+            current_pnl: Current profit/loss
+            current_price: Current market price
+            previous_price: Previous candle's close price
+        
+        Returns:
+            Dict with close decision and reason
+        """
+        if not self.active_trade:
+            return {'should_close': False, 'reason': 'No active trade'}
+        
+        target_profit = self.active_trade.get('take_profit', 0.0)
+        direction = self.active_trade.get('direction', '')
+        
+        # Update peak profit
+        if current_pnl > self.peak_profit:
+            self.peak_profit = current_pnl
+        
+        # ⭐ RULE 1: Activate trailing stop at 75% of target profit ⭐
+        trailing_activation_level = target_profit * self.trailing_stop_activation_pct
+        
+        if current_pnl >= trailing_activation_level and not self.trailing_stop_active:
+            self.trailing_stop_active = True
+            # Trail distance is 15% below current profit
+            self.trailing_stop_level = current_pnl * (1 - self.trailing_stop_distance_pct)
+            
+            logger.info(f"🎯 Trailing stop ACTIVATED at {format_currency(current_pnl)}")
+            logger.info(f"   Initial trailing stop: {format_currency(self.trailing_stop_level)}")
+            logger.info(f"   (Trailing {self.trailing_stop_distance_pct*100:.0f}% below peak)")
+        
+        # ⭐ RULE 2: Update trailing stop as profit increases ⭐
+        if self.trailing_stop_active:
+            # New stop level is always 15% below peak profit
+            new_stop_level = self.peak_profit * (1 - self.trailing_stop_distance_pct)
+            
+            if new_stop_level > self.trailing_stop_level:
+                old_level = self.trailing_stop_level
+                self.trailing_stop_level = new_stop_level
+                logger.debug(f"📊 Trailing stop updated: {format_currency(old_level)} → {format_currency(new_stop_level)}")
+            
+            # Check if trailing stop hit
+            if current_pnl <= self.trailing_stop_level:
+                return {
+                    'should_close': True,
+                    'reason': 'trailing_stop',
+                    'message': f'Trailing stop hit at {format_currency(current_pnl)} (peak: {format_currency(self.peak_profit)}, secured {(current_pnl/self.peak_profit)*100:.0f}% of peak)',
+                    'current_pnl': current_pnl,
+                    'peak_profit': self.peak_profit
+                }
+        
+        # ⭐ RULE 3: Early exit at 80% of target if reversal detected ⭐
+        early_exit_target = target_profit * self.early_exit_threshold
+        
+        if current_pnl >= early_exit_target:
+            # Detect reversal based on price movement
+            reversal_detected = self._detect_reversal(
+                current_price, 
+                previous_price, 
+                direction
+            )
+            
+            if reversal_detected:
+                return {
+                    'should_close': True,
+                    'reason': 'early_exit',
+                    'message': f'Early exit at {format_currency(current_pnl)} ({current_pnl/target_profit*100:.0f}% of {format_currency(target_profit)} target) - Reversal detected',
+                    'current_pnl': current_pnl,
+                    'target_profit': target_profit,
+                    'percentage': current_pnl/target_profit*100
+                }
+        
+        return {'should_close': False, 'reason': 'Continue monitoring'}
+    
+    def _detect_reversal(self, current_price: float, previous_price: float, 
+                        direction: str) -> bool:
+        """
+        ⭐ NEW: Detect if price is reversing against trade direction ⭐
+        
+        Args:
+            current_price: Current market price
+            previous_price: Previous candle's close price
+            direction: Trade direction ('BUY' or 'SELL')
+        
+        Returns:
+            True if reversal detected
+        """
+        if direction.upper() in ['BUY', 'UP']:
+            # For BUY trades, reversal = price moving down
+            if current_price < previous_price:
+                price_drop = ((previous_price - current_price) / previous_price) * 100
+                logger.debug(f"⚠️ Reversal hint: Price dropped {price_drop:.2f}% ({previous_price:.2f} → {current_price:.2f})")
+                return True
+        
+        else:  # SELL/DOWN
+            # For SELL trades, reversal = price moving up
+            if current_price > previous_price:
+                price_rise = ((current_price - previous_price) / previous_price) * 100
+                logger.debug(f"⚠️ Reversal hint: Price rose {price_rise:.2f}% ({previous_price:.2f} → {current_price:.2f})")
+                return True
+        
+        return False
+    
+    def get_exit_status(self, current_pnl: float) -> Dict:
+        """
+        ⭐ NEW: Get current exit strategy status ⭐
+        
+        Args:
+            current_pnl: Current profit/loss
+        
+        Returns:
+            Dict with exit strategy status
+        """
+        if not self.active_trade:
+            return {'active': False}
+        
+        target_profit = self.active_trade.get('take_profit', 0.0)
+        early_exit_target = target_profit * self.early_exit_threshold
+        trailing_activation = target_profit * self.trailing_stop_activation_pct
+        
+        status = {
+            'active': True,
+            'current_pnl': current_pnl,
+            'target_profit': target_profit,
+            'early_exit_target': early_exit_target,
+            'trailing_activation_level': trailing_activation,
+            'percentage_to_target': (current_pnl / target_profit * 100) if target_profit > 0 else 0,
+            'percentage_to_trailing': (current_pnl / trailing_activation * 100) if trailing_activation > 0 else 0,
+            'trailing_stop_active': self.trailing_stop_active,
+            'trailing_stop_level': self.trailing_stop_level if self.trailing_stop_active else None,
+            'peak_profit': self.peak_profit,
+            'distance_to_early_exit': early_exit_target - current_pnl,
+            'distance_to_trailing': trailing_activation - current_pnl
+        }
+        
+        return status
     
     def record_trade_close(self, contract_id: str, pnl: float, status: str):
         """
@@ -169,7 +342,7 @@ class RiskManager:
         Args:
             contract_id: Contract ID
             pnl: Profit/loss amount
-            status: Trade status ('won', 'lost', 'sold')
+            status: Trade status ('won', 'lost', 'sold', 'trailing_stop', 'early_exit')
         """
         # Find trade in today's list
         trade = None
@@ -182,11 +355,23 @@ class RiskManager:
             trade['status'] = status
             trade['pnl'] = pnl
             trade['close_time'] = datetime.now()
+            
+            # ⭐ NEW: Record exit strategy used ⭐
+            if self.trailing_stop_active:
+                trade['exit_type'] = 'trailing_stop'
+                trade['peak_profit'] = self.peak_profit
+                trade['secured_percentage'] = (pnl / self.peak_profit * 100) if self.peak_profit > 0 else 0
+            elif status == 'early_exit':
+                trade['exit_type'] = 'early_exit'
+                trade['target_percentage'] = (pnl / trade.get('take_profit', 1)) * 100
+            else:
+                trade['exit_type'] = 'normal'
         
         # ⭐ Clear active trade (ALLOW NEW TRADES) ⭐
         if self.active_trade and self.active_trade.get('contract_id') == contract_id:
             self.active_trade = None
             self.has_active_trade = False
+            self._reset_trailing_stop()
             logger.info(f"🔓 Trade slot unlocked (0/1 concurrent trades)")
         
         # Update P&L
@@ -223,6 +408,10 @@ class RiskManager:
         """
         win_rate = (self.winning_trades / self.total_trades * 100) if self.total_trades > 0 else 0
         
+        # ⭐ NEW: Count exit types ⭐
+        trailing_stop_exits = sum(1 for t in self.trades_today if t.get('exit_type') == 'trailing_stop')
+        early_exits = sum(1 for t in self.trades_today if t.get('exit_type') == 'early_exit')
+        
         return {
             'total_trades': self.total_trades,
             'winning_trades': self.winning_trades,
@@ -234,7 +423,9 @@ class RiskManager:
             'largest_win': self.largest_win,
             'largest_loss': self.largest_loss,
             'max_drawdown': self.max_drawdown,
-            'peak_balance': self.peak_balance
+            'peak_balance': self.peak_balance,
+            'trailing_stop_exits': trailing_stop_exits,
+            'early_exits': early_exits
         }
     
     def get_remaining_trades_today(self) -> int:
@@ -273,6 +464,8 @@ class RiskManager:
         print(f"Active Trades: {1 if self.has_active_trade else 0}/1")
         if self.has_active_trade and self.active_trade:
             print(f"  └─ {self.active_trade.get('direction')} @ {self.active_trade.get('entry_price', 0):.2f}")
+            if self.trailing_stop_active:
+                print(f"  └─ Trailing Stop: {format_currency(self.trailing_stop_level)} (Peak: {format_currency(self.peak_profit)})")
         print(f"Trades Today: {len(self.trades_today)}/{self.max_trades_per_day}")
         print(f"Daily P&L: {format_currency(self.daily_pnl)}")
         print(f"Cooldown: {self.get_cooldown_remaining():.0f}s remaining")
@@ -289,56 +482,53 @@ class RiskManager:
 
 # Testing
 if __name__ == "__main__":
-    print("Testing Risk Manager...")
+    print("="*60)
+    print("TESTING PERCENTAGE-BASED RISK MANAGER")
+    print("="*60)
     
     # Create risk manager
     rm = RiskManager()
     
-    # Test 1: Check if can trade
-    print("\n1. Testing initial trading permission...")
-    can_trade, reason = rm.can_trade()
-    print(f"Can trade: {can_trade} - {reason}")
-    
-    # Test 2: Validate trade parameters
-    print("\n2. Testing trade parameter validation...")
-    valid, msg = rm.validate_trade_parameters(10.0, 3.0, 5.0)
-    print(f"Valid parameters: {valid} - {msg}")
-    
-    # Test 3: Test concurrent trade limit
-    print("\n3. Testing concurrent trade limit...")
+    # Test with $10 stake, $3 target
+    print("\n1. Testing with $10 stake, $3 target profit...")
     trade_info = {
         'contract_id': 'test_001',
         'direction': 'BUY',
         'stake': 10.0,
         'entry_price': 100.0,
         'take_profit': 3.0,
-        'stop_loss': 5.0
+        'stop_loss': 3.0
     }
-    
-    # Open first trade
     rm.record_trade_open(trade_info)
-    print(f"Active trades: {1 if rm.has_active_trade else 0}/1")
     
-    # Try to open second trade (should be blocked)
-    can_trade_2, reason_2 = rm.can_trade()
-    print(f"Can open second trade: {can_trade_2} - {reason_2}")
+    print(f"\nExpected levels:")
+    print(f"  Trailing activation: $2.25 (75% of $3.00)")
+    print(f"  Early exit: $2.40 (80% of $3.00)")
     
-    # Close the trade
-    rm.record_trade_close('test_001', 3.0, 'won')
-    print(f"Active trades after close: {1 if rm.has_active_trade else 0}/1")
+    # Test trailing stop
+    print("\n2. Testing trailing stop activation at 75%...")
+    test_scenarios = [
+        (1.00, 100.5, 100.3, "Below activation"),
+        (2.30, 101.0, 100.8, "Should activate trailing stop (75%+)"),
+        (2.80, 102.0, 101.8, "Higher profit - trail should update"),
+        (2.30, 101.4, 102.0, "Drop to trailing stop level"),
+    ]
     
-    # Now should be able to trade again
-    can_trade_3, reason_3 = rm.can_trade()
-    print(f"Can trade after close: {can_trade_3} - {reason_3}")
+    for pnl, current_price, prev_price, description in test_scenarios:
+        result = rm.should_close_trade(pnl, current_price, prev_price)
+        status = rm.get_exit_status(pnl)
+        
+        print(f"\n   {description}")
+        print(f"   P&L: {format_currency(pnl)} ({status['percentage_to_target']:.0f}% of target)")
+        print(f"   Trailing Active: {status['trailing_stop_active']}")
+        if status['trailing_stop_active']:
+            print(f"   Trail Level: {format_currency(status['trailing_stop_level'])}")
+        print(f"   Should Close: {result['should_close']}")
+        
+        if result['should_close']:
+            print(f"   ⚠️ EXIT: {result.get('message', '')}")
+            break
     
-    # Test 4: Get statistics
-    print("\n4. Testing statistics...")
-    stats = rm.get_statistics()
-    for key, value in stats.items():
-        print(f"{key}: {value}")
-    
-    # Test 5: Print status
-    print("\n5. Testing status print...")
-    rm.print_status()
-    
-    print("\n✅ Risk Manager test complete!")
+    print("\n" + "="*60)
+    print("✅ TEST COMPLETE!")
+    print("="*60)

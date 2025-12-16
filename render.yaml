@@ -1,0 +1,101 @@
+services:
+  - type: web
+    name: deriv-trading-bot-api
+    env: python
+    region: oregon
+    plan: starter
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port 10000 --workers 1
+    
+    # Health Check
+    healthCheckPath: /health
+    
+    # Environment Variables
+    envVars:
+      # Environment
+      - key: ENVIRONMENT
+        value: production
+      
+      # Server
+      - key: PORT
+        value: 10000
+      - key: DEBUG
+        value: false
+      
+      # Bot Control
+      - key: BOT_AUTO_START
+        value: true
+      - key: ALLOW_BOT_CONTROL
+        value: true
+      - key: REQUIRE_AUTH_FOR_BOT_CONTROL
+        value: true
+      - key: REQUIRE_AUTH_FOR_CONFIG
+        value: true
+      
+      # Deriv API (ADD IN RENDER DASHBOARD - SENSITIVE)
+      - key: DERIV_API_TOKEN
+        sync: false
+      - key: DERIV_APP_ID
+        value: 1089
+      
+      # Telegram (ADD IN RENDER DASHBOARD - SENSITIVE)
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_ID
+        sync: false
+      
+      # Authentication (ADD IN RENDER DASHBOARD - SENSITIVE)
+      - key: JWT_SECRET_KEY
+        sync: false
+      - key: ENABLE_AUTHENTICATION
+        value: true
+      - key: ADMIN_USERNAME
+        value: admin
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: ADMIN_EMAIL
+        value: admin@tradingbot.com
+      
+      # Password Requirements
+      - key: MIN_PASSWORD_LENGTH
+        value: 8
+      - key: REQUIRE_PASSWORD_UPPERCASE
+        value: false
+      - key: REQUIRE_PASSWORD_LOWERCASE
+        value: false
+      - key: REQUIRE_PASSWORD_DIGITS
+        value: false
+      - key: REQUIRE_PASSWORD_SPECIAL
+        value: false
+      
+      # Account Security
+      - key: MAX_FAILED_LOGIN_ATTEMPTS
+        value: 5
+      - key: LOCKOUT_DURATION_MINUTES
+        value: 15
+      
+      # CORS (UPDATE WITH YOUR VERCEL URL)
+      - key: CORS_ORIGINS
+        value: http://localhost:3000,http://localhost:3001
+      
+      # Logging
+      - key: LOG_LEVEL
+        value: INFO
+      - key: API_LOG_FILE
+        value: api.log
+      
+      # WebSocket
+      - key: WS_REQUIRE_AUTH
+        value: false
+      - key: WS_MAX_CONNECTIONS
+        value: 100
+      - key: WS_HEARTBEAT_INTERVAL
+        value: 30
+      
+      # Rate Limiting
+      - key: RATE_LIMIT_ENABLED
+        value: true
+      - key: RATE_LIMIT_PER_MINUTE
+        value: 60
+      - key: RATE_LIMIT_PER_HOUR
+        value: 1000
