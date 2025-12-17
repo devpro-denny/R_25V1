@@ -224,6 +224,8 @@ class BotRunner:
             "start_time": self.start_time.isoformat() if self.start_time else None,
             "error_message": self.error_message,
             "balance": bot_state.balance,
+            "active_trades": bot_state.active_trades,
+            "active_trades_count": len(bot_state.active_trades),
             "statistics": bot_state.get_statistics()
         }
     
