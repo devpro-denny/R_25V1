@@ -1,7 +1,8 @@
 """
 Risk Manager for Deriv R_25 Trading Bot
+OPTIMIZED FOR SCALPING - $2 profit target, $0.80 max loss
 Manages trading limits, cooldowns, and risk parameters
-risk_manager.py - WITH PERCENTAGE-BASED DYNAMIC EXIT & TRAILING STOP
+risk_manager.py - SCALPING VERSION WITH AGGRESSIVE TRAILING
 """
 
 from datetime import datetime, timedelta
@@ -12,10 +13,10 @@ from utils import setup_logger, format_currency
 logger = setup_logger()
 
 class RiskManager:
-    """Manages all risk-related operations with percentage-based dynamic exit logic"""
+    """Manages all risk-related operations with scalping-optimized exit logic"""
     
     def __init__(self):
-        """Initialize RiskManager with default settings"""
+        """Initialize RiskManager with scalping-optimized settings"""
         self.max_trades_per_day = config.MAX_TRADES_PER_DAY
         self.max_daily_loss = config.MAX_DAILY_LOSS
         self.cooldown_seconds = config.COOLDOWN_SECONDS
@@ -30,12 +31,15 @@ class RiskManager:
         self.active_trade: Optional[Dict] = None
         self.has_active_trade = False
         
-        # ⭐ NEW: PERCENTAGE-BASED Dynamic exit settings ⭐
-        self.early_exit_threshold = 0.80  # Exit at 80% of target profit if reversal
-        self.trailing_stop_activation_pct = 0.75  # Activate trailing stop at 75% of target
-        self.trailing_stop_distance_pct = 0.15  # Trail 15% below peak profit
+        # ⭐ SCALPING-OPTIMIZED: More aggressive exit settings for $2 target ⭐
+        self.early_exit_threshold = 0.85  # Exit at 85% of target ($1.70 of $2.00) if reversal
+        self.trailing_stop_activation_pct = 0.65  # Activate earlier at 65% ($1.30 of $2.00)
+        self.trailing_stop_distance_pct = 0.20  # Tighter trail: 20% below peak (was 15%)
         
-        # ⭐ NEW: Trailing stop tracking ⭐
+        # ⭐ SCALPING: Quick exit on small reversals ⭐
+        self.reversal_sensitivity = 0.15  # Exit if 0.15% reversal detected (very sensitive)
+        
+        # ⭐ Trailing stop tracking ⭐
         self.peak_profit: float = 0.0
         self.trailing_stop_active: bool = False
         self.trailing_stop_level: float = 0.0
@@ -50,10 +54,12 @@ class RiskManager:
         self.max_drawdown = 0.0
         self.peak_balance = 0.0
         
-        logger.info("[OK] Risk Manager initialized (Percentage-Based Dynamic Exit)")
+        logger.info("[OK] Risk Manager initialized (SCALPING MODE)")
+        logger.info(f"   Target: {format_currency(config.TAKE_PROFIT_PERCENT / 100 * config.FIXED_STAKE * config.MULTIPLIER)}")
         logger.info(f"   Early exit: {self.early_exit_threshold*100:.0f}% of target")
         logger.info(f"   Trailing stop: Activates at {self.trailing_stop_activation_pct*100:.0f}% of target")
-        logger.info(f"   Trailing distance: {self.trailing_stop_distance_pct*100:.0f}% below peak")
+        logger.info(f"   Trailing distance: {self.trailing_stop_distance_pct*100:.0f}% below peak (TIGHT)")
+        logger.info(f"   Reversal sensitivity: {self.reversal_sensitivity}% (AGGRESSIVE)")
     
     def reset_daily_stats(self):
         """Reset daily statistics at start of new day"""
@@ -112,7 +118,7 @@ class RiskManager:
     def validate_trade_parameters(self, stake: float, take_profit: float, 
                                   stop_loss: float) -> tuple[bool, str]:
         """
-        Validate trade parameters against risk rules
+        Validate trade parameters against risk rules (SCALPING VERSION)
         
         Args:
             stake: Trade stake amount
@@ -126,24 +132,30 @@ class RiskManager:
         if stake <= 0:
             return False, "Stake must be positive"
         
-        if stake > config.FIXED_STAKE * 2:
-            return False, f"Stake exceeds maximum ({config.FIXED_STAKE * 2})"
+        # Allow some flexibility for scalping stakes
+        if stake > config.FIXED_STAKE * 1.5:
+            return False, f"Stake exceeds maximum ({config.FIXED_STAKE * 1.5:.2f})"
         
         # Check take profit
         if take_profit <= 0:
             return False, "Take profit must be positive"
         
+        # For scalping, ensure TP is realistic ($2.00 target)
+        expected_tp = config.TAKE_PROFIT_PERCENT / 100 * stake * config.MULTIPLIER
+        if abs(take_profit - expected_tp) > expected_tp * 0.5:  # 50% tolerance
+            logger.warning(f"⚠️ Take profit {format_currency(take_profit)} differs from expected {format_currency(expected_tp)}")
+        
         # Check stop loss
         if stop_loss <= 0:
             return False, "Stop loss must be positive"
         
-        if stop_loss > config.MAX_LOSS_PER_TRADE:
-            return False, f"Stop loss exceeds maximum ({config.MAX_LOSS_PER_TRADE})"
+        if stop_loss > config.MAX_LOSS_PER_TRADE * 1.1:  # 10% tolerance for rounding
+            return False, f"Stop loss {format_currency(stop_loss)} exceeds maximum ({format_currency(config.MAX_LOSS_PER_TRADE)})"
         
-        # Check risk/reward ratio (optional)
+        # Check risk/reward ratio (for scalping, 1:2.5 is acceptable)
         risk_reward_ratio = take_profit / stop_loss
-        if risk_reward_ratio < 0.5:
-            logger.warning(f"⚠️ Low risk/reward ratio: {risk_reward_ratio:.2f}")
+        if risk_reward_ratio < 1.5:
+            logger.warning(f"⚠️ Low risk/reward ratio for scalping: {risk_reward_ratio:.2f}")
         
         return True, "Valid"
     
@@ -173,20 +185,22 @@ class RiskManager:
         self.active_trade = trade_record
         self.has_active_trade = True
         
-        # ⭐ NEW: Reset trailing stop for new trade ⭐
+        # ⭐ Reset trailing stop for new trade ⭐
         self._reset_trailing_stop()
         
         logger.info(f"📝 Trade recorded: {trade_info.get('direction')} @ {trade_info.get('entry_price')}")
         logger.info(f"🔒 Active trade locked (1/1 concurrent trades)")
         
-        # ⭐ NEW: Log dynamic exit thresholds ⭐
+        # ⭐ SCALPING: Log aggressive exit thresholds ⭐
         target_profit = trade_record['take_profit']
         trailing_activation = target_profit * self.trailing_stop_activation_pct
         early_exit_level = target_profit * self.early_exit_threshold
         
-        logger.info(f"📊 Dynamic Exit Levels:")
-        logger.info(f"   Trailing Stop Activates: {format_currency(trailing_activation)} ({self.trailing_stop_activation_pct*100:.0f}% of target)")
-        logger.info(f"   Early Exit Threshold: {format_currency(early_exit_level)} ({self.early_exit_threshold*100:.0f}% of target)")
+        logger.info(f"📊 Scalping Exit Levels:")
+        logger.info(f"   Target Profit: {format_currency(target_profit)}")
+        logger.info(f"   Trailing Activates: {format_currency(trailing_activation)} ({self.trailing_stop_activation_pct*100:.0f}%)")
+        logger.info(f"   Early Exit: {format_currency(early_exit_level)} ({self.early_exit_threshold*100:.0f}%)")
+        logger.info(f"   Reversal Trigger: {self.reversal_sensitivity}% price movement")
     
     def _reset_trailing_stop(self):
         """Reset trailing stop tracking"""
@@ -197,7 +211,7 @@ class RiskManager:
     def should_close_trade(self, current_pnl: float, current_price: float, 
                           previous_price: float) -> Dict:
         """
-        ⭐ NEW: Check if trade should be closed based on PERCENTAGE-BASED dynamic exit rules ⭐
+        ⭐ SCALPING-OPTIMIZED: Check if trade should be closed with aggressive exits ⭐
         
         Args:
             current_pnl: Current profit/loss
@@ -217,43 +231,44 @@ class RiskManager:
         if current_pnl > self.peak_profit:
             self.peak_profit = current_pnl
         
-        # ⭐ RULE 1: Activate trailing stop at 75% of target profit ⭐
+        # ⭐ SCALPING RULE 1: Activate trailing stop at 65% of target (earlier than normal) ⭐
         trailing_activation_level = target_profit * self.trailing_stop_activation_pct
         
         if current_pnl >= trailing_activation_level and not self.trailing_stop_active:
             self.trailing_stop_active = True
-            # Trail distance is 15% below current profit
+            # Trail distance is 20% below current profit (tighter than normal 15%)
             self.trailing_stop_level = current_pnl * (1 - self.trailing_stop_distance_pct)
             
-            logger.info(f"🎯 Trailing stop ACTIVATED at {format_currency(current_pnl)}")
-            logger.info(f"   Initial trailing stop: {format_currency(self.trailing_stop_level)}")
-            logger.info(f"   (Trailing {self.trailing_stop_distance_pct*100:.0f}% below peak)")
+            logger.info(f"🎯 SCALPING: Trailing stop ACTIVATED at {format_currency(current_pnl)}")
+            logger.info(f"   Initial stop: {format_currency(self.trailing_stop_level)}")
+            logger.info(f"   (Trailing {self.trailing_stop_distance_pct*100:.0f}% below peak - TIGHT)")
         
-        # ⭐ RULE 2: Update trailing stop as profit increases ⭐
+        # ⭐ SCALPING RULE 2: Update trailing stop aggressively ⭐
         if self.trailing_stop_active:
-            # New stop level is always 15% below peak profit
+            # New stop level is always 20% below peak profit
             new_stop_level = self.peak_profit * (1 - self.trailing_stop_distance_pct)
             
             if new_stop_level > self.trailing_stop_level:
                 old_level = self.trailing_stop_level
                 self.trailing_stop_level = new_stop_level
-                logger.debug(f"📊 Trailing stop updated: {format_currency(old_level)} → {format_currency(new_stop_level)}")
+                logger.debug(f"📊 Trail updated: {format_currency(old_level)} → {format_currency(new_stop_level)}")
             
             # Check if trailing stop hit
             if current_pnl <= self.trailing_stop_level:
+                secured_pct = (current_pnl/self.peak_profit)*100 if self.peak_profit > 0 else 0
                 return {
                     'should_close': True,
                     'reason': 'trailing_stop',
-                    'message': f'Trailing stop hit at {format_currency(current_pnl)} (peak: {format_currency(self.peak_profit)}, secured {(current_pnl/self.peak_profit)*100:.0f}% of peak)',
+                    'message': f'Trailing stop hit at {format_currency(current_pnl)} (peak: {format_currency(self.peak_profit)}, secured {secured_pct:.0f}%)',
                     'current_pnl': current_pnl,
                     'peak_profit': self.peak_profit
                 }
         
-        # ⭐ RULE 3: Early exit at 80% of target if reversal detected ⭐
+        # ⭐ SCALPING RULE 3: Early exit at 85% if ANY reversal detected ⭐
         early_exit_target = target_profit * self.early_exit_threshold
         
         if current_pnl >= early_exit_target:
-            # Detect reversal based on price movement
+            # SCALPING: Very sensitive reversal detection
             reversal_detected = self._detect_reversal(
                 current_price, 
                 previous_price, 
@@ -261,13 +276,25 @@ class RiskManager:
             )
             
             if reversal_detected:
+                target_pct = current_pnl/target_profit*100 if target_profit > 0 else 0
                 return {
                     'should_close': True,
                     'reason': 'early_exit',
-                    'message': f'Early exit at {format_currency(current_pnl)} ({current_pnl/target_profit*100:.0f}% of {format_currency(target_profit)} target) - Reversal detected',
+                    'message': f'SCALP EXIT at {format_currency(current_pnl)} ({target_pct:.0f}% of {format_currency(target_profit)}) - Reversal',
                     'current_pnl': current_pnl,
                     'target_profit': target_profit,
-                    'percentage': current_pnl/target_profit*100
+                    'percentage': target_pct
+                }
+        
+        # ⭐ SCALPING RULE 4: Exit if profit drops below 50% of peak (protect gains) ⭐
+        if self.peak_profit > 0 and current_pnl < self.peak_profit * 0.5:
+            if current_pnl > 0:  # Still profitable, but lost half the peak
+                return {
+                    'should_close': True,
+                    'reason': 'profit_protection',
+                    'message': f'Profit protection: {format_currency(current_pnl)} (was {format_currency(self.peak_profit)})',
+                    'current_pnl': current_pnl,
+                    'peak_profit': self.peak_profit
                 }
         
         return {'should_close': False, 'reason': 'Continue monitoring'}
@@ -275,7 +302,7 @@ class RiskManager:
     def _detect_reversal(self, current_price: float, previous_price: float, 
                         direction: str) -> bool:
         """
-        ⭐ NEW: Detect if price is reversing against trade direction ⭐
+        ⭐ SCALPING: Very sensitive reversal detection for quick exits ⭐
         
         Args:
             current_price: Current market price
@@ -285,25 +312,38 @@ class RiskManager:
         Returns:
             True if reversal detected
         """
-        if direction.upper() in ['BUY', 'UP']:
+        if previous_price == 0:
+            return False
+            
+        if direction.upper() in ['BUY', 'UP', 'MULTUP']:
             # For BUY trades, reversal = price moving down
             if current_price < previous_price:
                 price_drop = ((previous_price - current_price) / previous_price) * 100
-                logger.debug(f"⚠️ Reversal hint: Price dropped {price_drop:.2f}% ({previous_price:.2f} → {current_price:.2f})")
-                return True
+                
+                # SCALPING: Exit on even small reversals (0.15%)
+                if price_drop >= self.reversal_sensitivity:
+                    logger.info(f"⚠️ REVERSAL: Price dropped {price_drop:.2f}% ({previous_price:.2f} → {current_price:.2f})")
+                    return True
+                else:
+                    logger.debug(f"📉 Minor drop: {price_drop:.2f}% (threshold: {self.reversal_sensitivity}%)")
         
-        else:  # SELL/DOWN
+        else:  # SELL/DOWN/MULTDOWN
             # For SELL trades, reversal = price moving up
             if current_price > previous_price:
                 price_rise = ((current_price - previous_price) / previous_price) * 100
-                logger.debug(f"⚠️ Reversal hint: Price rose {price_rise:.2f}% ({previous_price:.2f} → {current_price:.2f})")
-                return True
+                
+                # SCALPING: Exit on even small reversals (0.15%)
+                if price_rise >= self.reversal_sensitivity:
+                    logger.info(f"⚠️ REVERSAL: Price rose {price_rise:.2f}% ({previous_price:.2f} → {current_price:.2f})")
+                    return True
+                else:
+                    logger.debug(f"📈 Minor rise: {price_rise:.2f}% (threshold: {self.reversal_sensitivity}%)")
         
         return False
     
     def get_exit_status(self, current_pnl: float) -> Dict:
         """
-        ⭐ NEW: Get current exit strategy status ⭐
+        Get current exit strategy status with scalping metrics
         
         Args:
             current_pnl: Current profit/loss
@@ -330,7 +370,9 @@ class RiskManager:
             'trailing_stop_level': self.trailing_stop_level if self.trailing_stop_active else None,
             'peak_profit': self.peak_profit,
             'distance_to_early_exit': early_exit_target - current_pnl,
-            'distance_to_trailing': trailing_activation - current_pnl
+            'distance_to_trailing': trailing_activation - current_pnl,
+            'scalping_mode': True,
+            'reversal_sensitivity': self.reversal_sensitivity
         }
         
         return status
@@ -342,7 +384,7 @@ class RiskManager:
         Args:
             contract_id: Contract ID
             pnl: Profit/loss amount
-            status: Trade status ('won', 'lost', 'sold', 'trailing_stop', 'early_exit')
+            status: Trade status ('won', 'lost', 'sold', 'trailing_stop', 'early_exit', 'profit_protection')
         """
         # Find trade in today's list
         trade = None
@@ -356,7 +398,7 @@ class RiskManager:
             trade['pnl'] = pnl
             trade['close_time'] = datetime.now()
             
-            # ⭐ NEW: Record exit strategy used ⭐
+            # Record exit strategy used
             if self.trailing_stop_active:
                 trade['exit_type'] = 'trailing_stop'
                 trade['peak_profit'] = self.peak_profit
@@ -364,6 +406,8 @@ class RiskManager:
             elif status == 'early_exit':
                 trade['exit_type'] = 'early_exit'
                 trade['target_percentage'] = (pnl / trade.get('take_profit', 1)) * 100
+            elif status == 'profit_protection':
+                trade['exit_type'] = 'profit_protection'
             else:
                 trade['exit_type'] = 'normal'
         
@@ -401,16 +445,21 @@ class RiskManager:
     
     def get_statistics(self) -> Dict:
         """
-        Get trading statistics
+        Get trading statistics with scalping metrics
         
         Returns:
             Dictionary with statistics
         """
         win_rate = (self.winning_trades / self.total_trades * 100) if self.total_trades > 0 else 0
         
-        # ⭐ NEW: Count exit types ⭐
+        # Count exit types
         trailing_stop_exits = sum(1 for t in self.trades_today if t.get('exit_type') == 'trailing_stop')
         early_exits = sum(1 for t in self.trades_today if t.get('exit_type') == 'early_exit')
+        profit_protection_exits = sum(1 for t in self.trades_today if t.get('exit_type') == 'profit_protection')
+        
+        # Calculate average profit per winning trade
+        avg_win = self.largest_win / self.winning_trades if self.winning_trades > 0 else 0
+        avg_loss = abs(self.largest_loss / self.losing_trades) if self.losing_trades > 0 else 0
         
         return {
             'total_trades': self.total_trades,
@@ -425,7 +474,11 @@ class RiskManager:
             'max_drawdown': self.max_drawdown,
             'peak_balance': self.peak_balance,
             'trailing_stop_exits': trailing_stop_exits,
-            'early_exits': early_exits
+            'early_exits': early_exits,
+            'profit_protection_exits': profit_protection_exits,
+            'avg_win': avg_win,
+            'avg_loss': avg_loss,
+            'scalping_mode': True
         }
     
     def get_remaining_trades_today(self) -> int:
@@ -456,7 +509,7 @@ class RiskManager:
         can_trade, reason = self.can_trade()
         
         print("\n" + "="*60)
-        print("RISK MANAGEMENT STATUS")
+        print("RISK MANAGEMENT STATUS (SCALPING MODE)")
         print("="*60)
         print(f"Can Trade: {'✅ YES' if can_trade else '❌ NO'}")
         if not can_trade:
@@ -483,35 +536,35 @@ class RiskManager:
 # Testing
 if __name__ == "__main__":
     print("="*60)
-    print("TESTING PERCENTAGE-BASED RISK MANAGER")
+    print("TESTING SCALPING-OPTIMIZED RISK MANAGER")
     print("="*60)
     
     # Create risk manager
     rm = RiskManager()
     
-    # Test with $10 stake, $3 target
-    print("\n1. Testing with $10 stake, $3 target profit...")
+    # Test with $2.50 stake, $2 target (scalping settings)
+    print("\n1. Testing with $2.50 stake, $2.00 target profit...")
     trade_info = {
-        'contract_id': 'test_001',
+        'contract_id': 'scalp_001',
         'direction': 'BUY',
-        'stake': 10.0,
+        'stake': 2.5,
         'entry_price': 100.0,
-        'take_profit': 3.0,
-        'stop_loss': 3.0
+        'take_profit': 2.0,
+        'stop_loss': 0.8
     }
     rm.record_trade_open(trade_info)
     
     print(f"\nExpected levels:")
-    print(f"  Trailing activation: $2.25 (75% of $3.00)")
-    print(f"  Early exit: $2.40 (80% of $3.00)")
+    print(f"  Trailing activation: ${2.0 * 0.65:.2f} (65% of $2.00)")
+    print(f"  Early exit: ${2.0 * 0.85:.2f} (85% of $2.00)")
     
     # Test trailing stop
-    print("\n2. Testing trailing stop activation at 75%...")
+    print("\n2. Testing aggressive trailing stop...")
     test_scenarios = [
-        (1.00, 100.5, 100.3, "Below activation"),
-        (2.30, 101.0, 100.8, "Should activate trailing stop (75%+)"),
-        (2.80, 102.0, 101.8, "Higher profit - trail should update"),
-        (2.30, 101.4, 102.0, "Drop to trailing stop level"),
+        (0.80, 100.3, 100.1, "Below activation"),
+        (1.35, 101.0, 100.8, "Should activate trailing (65%+)"),
+        (1.85, 102.0, 101.8, "Higher profit - trail updates"),
+        (1.48, 101.4, 102.0, "Drop to trailing stop"),
     ]
     
     for pnl, current_price, prev_price, description in test_scenarios:
@@ -530,5 +583,5 @@ if __name__ == "__main__":
             break
     
     print("\n" + "="*60)
-    print("✅ TEST COMPLETE!")
+    print("✅ SCALPING TEST COMPLETE!")
     print("="*60)

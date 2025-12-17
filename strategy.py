@@ -1,7 +1,8 @@
 """
 Trading Strategy for Deriv R_25 Trading Bot
+SCALPING-OPTIMIZED: Ultra-selective for $2 profit targets
 Multi-timeframe strategy with strict entry/exit rules
-strategy.py - ENHANCED WITH ANTI-REVERSAL CONFIRMATIONS
+strategy.py - SCALPING VERSION WITH ENHANCED FILTERS
 """
 
 import pandas as pd
@@ -20,26 +21,38 @@ from utils import setup_logger, get_signal_emoji
 logger = setup_logger()
 
 class TradingStrategy:
-    """Implements the multi-timeframe trading strategy with enhanced entry confirmations"""
+    """Implements scalping-optimized trading strategy for tight profit targets"""
     
     def __init__(self):
-        """Initialize strategy with configuration parameters"""
+        """Initialize strategy with scalping-optimized parameters"""
         self.rsi_buy_threshold = config.RSI_BUY_THRESHOLD
         self.rsi_sell_threshold = config.RSI_SELL_THRESHOLD
         self.adx_threshold = config.ADX_THRESHOLD
         self.minimum_signal_score = config.MINIMUM_SIGNAL_SCORE
         
-        # ⭐ NEW: Anti-reversal settings ⭐
-        self.max_wick_ratio = 0.65  # Reject candles with >65% wick
-        self.min_body_ratio = 0.25  # Require at least 25% body
-        self.require_price_stability = True  # Check last 3 candles for stability
+        # ⭐ SCALPING: Stricter candle quality requirements ⭐
+        self.max_wick_ratio = 0.55  # TIGHTER: Reject candles with >55% wick (was 65%)
+        self.min_body_ratio = 0.35  # HIGHER: Require at least 35% body (was 25%)
+        self.require_price_stability = True
         self.min_consecutive_candles = 2  # Minimum candles in same direction
         
-        logger.info("[OK] Trading Strategy initialized (Enhanced with anti-reversal)")
+        # ⭐ SCALPING: Ultra-clean entry requirements ⭐
+        self.max_volatility_ratio = 1.8  # Recent ATR must be <1.8x average
+        self.min_momentum_strength = 0.6  # Require 60% momentum consistency
+        self.require_volume_confirmation = False  # Not available for R_25
+        
+        # ⭐ SCALPING: Quick trend reversal detection ⭐
+        self.max_pullback_pct = 30  # Max 30% pullback in last 3 candles
+        self.require_aligned_timeframes = True  # Both 1m and 5m must agree
+        
+        logger.info("[OK] Trading Strategy initialized (SCALPING MODE)")
+        logger.info(f"   Min body ratio: {self.min_body_ratio*100:.0f}% (strict)")
+        logger.info(f"   Max wick ratio: {self.max_wick_ratio*100:.0f}% (tight)")
+        logger.info(f"   Volatility filter: {self.max_volatility_ratio}x avg")
     
     def analyze(self, data_1m: pd.DataFrame, data_5m: pd.DataFrame) -> Dict:
         """
-        Analyze market data and generate trading signal
+        Analyze market data and generate trading signal (SCALPING VERSION)
         
         Args:
             data_1m: 1-minute candle data
@@ -88,40 +101,60 @@ class TradingStrategy:
                 if pd.isna(latest_5m[ind]):
                     return self._create_hold_signal(f"Invalid 5m {ind}")
             
-            # Step 1: Validate ATR ranges
+            # ⭐ SCALPING FILTERS (IN ORDER OF IMPORTANCE) ⭐
+            
+            # Filter 1: Validate ATR ranges
             if not self._validate_atr(latest_1m, latest_5m):
                 return self._create_hold_signal("ATR out of range")
             
-            # Step 2: Check for volatility spike
+            # Filter 2: Check for volatility spike
             if self._is_volatility_spike(df_1m):
                 return self._create_hold_signal("Volatility spike detected")
             
-            # Step 3: Check for weak candle
+            # Filter 3: Check volatility consistency (SCALPING)
+            if not self._check_volatility_consistency(df_1m):
+                return self._create_hold_signal("Volatility inconsistent")
+            
+            # Filter 4: Check for weak candle
             if self._is_weak_candle(df_1m):
                 return self._create_hold_signal("Weak candle detected")
             
-            # ⭐ NEW Step 4: Check candle quality (anti-reversal) ⭐
+            # Filter 5: Check candle quality (anti-reversal)
             candle_check = self._check_candle_quality(df_1m)
             if not candle_check['is_quality']:
                 return self._create_hold_signal(f"Poor candle: {candle_check['reason']}")
             
-            # ⭐ NEW Step 5: Check price stability (anti-reversal) ⭐
+            # Filter 6: Check price stability (anti-reversal)
             if self.require_price_stability:
                 stability_check = self._check_price_stability(df_1m)
                 if not stability_check['is_stable']:
                     return self._create_hold_signal(f"Price unstable: {stability_check['reason']}")
             
-            # Step 6: Evaluate BUY signal
+            # Filter 7: Check for pullback (SCALPING - NEW)
+            pullback_check = self._check_pullback_risk(df_1m)
+            if pullback_check['has_risk']:
+                return self._create_hold_signal(f"Pullback risk: {pullback_check['reason']}")
+            
+            # Filter 8: Timeframe alignment (SCALPING)
+            if self.require_aligned_timeframes:
+                if not self._check_timeframe_alignment(df_1m, df_5m):
+                    return self._create_hold_signal("Timeframes not aligned")
+            
+            # Step 9: Evaluate BUY signal
             buy_score, buy_details = self._evaluate_buy_signal(df_1m, df_5m)
             
-            # Step 7: Evaluate SELL signal
+            # Step 10: Evaluate SELL signal
             sell_score, sell_details = self._evaluate_sell_signal(df_1m, df_5m)
             
-            # ⭐ NEW Step 8: Apply momentum confirmation bonus ⭐
+            # Step 11: Apply momentum confirmation bonus
             buy_score, buy_details = self._apply_momentum_bonus(df_1m, buy_score, buy_details, 'BUY')
             sell_score, sell_details = self._apply_momentum_bonus(df_1m, sell_score, sell_details, 'SELL')
             
-            # Step 9: Determine final signal
+            # Step 12: Apply scalping quality bonus (NEW)
+            buy_score, buy_details = self._apply_scalping_bonus(df_1m, buy_score, buy_details, 'BUY')
+            sell_score, sell_details = self._apply_scalping_bonus(df_1m, sell_score, sell_details, 'SELL')
+            
+            # Step 13: Determine final signal
             signal_result = self._determine_signal(buy_score, sell_score, 
                                                    buy_details, sell_details)
             
@@ -150,6 +183,30 @@ class TradingStrategy:
             return False
         
         logger.info(f"   ✅ ATR validation passed")
+        return True
+    
+    def _check_volatility_consistency(self, df_1m: pd.DataFrame) -> bool:
+        """
+        ⭐ SCALPING: Check if recent volatility is consistent (not spiking) ⭐
+        Ensures current ATR isn't much higher than average
+        """
+        if len(df_1m) < 10:
+            return True  # Not enough data, skip check
+        
+        recent = df_1m.tail(10)
+        current_atr = df_1m.iloc[-1]['atr']
+        avg_atr = recent['atr'].mean()
+        
+        if avg_atr == 0:
+            return True
+        
+        atr_ratio = current_atr / avg_atr
+        
+        if atr_ratio > self.max_volatility_ratio:
+            logger.debug(f"⚠️ Volatility spike: Current ATR {current_atr:.4f} is {atr_ratio:.2f}x average {avg_atr:.4f}")
+            return False
+        
+        logger.debug(f"✅ Volatility consistent: {atr_ratio:.2f}x average")
         return True
     
     def _is_volatility_spike(self, df_1m: pd.DataFrame) -> bool:
@@ -194,11 +251,8 @@ class TradingStrategy:
     
     def _check_candle_quality(self, df_1m: pd.DataFrame) -> Dict:
         """
-        ⭐ NEW: Check if last candle shows conviction (not indecision) ⭐
+        Check if last candle shows conviction (SCALPING: STRICTER)
         Prevents entering on candles with long wicks (reversal signals)
-        
-        Returns:
-            Dict with quality assessment
         """
         if len(df_1m) < 1:
             return {'is_quality': False, 'reason': 'No data'}
@@ -209,7 +263,6 @@ class TradingStrategy:
         body = abs(last_candle['close'] - last_candle['open'])
         total_range = last_candle['high'] - last_candle['low']
         
-        # Avoid division by zero
         if total_range == 0 or body == 0:
             return {'is_quality': False, 'reason': 'Zero range/body candle'}
         
@@ -225,7 +278,7 @@ class TradingStrategy:
             upper_wick = last_candle['high'] - last_candle['open']
             lower_wick = last_candle['close'] - last_candle['low']
         
-        # Quality checks
+        # SCALPING: STRICTER quality checks
         # 1. Too much wick = indecision/rejection
         if wick_ratio > self.max_wick_ratio:
             return {
@@ -235,7 +288,7 @@ class TradingStrategy:
                 'body_ratio': body_ratio
             }
         
-        # 2. Too small body = indecision
+        # 2. Too small body = indecision (STRICTER: 35% minimum)
         if body_ratio < self.min_body_ratio:
             return {
                 'is_quality': False,
@@ -244,26 +297,27 @@ class TradingStrategy:
                 'body_ratio': body_ratio
             }
         
-        # 3. Long upper wick on bullish candle = rejection at top
+        # 3. SCALPING: Long upper wick on bullish = rejection (STRICTER)
         if last_candle['close'] > last_candle['open']:  # Bullish
-            if upper_wick > body * 1.5:  # Upper wick is 1.5x body
+            if upper_wick > body * 1.2:  # TIGHTER: 1.2x body (was 1.5x)
                 return {
                     'is_quality': False,
-                    'reason': 'Long upper wick (rejection)',
+                    'reason': 'Long upper wick (rejection at resistance)',
                     'wick_ratio': wick_ratio,
                     'body_ratio': body_ratio
                 }
         
-        # 4. Long lower wick on bearish candle = rejection at bottom
+        # 4. SCALPING: Long lower wick on bearish = rejection (STRICTER)
         if last_candle['close'] < last_candle['open']:  # Bearish
-            if lower_wick > body * 1.5:
+            if lower_wick > body * 1.2:  # TIGHTER: 1.2x body
                 return {
                     'is_quality': False,
-                    'reason': 'Long lower wick (rejection)',
+                    'reason': 'Long lower wick (rejection at support)',
                     'wick_ratio': wick_ratio,
                     'body_ratio': body_ratio
                 }
         
+        logger.debug(f"✅ Quality candle: Body {body_ratio:.2f}, Wick {wick_ratio:.2f}")
         return {
             'is_quality': True,
             'reason': 'Quality candle',
@@ -273,13 +327,10 @@ class TradingStrategy:
     
     def _check_price_stability(self, df_1m: pd.DataFrame) -> Dict:
         """
-        ⭐ NEW: Check if price is stable (not erratic) ⭐
+        Check if price is stable (not erratic)
         Prevents entering during choppy, directionless movement
-        
-        Returns:
-            Dict with stability assessment
         """
-        lookback = 5  # Check last 5 candles
+        lookback = 5
         
         if len(df_1m) < lookback:
             return {'is_stable': False, 'reason': 'Insufficient data'}
@@ -288,18 +339,16 @@ class TradingStrategy:
         closes = recent['close'].values
         
         # Check for consistent direction
-        # Count how many times price changed direction
         direction_changes = 0
         for i in range(1, len(closes) - 1):
             prev_move = closes[i] - closes[i-1]
             curr_move = closes[i+1] - closes[i]
             
-            # Direction change if signs differ and moves are significant
-            if prev_move * curr_move < 0:  # Opposite signs
+            if prev_move * curr_move < 0:
                 direction_changes += 1
         
-        # Too many direction changes = choppy
-        if direction_changes > 2:
+        # SCALPING: Lower tolerance (was 2, now 1)
+        if direction_changes > 1:
             return {
                 'is_stable': False,
                 'reason': f'Too choppy ({direction_changes} direction changes)',
@@ -311,8 +360,8 @@ class TradingStrategy:
         avg_range = np.mean(ranges)
         max_range = np.max(ranges)
         
-        # If any candle is 3x average range = instability
-        if max_range > avg_range * 3:
+        # SCALPING: Tighter tolerance (was 3x, now 2.5x)
+        if max_range > avg_range * 2.5:
             return {
                 'is_stable': False,
                 'reason': 'Extreme range volatility',
@@ -325,35 +374,94 @@ class TradingStrategy:
             'direction_changes': direction_changes
         }
     
+    def _check_pullback_risk(self, df_1m: pd.DataFrame) -> Dict:
+        """
+        ⭐ SCALPING NEW: Check for pullback risk before entry ⭐
+        Ensures we're not entering during a retracement
+        """
+        if len(df_1m) < 4:
+            return {'has_risk': False, 'reason': 'Insufficient data'}
+        
+        recent = df_1m.tail(4)
+        closes = recent['close'].values
+        
+        # Calculate overall move
+        start_price = closes[0]
+        current_price = closes[-1]
+        overall_move = current_price - start_price
+        
+        if abs(overall_move) < 0.01:  # Essentially flat
+            return {'has_risk': True, 'reason': 'No clear direction'}
+        
+        # Calculate pullback
+        if overall_move > 0:  # Uptrend
+            peak = np.max(closes)
+            pullback = ((peak - current_price) / peak) * 100 if peak > 0 else 0
+            
+            if pullback > self.max_pullback_pct:
+                return {
+                    'has_risk': True,
+                    'reason': f'Uptrend pullback {pullback:.1f}% (max {self.max_pullback_pct}%)'
+                }
+        else:  # Downtrend
+            trough = np.min(closes)
+            pullback = ((current_price - trough) / abs(trough)) * 100 if trough != 0 else 0
+            
+            if pullback > self.max_pullback_pct:
+                return {
+                    'has_risk': True,
+                    'reason': f'Downtrend pullback {pullback:.1f}% (max {self.max_pullback_pct}%)'
+                }
+        
+        return {'has_risk': False, 'reason': 'No excessive pullback'}
+    
+    def _check_timeframe_alignment(self, df_1m: pd.DataFrame, df_5m: pd.DataFrame) -> bool:
+        """
+        ⭐ SCALPING NEW: Ensure both timeframes agree on direction ⭐
+        """
+        if len(df_1m) < 1 or len(df_5m) < 1:
+            return False
+        
+        latest_1m = df_1m.iloc[-1]
+        latest_5m = df_5m.iloc[-1]
+        
+        # Check if both timeframes show same trend direction
+        m1_bullish = (latest_1m['close'] > latest_1m['sma_100'] and 
+                     latest_1m['ema_20'] > latest_1m['sma_100'])
+        m1_bearish = (latest_1m['close'] < latest_1m['sma_100'] and 
+                     latest_1m['ema_20'] < latest_1m['sma_100'])
+        
+        m5_bullish = (latest_5m['close'] > latest_5m['sma_100'] and 
+                     latest_5m['ema_20'] > latest_5m['sma_100'])
+        m5_bearish = (latest_5m['close'] < latest_5m['sma_100'] and 
+                     latest_5m['ema_20'] < latest_5m['sma_100'])
+        
+        # Both must agree
+        aligned = (m1_bullish and m5_bullish) or (m1_bearish and m5_bearish)
+        
+        if not aligned:
+            logger.debug("⚠️ Timeframes not aligned: 1m and 5m showing different trends")
+        else:
+            logger.debug("✅ Timeframes aligned")
+        
+        return aligned
+    
     def _apply_momentum_bonus(self, df_1m: pd.DataFrame, score: int, 
                             details: Dict, direction: str) -> Tuple[int, Dict]:
         """
-        ⭐ NEW: Apply bonus points for strong momentum continuation ⭐
-        Rewards trades that show consistent directional movement
-        
-        Args:
-            df_1m: 1-minute data
-            score: Current score
-            details: Current details
-            direction: 'BUY' or 'SELL'
-        
-        Returns:
-            Updated score and details
+        Apply bonus points for strong momentum continuation
         """
         if len(df_1m) < self.min_consecutive_candles:
             return score, details
         
-        # Check last N candles
         recent = df_1m.tail(self.min_consecutive_candles + 1)
         
         if direction == 'BUY':
-            # Count consecutive bullish candles
             bullish_count = sum(
                 recent.iloc[i]['close'] > recent.iloc[i]['open'] 
                 for i in range(len(recent))
             )
             
-            # Check for higher lows (uptrend structure)
             lows = recent['low'].values
             higher_lows = all(lows[i] >= lows[i-1] for i in range(1, len(lows)))
             
@@ -366,16 +474,14 @@ class TradingStrategy:
             if higher_lows:
                 score += 1
                 details['higher_lows'] = True
-                logger.debug(f"   ✅ Structure bonus: Higher lows confirmed")
+                logger.debug(f"   ✅ Structure bonus: Higher lows")
         
         else:  # SELL
-            # Count consecutive bearish candles
             bearish_count = sum(
                 recent.iloc[i]['close'] < recent.iloc[i]['open'] 
                 for i in range(len(recent))
             )
             
-            # Check for lower highs (downtrend structure)
             highs = recent['high'].values
             lower_highs = all(highs[i] <= highs[i-1] for i in range(1, len(highs)))
             
@@ -388,7 +494,42 @@ class TradingStrategy:
             if lower_highs:
                 score += 1
                 details['lower_highs'] = True
-                logger.debug(f"   ✅ Structure bonus: Lower highs confirmed")
+                logger.debug(f"   ✅ Structure bonus: Lower highs")
+        
+        return score, details
+    
+    def _apply_scalping_bonus(self, df_1m: pd.DataFrame, score: int,
+                             details: Dict, direction: str) -> Tuple[int, Dict]:
+        """
+        ⭐ SCALPING NEW: Apply bonus for ideal scalping conditions ⭐
+        """
+        if len(df_1m) < 3:
+            return score, details
+        
+        recent = df_1m.tail(3)
+        
+        # Check for accelerating momentum (increasing candle sizes)
+        bodies = [abs(row['close'] - row['open']) for _, row in recent.iterrows()]
+        accelerating = all(bodies[i] <= bodies[i+1] for i in range(len(bodies)-1))
+        
+        if accelerating:
+            score += 1
+            details['accelerating_momentum'] = True
+            logger.debug("   ✅ Scalping bonus: Accelerating momentum")
+        
+        # Check for clean trend (all same direction)
+        if direction == 'BUY':
+            all_bullish = all(row['close'] > row['open'] for _, row in recent.iterrows())
+            if all_bullish:
+                score += 1
+                details['clean_trend'] = True
+                logger.debug("   ✅ Scalping bonus: Clean bullish trend")
+        else:
+            all_bearish = all(row['close'] < row['open'] for _, row in recent.iterrows())
+            if all_bearish:
+                score += 1
+                details['clean_trend'] = True
+                logger.debug("   ✅ Scalping bonus: Clean bearish trend")
         
         return score, details
     
@@ -491,12 +632,10 @@ class TradingStrategy:
     def _determine_signal(self, buy_score: int, sell_score: int,
                          buy_details: Dict, sell_details: Dict) -> Dict:
         """Determine final trading signal"""
-        # Check if either signal meets minimum threshold
         buy_valid = buy_score >= self.minimum_signal_score
         sell_valid = sell_score >= self.minimum_signal_score
         
         if buy_valid and sell_valid:
-            # Both signals valid - choose stronger one
             if buy_score > sell_score:
                 return self._create_signal('BUY', buy_score, buy_details)
             elif sell_score > buy_score:
@@ -511,7 +650,7 @@ class TradingStrategy:
             return self._create_signal('SELL', sell_score, sell_details)
         
         else:
-            reason = f"Signals too weak (BUY: {buy_score}, SELL: {sell_score})"
+            reason = f"Signals too weak (BUY: {buy_score}, SELL: {sell_score}, need: {self.minimum_signal_score})"
             return self._create_hold_signal(reason)
     
     def _create_signal(self, direction: str, score: int, details: Dict) -> Dict:
@@ -526,14 +665,18 @@ class TradingStrategy:
             'can_trade': True
         }
         
-        logger.info(f"{emoji} {direction} SIGNAL | Score: {score}/{self.minimum_signal_score+2}")
+        logger.info(f"{emoji} {direction} SIGNAL (SCALPING) | Score: {score}/{self.minimum_signal_score+4}")
         logger.info(f"   RSI: {details.get('rsi', 0):.2f} | ADX: {details.get('adx', 0):.2f}")
         
-        # Log new confirmations
+        # Log confirmations
         if details.get('consecutive_momentum'):
             logger.info(f"   ✅ Momentum confirmed")
         if details.get('higher_lows') or details.get('lower_highs'):
             logger.info(f"   ✅ Structure confirmed")
+        if details.get('accelerating_momentum'):
+            logger.info(f"   ✅ Accelerating (scalping ideal)")
+        if details.get('clean_trend'):
+            logger.info(f"   ✅ Clean trend (scalping ideal)")
         
         return signal
     
