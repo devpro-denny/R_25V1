@@ -39,6 +39,7 @@ FIXED_STAKE = 10.0                  # Stake amount per trade (USD)
 MULTIPLIER = 160                   # Conservative multiplier (160x)
 TAKE_PROFIT_PERCENT = 20.0        # Take profit as percentage (20%)
 STOP_LOSS_PERCENT = 8.0           # Stop loss as percentage (8%)
+MAX_LOSS_PER_TRADE = 3.0          # Maximum loss per trade (USD)
 COOLDOWN_SECONDS = 120             # Wait time between trades (2 minutes)
 MAX_TRADES_PER_DAY = 50           # Maximum trades allowed per day
 MAX_DAILY_LOSS = 30.0             # Stop trading if daily loss exceeds this
