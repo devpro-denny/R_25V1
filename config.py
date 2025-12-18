@@ -36,7 +36,7 @@ CONTRACT_TYPE_DOWN = "MULTDOWN"    # Multiplier Down
 
 # ==================== RISK MANAGEMENT ====================
 FIXED_STAKE = 10.0                 # $10 stake
-MULTIPLIER = 400                   # 400x multiplier
+MULTIPLIER = 160                   # 400x multiplier
 
 # ⭐ NEW: CANCELLATION PHASE PARAMETERS ⭐
 ENABLE_CANCELLATION = True         # Enable 5-minute cancellation feature
