@@ -1,8 +1,11 @@
 """
 Configuration Settings for Deriv R_25 Multipliers Trading Bot
-OPTIMIZED FOR $2 PROFIT TARGET WITH $10 STAKE
-Based on trade history analysis - Fixed for MULTIPLIER trades
-config.py - PRODUCTION VERSION
+FINAL VERSION - ALL FIXES APPLIED
+✅ $10 stake for $2 profit target
+✅ 400x multiplier with proper TP/SL
+✅ ATR ranges adjusted for R_25 reality
+✅ Tightened strategy parameters
+config.py - PRODUCTION READY
 """
 
 import os
@@ -59,13 +62,15 @@ MAX_RETRIES = 3
 RETRY_DELAY = 2
 
 # ==================== STRATEGY PARAMETERS ====================
-# ⭐ TIGHTENED BASED ON TRADE HISTORY ANALYSIS ⭐
+# ⭐ ADJUSTED FOR R_25 ACTUAL VOLATILITY ⭐
 
-# ATR Validation Ranges (Keep existing - working)
-ATR_MIN_1M = 0.05
-ATR_MAX_1M = 1.5
-ATR_MIN_5M = 0.10
-ATR_MAX_5M = 2.5
+# ATR Validation Ranges - FIXED based on 6 hours of actual R_25 data
+ATR_MIN_1M = 0.05                 # Minimum 1m ATR
+ATR_MAX_1M = 2.0                  # INCREASED from 1.5 (allow higher volatility)
+ATR_MIN_5M = 0.10                 # Minimum 5m ATR
+ATR_MAX_5M = 3.5                  # ⭐ CRITICAL FIX: INCREASED from 2.5
+                                  # R_25 typically runs 2.6-3.0 on 5m timeframe
+                                  # Old limit (2.5) was blocking ALL trades!
 
 # RSI Thresholds - TIGHTER for better entries
 RSI_BUY_THRESHOLD = 58            # Raised from 55 (stronger momentum)
@@ -161,9 +166,9 @@ if __name__ == "__main__":
         calc_sl = STOP_LOSS_PERCENT / 100 * FIXED_STAKE * MULTIPLIER
         risk_reward = calc_tp / calc_sl if calc_sl > 0 else 0
         
-        print("=" * 70)
-        print("✅ CONFIGURATION VALIDATION PASSED!")
-        print("=" * 70)
+        print("=" * 75)
+        print("✅ CONFIGURATION VALIDATION PASSED - ALL FIXES APPLIED!")
+        print("=" * 75)
         print("\n📊 TRADING PARAMETERS:")
         print(f"   Symbol: {SYMBOL}")
         print(f"   Contract Type: {CONTRACT_TYPE} / {CONTRACT_TYPE_DOWN}")
@@ -182,7 +187,9 @@ if __name__ == "__main__":
         print(f"   Max Trades/Day: {MAX_TRADES_PER_DAY} (quality focused)")
         print(f"   Max Duration: {MAX_TRADE_DURATION}s ({MAX_TRADE_DURATION//60} min)")
         
-        print("\n📈 STRATEGY PARAMETERS (OPTIMIZED):")
+        print("\n📈 STRATEGY PARAMETERS (OPTIMIZED FOR R_25):")
+        print(f"   ATR 1m Range: {ATR_MIN_1M}-{ATR_MAX_1M}")
+        print(f"   ATR 5m Range: {ATR_MIN_5M}-{ATR_MAX_5M} ⭐ FIXED!")
         print(f"   RSI Buy: >{RSI_BUY_THRESHOLD} (tighter)")
         print(f"   RSI Sell: <{RSI_SELL_THRESHOLD} (tighter)")
         print(f"   ADX Threshold: >{ADX_THRESHOLD} (stronger)")
@@ -201,23 +208,33 @@ if __name__ == "__main__":
         else:
             print("   ❌ API Token: NOT SET")
         
-        print("\n" + "=" * 70)
-        print("💡 KEY IMPROVEMENTS FROM TRADE HISTORY ANALYSIS:")
-        print("=" * 70)
+        print("\n" + "=" * 75)
+        print("🔧 ALL CRITICAL FIXES APPLIED:")
+        print("=" * 75)
         print("✅ Changed to MULTIPLIER trades (was using RISE/FALL)")
         print("✅ Increased stake to $10 (realistic for $2 targets)")
         print("✅ Using 400x multiplier (balanced risk/reward)")
+        print("✅ Proper limit_order with TP/SL in dollar amounts")
+        print("✅ Fixed ATR 5m range: 3.5 (was blocking ALL trades at 2.5)")
         print("✅ Tighter RSI thresholds (58/42 vs 55/45)")
         print("✅ Higher ADX requirement (22 vs 18)")
         print("✅ Stricter signal scoring (6 vs 5)")
         print("✅ Longer cooldown (3 min vs 2 min)")
-        print("✅ Lower daily trade limit (30 vs 50)")
-        print("✅ Risk-reward: 1:2 ($1 risk for $2 profit)")
-        print("=" * 70)
+        print("✅ Circuit breaker: Stop after 3 consecutive losses")
+        print("=" * 75)
+        
+        print("\n💡 WHAT CHANGED FROM YOUR LOGS:")
+        print("=" * 75)
+        print("BEFORE: 5m ATR REJECTED: 2.73 (max was 2.5)")
+        print("        Result: 0 trades in 6+ hours ❌")
+        print("")
+        print("AFTER:  5m ATR VALIDATED: 2.73 (max now 3.5)")
+        print("        Result: Trades will execute ✅")
+        print("=" * 75)
         
     except ValueError as e:
-        print("=" * 70)
+        print("=" * 75)
         print("❌ CONFIGURATION ERROR")
-        print("=" * 70)
+        print("=" * 75)
         print(f"\n{e}\n")
-        print("=" * 70)
+        print("=" * 75)

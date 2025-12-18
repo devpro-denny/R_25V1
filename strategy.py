@@ -167,22 +167,26 @@ class TradingStrategy:
             return self._create_hold_signal(f"Analysis error: {e}")
     
     def _validate_atr(self, latest_1m: pd.Series, latest_5m: pd.Series) -> bool:
-        """Validate ATR is within acceptable ranges"""
+        """Validate ATR is within acceptable ranges (ADJUSTED FOR R_25)"""
         atr_1m = latest_1m['atr']
         atr_5m = latest_5m['atr']
         
+        # Log ATR values for monitoring
         logger.info(f"   📊 ATR Check - 1m: {atr_1m:.4f} (range: {config.ATR_MIN_1M}-{config.ATR_MAX_1M})")
         logger.info(f"   📊 ATR Check - 5m: {atr_5m:.4f} (range: {config.ATR_MIN_5M}-{config.ATR_MAX_5M})")
         
+        # Validate 1m ATR
         if not (config.ATR_MIN_1M <= atr_1m <= config.ATR_MAX_1M):
-            logger.info(f"   ❌ 1m ATR REJECTED: {atr_1m:.4f} is outside valid range")
+            logger.info(f"   ❌ 1m ATR REJECTED: {atr_1m:.4f} outside range")
             return False
         
+        # Validate 5m ATR (with R_25 adjusted range: 0.1-3.5)
         if not (config.ATR_MIN_5M <= atr_5m <= config.ATR_MAX_5M):
-            logger.info(f"   ❌ 5m ATR REJECTED: {atr_5m:.4f} is outside valid range")
+            logger.warning(f"   ❌ 5m ATR REJECTED: {atr_5m:.4f} outside range")
+            logger.warning(f"   💡 TIP: R_25 typically runs 2.6-3.0 on 5m. Consider ATR_MAX_5M=3.5")
             return False
         
-        logger.info(f"   ✅ ATR validation passed")
+        logger.info(f"   ✅ ATR validation passed (1m: {atr_1m:.2f}, 5m: {atr_5m:.2f})")
         return True
     
     def _check_volatility_consistency(self, df_1m: pd.DataFrame) -> bool:
