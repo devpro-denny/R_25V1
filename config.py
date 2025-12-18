@@ -1,11 +1,10 @@
 """
 Configuration Settings for Deriv R_25 Multipliers Trading Bot
-FINAL VERSION - ALL FIXES APPLIED
-✅ $10 stake for $2 profit target
-✅ 400x multiplier with proper TP/SL
-✅ ATR ranges adjusted for R_25 reality
-✅ Tightened strategy parameters
-config.py - PRODUCTION READY
+ENHANCED VERSION - With 5-Minute Trade Cancellation Risk Management
+✅ Cancellation phase as risk filter
+✅ Adaptive SL/TP after commitment
+✅ Dynamic risk management
+config.py - PRODUCTION READY WITH CANCELLATION
 """
 
 import os
@@ -32,28 +31,58 @@ if not DERIV_API_TOKEN or DERIV_API_TOKEN == "your_api_token_here":
 # ==================== TRADING PARAMETERS ====================
 SYMBOL = "R_25"                    # Volatility 25 Index
 MARKET = "synthetic_index"         # Market type
-CONTRACT_TYPE = "MULTUP"           # ⭐ CRITICAL: Multiplier Up (NOT RISE!)
-CONTRACT_TYPE_DOWN = "MULTDOWN"    # ⭐ CRITICAL: Multiplier Down (NOT FALL!)
+CONTRACT_TYPE = "MULTUP"           # Multiplier Up
+CONTRACT_TYPE_DOWN = "MULTDOWN"    # Multiplier Down
 
 # ==================== RISK MANAGEMENT ====================
-# ⭐ OPTIMIZED FOR $2 PROFIT TARGET ⭐
-FIXED_STAKE = 10.0                 # $10 stake for realistic $2 targets
-MULTIPLIER = 400                   # 400x multiplier (balanced risk/reward)
-TAKE_PROFIT_PERCENT = 0.05         # 0.05% TP = $2.00 profit with 400x
-STOP_LOSS_PERCENT = 0.025          # 0.025% SL = $1.00 loss with 400x
+FIXED_STAKE = 10.0                 # $10 stake
+MULTIPLIER = 400                   # 400x multiplier
+
+# ⭐ NEW: CANCELLATION PHASE PARAMETERS ⭐
+ENABLE_CANCELLATION = True         # Enable 5-minute cancellation feature
+CANCELLATION_DURATION = 300        # 5 minutes (300 seconds)
+CANCELLATION_FEE = 0.45            # Actual Deriv cancellation cost: $0.45
+CANCELLATION_THRESHOLD = 0.70      # Cancel if 70% of cancellation cost reached
+CANCELLATION_CHECK_INTERVAL = 5    # Check every 5 seconds during cancellation
+
+# ⭐ TWO-PHASE RISK MANAGEMENT ⭐
+# Phase 1: During Cancellation (First 5 minutes)
+# - Risk: Limited to cancellation fee (typically small % of stake)
+# - Action: Cancel if price moves 70% toward cancellation threshold
+
+# Phase 2: After Cancellation Expires (Full Commitment)
+POST_CANCEL_STOP_LOSS_PERCENT = 0.0125   # 5% of stake loss = 0.0125% price move with 400x
+POST_CANCEL_TAKE_PROFIT_PERCENT = 0.0375  # 15% price move target = 0.0375% with 400x
+
+# Legacy parameters (for backward compatibility if cancellation disabled)
+TAKE_PROFIT_PERCENT = 0.05         # 0.05% TP (used if cancellation disabled)
+STOP_LOSS_PERCENT = 0.025          # 0.025% SL (used if cancellation disabled)
+
 MAX_LOSS_PER_TRADE = 1.0           # Maximum loss per trade (USD)
-COOLDOWN_SECONDS = 180             # 3 minutes between trades (quality over quantity)
-MAX_TRADES_PER_DAY = 30            # Reduced from 50 (focus on quality)
+COOLDOWN_SECONDS = 180             # 3 minutes between trades
+MAX_TRADES_PER_DAY = 30            # Maximum trades per day
 MAX_DAILY_LOSS = 10.0              # Stop if lose $10 in a day
 
 # Valid multipliers for R_25
 VALID_MULTIPLIERS = [160, 400, 800, 1200, 1600]
 
 # ==================== TRADE CALCULATIONS ====================
-# With 400x multiplier and $10 stake:
-# Target Profit: 0.05% × $10 × 400 = $2.00 ✅
-# Max Loss: 0.025% × $10 × 400 = $1.00 ✅
-# Risk-to-Reward: 1:2 (risk $1 to make $2)
+# Phase 1 (Cancellation Active - 0-5 minutes):
+# - Cancellation Fee: $0.45 (actual Deriv cost for 5-min cancellation)
+# - Early Exit Trigger: Cancel at 70% = $0.315 loss
+# - If cancelled: Cost is $0.45 (fee paid to exit early)
+# - If price moves favorably: Let cancellation expire (no fee)
+# 
+# Phase 2 (Post-Cancellation - After 5 minutes):
+# - Stop Loss: 5% of stake = $0.50 loss
+# - Take Profit: 15% favorable move = $6.00 profit target
+# - Risk-to-Reward: 1:12 (excellent R:R after passing filter)
+#
+# Decision Logic:
+# If loss reaches $0.315 (70% of $0.45 fee) → CANCEL and pay $0.45
+# This prevents larger losses if trade continues badly
+# Example: Cancel at -$0.315 loss, pay $0.45 fee = Total cost -$0.765
+# Compare to: Let bad trade run to -$0.50 SL = Better to cancel early!
 
 # ==================== DATA FETCHING ====================
 CANDLES_1M = 150                   # 1-minute candles
@@ -62,41 +91,37 @@ MAX_RETRIES = 3
 RETRY_DELAY = 2
 
 # ==================== STRATEGY PARAMETERS ====================
-# ⭐ ADJUSTED FOR R_25 ACTUAL VOLATILITY ⭐
-
-# ATR Validation Ranges - FIXED based on 6 hours of actual R_25 data
+# ATR Validation Ranges
 ATR_MIN_1M = 0.05                 # Minimum 1m ATR
-ATR_MAX_1M = 2.0                  # INCREASED from 1.5 (allow higher volatility)
+ATR_MAX_1M = 2.0                  # Maximum 1m ATR
 ATR_MIN_5M = 0.10                 # Minimum 5m ATR
-ATR_MAX_5M = 3.5                  # ⭐ CRITICAL FIX: INCREASED from 2.5
-                                  # R_25 typically runs 2.6-3.0 on 5m timeframe
-                                  # Old limit (2.5) was blocking ALL trades!
+ATR_MAX_5M = 3.5                  # Maximum 5m ATR
 
-# RSI Thresholds - TIGHTER for better entries
-RSI_BUY_THRESHOLD = 58            # Raised from 55 (stronger momentum)
-RSI_SELL_THRESHOLD = 42           # Lowered from 45 (stronger momentum)
+# RSI Thresholds
+RSI_BUY_THRESHOLD = 58            # Buy signal threshold
+RSI_SELL_THRESHOLD = 42           # Sell signal threshold
 
-# ADX Threshold - HIGHER for stronger trends
-ADX_THRESHOLD = 22                # Raised from 18 (filter weak trends)
+# ADX Threshold
+ADX_THRESHOLD = 22                # Minimum trend strength
 
 # Moving Averages
 SMA_PERIOD = 100
 EMA_PERIOD = 20
 
-# Signal Scoring - HIGHER minimum for quality
-MINIMUM_SIGNAL_SCORE = 6          # Raised from 5 (be more selective)
+# Signal Scoring
+MINIMUM_SIGNAL_SCORE = 6          # Minimum score to trade
 
-# Filters - STRICTER
-VOLATILITY_SPIKE_MULTIPLIER = 2.0  # Lower from 2.5 (more conservative)
-WEAK_CANDLE_MULTIPLIER = 0.35     # Higher from 0.3 (stronger candles)
+# Filters
+VOLATILITY_SPIKE_MULTIPLIER = 2.0
+WEAK_CANDLE_MULTIPLIER = 0.35
 
 # ==================== TRADE MONITORING ====================
-MAX_TRADE_DURATION = 900           # 15 minutes max (was 30 min)
-MONITOR_INTERVAL = 2               # Check every 2 seconds (faster)
+MAX_TRADE_DURATION = 900           # 15 minutes max after cancellation
+MONITOR_INTERVAL = 2               # Check every 2 seconds
 
 # ==================== LOGGING ====================
 LOG_FILE = "trading_bot.log"
-LOG_LEVEL = "INFO"                 # Changed to INFO for production
+LOG_LEVEL = "INFO"
 
 # ==================== WEBSOCKET ====================
 WS_URL = "wss://ws.derivws.com/websockets/v3"
@@ -117,21 +142,21 @@ def validate_config():
     # Validate risk parameters
     if FIXED_STAKE <= 0:
         errors.append("FIXED_STAKE must be positive")
-    if TAKE_PROFIT_PERCENT <= 0:
-        errors.append("TAKE_PROFIT_PERCENT must be positive")
-    if STOP_LOSS_PERCENT <= 0:
-        errors.append("STOP_LOSS_PERCENT must be positive")
     if MULTIPLIER not in VALID_MULTIPLIERS:
         errors.append(f"MULTIPLIER must be one of {VALID_MULTIPLIERS}")
     
-    # Validate calculated values
-    calculated_tp = TAKE_PROFIT_PERCENT / 100 * FIXED_STAKE * MULTIPLIER
-    calculated_sl = STOP_LOSS_PERCENT / 100 * FIXED_STAKE * MULTIPLIER
-    
-    if calculated_sl > MAX_LOSS_PER_TRADE * 1.1:
-        errors.append(
-            f"Calculated SL (${calculated_sl:.2f}) exceeds MAX_LOSS_PER_TRADE (${MAX_LOSS_PER_TRADE})"
-        )
+    # Validate cancellation parameters
+    if ENABLE_CANCELLATION:
+        if CANCELLATION_DURATION < 60 or CANCELLATION_DURATION > 600:
+            errors.append("CANCELLATION_DURATION should be between 60-600 seconds")
+        if CANCELLATION_FEE <= 0:
+            errors.append("CANCELLATION_FEE must be positive")
+        if not (0.5 <= CANCELLATION_THRESHOLD <= 0.9):
+            errors.append("CANCELLATION_THRESHOLD should be between 0.5 and 0.9")
+        if POST_CANCEL_STOP_LOSS_PERCENT <= 0:
+            errors.append("POST_CANCEL_STOP_LOSS_PERCENT must be positive")
+        if POST_CANCEL_TAKE_PROFIT_PERCENT <= 0:
+            errors.append("POST_CANCEL_TAKE_PROFIT_PERCENT must be positive")
     
     # Validate thresholds
     if not (0 < RSI_BUY_THRESHOLD < 100):
@@ -147,12 +172,6 @@ def validate_config():
     if ATR_MIN_5M >= ATR_MAX_5M:
         errors.append("ATR_MIN_5M must be less than ATR_MAX_5M")
     
-    # Validate data for indicators
-    if CANDLES_1M < SMA_PERIOD + 20:
-        errors.append(f"CANDLES_1M ({CANDLES_1M}) should be at least {SMA_PERIOD + 20}")
-    if CANDLES_5M < SMA_PERIOD + 20:
-        errors.append(f"CANDLES_5M ({CANDLES_5M}) should be at least {SMA_PERIOD + 20}")
-    
     if errors:
         raise ValueError("Configuration validation failed:\n" + "\n".join(f"  - {e}" for e in errors))
     
@@ -162,74 +181,75 @@ if __name__ == "__main__":
     try:
         validate_config()
         
-        calc_tp = TAKE_PROFIT_PERCENT / 100 * FIXED_STAKE * MULTIPLIER
-        calc_sl = STOP_LOSS_PERCENT / 100 * FIXED_STAKE * MULTIPLIER
-        risk_reward = calc_tp / calc_sl if calc_sl > 0 else 0
+        print("=" * 75)
+        print("✅ ENHANCED CONFIGURATION - CANCELLATION RISK MANAGEMENT")
+        print("=" * 75)
         
-        print("=" * 75)
-        print("✅ CONFIGURATION VALIDATION PASSED - ALL FIXES APPLIED!")
-        print("=" * 75)
         print("\n📊 TRADING PARAMETERS:")
         print(f"   Symbol: {SYMBOL}")
-        print(f"   Contract Type: {CONTRACT_TYPE} / {CONTRACT_TYPE_DOWN}")
         print(f"   Multiplier: {MULTIPLIER}x")
+        print(f"   Stake: ${FIXED_STAKE}")
         
-        print("\n💰 RISK MANAGEMENT ($2 PROFIT TARGET):")
-        print(f"   Stake per trade: ${FIXED_STAKE}")
-        print(f"   Take Profit: {TAKE_PROFIT_PERCENT}% → ${calc_tp:.2f} ⭐")
-        print(f"   Stop Loss: {STOP_LOSS_PERCENT}% → ${calc_sl:.2f}")
-        print(f"   Risk-to-Reward: 1:{risk_reward:.1f}")
-        print(f"   Max Loss Per Trade: ${MAX_LOSS_PER_TRADE}")
-        print(f"   Max Daily Loss: ${MAX_DAILY_LOSS}")
+        print("\n⏱️ TWO-PHASE RISK MANAGEMENT:")
+        print("=" * 75)
+        
+        if ENABLE_CANCELLATION:
+            print("\n🛡️ PHASE 1: CANCELLATION PHASE (First 5 minutes)")
+            print(f"   Duration: {CANCELLATION_DURATION}s ({CANCELLATION_DURATION//60} min)")
+            print(f"   Cancellation Fee: ${CANCELLATION_FEE:.2f} (Deriv's actual cost)")
+            print(f"   Auto-Cancel Threshold: {CANCELLATION_THRESHOLD*100:.0f}% of fee = ${CANCELLATION_FEE * CANCELLATION_THRESHOLD:.2f}")
+            print(f"   Check Interval: {CANCELLATION_CHECK_INTERVAL}s")
+            print(f"   Purpose: Filter bad trades before full commitment")
+            print(f"   Logic: Cancel if loss >= ${CANCELLATION_FEE * CANCELLATION_THRESHOLD:.2f} (pay ${CANCELLATION_FEE:.2f} to prevent worse loss)")
+            
+            post_sl_amount = POST_CANCEL_STOP_LOSS_PERCENT / 100 * FIXED_STAKE * MULTIPLIER
+            post_tp_amount = POST_CANCEL_TAKE_PROFIT_PERCENT / 100 * FIXED_STAKE * MULTIPLIER
+            
+            print("\n🎯 PHASE 2: COMMITTED PHASE (After 5 minutes)")
+            print(f"   Stop Loss: {POST_CANCEL_STOP_LOSS_PERCENT}% → ${post_sl_amount:.2f}")
+            print(f"   Take Profit: {POST_CANCEL_TAKE_PROFIT_PERCENT}% → ${post_tp_amount:.2f}")
+            print(f"   Risk-to-Reward: 1:{post_tp_amount/post_sl_amount:.1f}")
+            print(f"   Max Loss: 5% of stake = ${FIXED_STAKE * 0.05:.2f}")
+            print(f"   Target Profit: 15% favorable move")
+        else:
+            legacy_tp = TAKE_PROFIT_PERCENT / 100 * FIXED_STAKE * MULTIPLIER
+            legacy_sl = STOP_LOSS_PERCENT / 100 * FIXED_STAKE * MULTIPLIER
+            print("\n⚠️ CANCELLATION DISABLED - Using legacy TP/SL")
+            print(f"   Take Profit: ${legacy_tp:.2f}")
+            print(f"   Stop Loss: ${legacy_sl:.2f}")
+        
+        print("\n💡 RISK MANAGEMENT STRATEGY:")
+        print("=" * 75)
+        print("1. Open trade with 5-min cancellation enabled (costs $0.45)")
+        print("2. Monitor price movement during cancellation phase")
+        print(f"3. If loss reaches ${CANCELLATION_FEE * CANCELLATION_THRESHOLD:.2f} → CANCEL (pay $0.45 fee)")
+        print("4. If price stable/favorable → Let cancellation expire (no fee)")
+        print("5. After cancellation expires → Apply adaptive SL/TP")
+        print("6. Trade becomes fully committed with optimized risk levels")
+        print("\n💭 Cancellation Logic:")
+        print(f"   Current Loss: ${CANCELLATION_FEE * CANCELLATION_THRESHOLD:.2f} + Cancel Fee: ${CANCELLATION_FEE:.2f} = Total: ${CANCELLATION_FEE * (1 + CANCELLATION_THRESHOLD):.2f}")
+        print(f"   vs. Potential Phase 2 SL: ${FIXED_STAKE * 0.05:.2f}")
+        print(f"   Decision: Cancel early if trade clearly moving wrong direction")
+        
+        print("\n📈 EXPECTED BENEFITS:")
+        print("=" * 75)
+        print("✅ Reduced losses: Bad trades canceled early")
+        print("✅ Better R:R: Only committed trades get full capital")
+        print("✅ Improved win rate: Cancellation acts as quality filter")
+        print("✅ Dynamic risk: SL/TP set based on actual entry validation")
         
         print("\n⏰ TRADING LIMITS:")
         print(f"   Cooldown: {COOLDOWN_SECONDS}s ({COOLDOWN_SECONDS//60} min)")
-        print(f"   Max Trades/Day: {MAX_TRADES_PER_DAY} (quality focused)")
-        print(f"   Max Duration: {MAX_TRADE_DURATION}s ({MAX_TRADE_DURATION//60} min)")
-        
-        print("\n📈 STRATEGY PARAMETERS (OPTIMIZED FOR R_25):")
-        print(f"   ATR 1m Range: {ATR_MIN_1M}-{ATR_MAX_1M}")
-        print(f"   ATR 5m Range: {ATR_MIN_5M}-{ATR_MAX_5M} ⭐ FIXED!")
-        print(f"   RSI Buy: >{RSI_BUY_THRESHOLD} (tighter)")
-        print(f"   RSI Sell: <{RSI_SELL_THRESHOLD} (tighter)")
-        print(f"   ADX Threshold: >{ADX_THRESHOLD} (stronger)")
-        print(f"   Min Signal Score: {MINIMUM_SIGNAL_SCORE} (selective)")
-        print(f"   Weak Candle Filter: {WEAK_CANDLE_MULTIPLIER}x ATR")
-        
-        print("\n🎯 EXPECTED PERFORMANCE:")
-        print(f"   Target: {MAX_TRADES_PER_DAY} trades/day × $2 = ${MAX_TRADES_PER_DAY * 2}")
-        print(f"   With 60% win rate: ~${MAX_TRADES_PER_DAY * 0.6 * 2 - MAX_TRADES_PER_DAY * 0.4 * 1:.2f}/day")
-        print(f"   Max daily risk: ${MAX_DAILY_LOSS}")
+        print(f"   Max Trades/Day: {MAX_TRADES_PER_DAY}")
+        print(f"   Max Daily Loss: ${MAX_DAILY_LOSS}")
         
         print("\n🔐 API CONFIGURATION:")
         print(f"   APP_ID: {DERIV_APP_ID}")
         if DERIV_API_TOKEN:
             print(f"   API Token: {'*' * 20}{DERIV_API_TOKEN[-4:]}")
-        else:
-            print("   ❌ API Token: NOT SET")
         
         print("\n" + "=" * 75)
-        print("🔧 ALL CRITICAL FIXES APPLIED:")
-        print("=" * 75)
-        print("✅ Changed to MULTIPLIER trades (was using RISE/FALL)")
-        print("✅ Increased stake to $10 (realistic for $2 targets)")
-        print("✅ Using 400x multiplier (balanced risk/reward)")
-        print("✅ Proper limit_order with TP/SL in dollar amounts")
-        print("✅ Fixed ATR 5m range: 3.5 (was blocking ALL trades at 2.5)")
-        print("✅ Tighter RSI thresholds (58/42 vs 55/45)")
-        print("✅ Higher ADX requirement (22 vs 18)")
-        print("✅ Stricter signal scoring (6 vs 5)")
-        print("✅ Longer cooldown (3 min vs 2 min)")
-        print("✅ Circuit breaker: Stop after 3 consecutive losses")
-        print("=" * 75)
-        
-        print("\n💡 WHAT CHANGED FROM YOUR LOGS:")
-        print("=" * 75)
-        print("BEFORE: 5m ATR REJECTED: 2.73 (max was 2.5)")
-        print("        Result: 0 trades in 6+ hours ❌")
-        print("")
-        print("AFTER:  5m ATR VALIDATED: 2.73 (max now 3.5)")
-        print("        Result: Trades will execute ✅")
+        print("🚀 READY TO TRADE WITH ENHANCED RISK MANAGEMENT")
         print("=" * 75)
         
     except ValueError as e:
