@@ -17,7 +17,7 @@ def run_server(env):
     env_vars["PORT"] = str(PORT)
     env_vars["BOT_AUTO_START"] = "false"  # Don't start bot logic
     env_vars["SUPABASE_URL"] = "https://example.supabase.co" # Mock
-    # Mock a valid-looking JWT for Supabase key (Header.Payload.Signature)
+    # SAFE TO COMMIT: This is a non-functional MOCK token for testing purposes only
     env_vars["SUPABASE_SERVICE_ROLE_KEY"] = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoic2VydmljZV9yb2xlIiwiaXNzIjoic3VwYWJhc2UiLCJpYXQiOjE2MDAwMDAwMDAsImV4cCI6MjAwMDAwMDAwMH0.mocksignature" 
     env_vars["DERIV_API_TOKEN"] = "mock_token_for_test" # Mock to pass config validation
     env_vars["DERIV_APP_ID"] = "1089" # Mock
