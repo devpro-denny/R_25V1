@@ -3,10 +3,16 @@ FastAPI Application Entry Point
 Wraps existing Deriv trading bot with REST API and WebSocket endpoints
 """
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 import logging
+
+# Rate Limiting
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
 
 from app.core.settings import settings
 from app.core.logging import setup_api_logger
@@ -31,6 +37,9 @@ except ImportError:
     logger.warning("⚠️ Telegram notifier not available - error logging disabled")
 except Exception as e:
     logger.warning(f"⚠️ Failed to setup Telegram error logging: {e}")
+
+# Initialize Rate Limiter
+limiter = Limiter(key_func=get_remote_address)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -63,14 +72,20 @@ app = FastAPI(
     description="REST API and WebSocket interface for automated trading bot",
     version="1.0.0",
     lifespan=lifespan,
-    docs_url="/docs",
-    redoc_url="/redoc"
+    docs_url=settings.effective_docs_url,
+    redoc_url=settings.effective_redoc_url,
+    openapi_url=settings.effective_openapi_url
 )
+
+# Add Rate Limiter to app state
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_middleware(SlowAPIMiddleware)
 
 # Configure CORS for Vercel frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.CORS_ORIGINS,
+    allow_origins=settings.get_cors_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -78,25 +93,22 @@ app.add_middleware(
 
 # Health check endpoint (for Render)
 @app.get("/health")
-async def health_check():
+@limiter.limit("5/minute")
+async def health_check(request: Request):
     """Health check endpoint for monitoring and load balancers"""
-    return {
-        "status": "healthy",
-        "bot_running": bot_runner.is_running,
-        "api_version": "1.0.0"
-    }
+    return {"status": "ok"}
 
 # Root endpoint
 @app.get("/")
-async def root():
+@limiter.limit("5/minute")
+async def root(request: Request):
     """API information endpoint"""
     return {
         "name": "Deriv R_25 Trading Bot API",
         "version": "1.0.0",
         "status": "operational",
-        "docs": "/docs",
+        "docs": settings.effective_docs_url,
         "health": "/health",
-        "websocket": "/ws/live"
     }
 
 # Include API routers
