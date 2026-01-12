@@ -315,6 +315,10 @@ class TradeEngine:
               OR as profit/loss amounts. Deriv API accepts both formats.
         """
         try:
+            if entry_spot <= 0:
+                logger.error(f"❌ Cannot apply limits: Invalid entry spot {entry_spot}")
+                return False
+
             # For multiplier contracts, calculate profit/loss amounts
             # Formula based on Deriv's multiplier calculation:
             # Profit = (Price_Change / Entry_Price) * Stake * Multiplier
@@ -327,6 +331,12 @@ class TradeEngine:
             price_change_sl = sl_price - entry_spot
             sl_amount = abs((price_change_sl / entry_spot) * stake * multiplier)
             
+            # Validation for infinite values
+            import math
+            if math.isinf(tp_amount) or math.isnan(tp_amount) or math.isinf(sl_amount) or math.isnan(sl_amount):
+                 logger.error(f"❌ invalid TP/SL calculation result: TP={tp_amount}, SL={sl_amount}")
+                 return False
+
             logger.info(f"🎯 Applying TP/SL for multiplier contract...")
             logger.info(f"   Entry Spot: {entry_spot:.4f}")
             logger.info(f"   Multiplier: {multiplier}x")
@@ -428,6 +438,12 @@ class TradeEngine:
                 contract_id = buy_info["contract_id"]
                 entry_price = float(buy_info.get("buy_price", stake))
                 entry_spot = float(buy_info.get("entry_spot", 0))
+
+                # Fallback to proposal spot if entry_spot is invalid (failed to fetch on buy)
+                if entry_spot == 0:
+                   logger.warning(f"⚠️ Zero entry_spot in buy response, falling back to proposal spot: {proposal.get('spot', 0)}")
+                   entry_spot = float(proposal.get('spot', 0))
+                
                 longcode = buy_info.get("longcode", "")
                 
                 self.active_contract_id = contract_id
