@@ -311,48 +311,60 @@ class TradeEngine:
             multiplier: Contract multiplier
             stake: Stake amount
         
-        Note: For multiplier contracts, Deriv API requires profit/loss AMOUNTS in USD,
-              not price levels. We must convert price levels to profit/loss amounts.
+        Note: For multiplier contracts, we can use stop_loss and take_profit as barrier price levels
+              OR as profit/loss amounts. Deriv API accepts both formats.
         """
         try:
-            # Convert price levels to profit/loss amounts for multiplier contracts
-            # Formula: Profit/Loss = (price_change * multiplier * stake) / entry_spot
+            # For multiplier contracts, calculate profit/loss amounts
+            # Formula based on Deriv's multiplier calculation:
+            # Profit = (Price_Change / Entry_Price) * Stake * Multiplier
             
-            # Calculate TP amount
-            tp_distance = abs(tp_price - entry_spot)
-            tp_amount = (tp_distance * multiplier * stake) / entry_spot
+            # Calculate TP amount (profit when price hits TP level)
+            price_change_tp = tp_price - entry_spot
+            tp_amount = abs((price_change_tp / entry_spot) * stake * multiplier)
             
-            # Calculate SL amount (negative)
-            sl_distance = abs(entry_spot - sl_price)
-            sl_amount = -((sl_distance * multiplier * stake) / entry_spot)
+            # Calculate SL amount (loss when price hits SL level)  
+            price_change_sl = sl_price - entry_spot
+            sl_amount = abs((price_change_sl / entry_spot) * stake * multiplier)
             
-            logger.info(f"🎯 Converting price levels to profit/loss amounts...")
-            logger.info(f"   TP Price Level: {tp_price:.4f} → Amount: ${tp_amount:.2f}")
-            logger.info(f"   SL Price Level: {sl_price:.4f} → Amount: ${sl_amount:.2f}")
+            logger.info(f"🎯 Applying TP/SL for multiplier contract...")
+            logger.info(f"   Entry Spot: {entry_spot:.4f}")
+            logger.info(f"   Multiplier: {multiplier}x")
+            logger.info(f"   Stake: ${stake:.2f}")
+            logger.info(f"   TP Level: {tp_price:.4f} → Profit: ${tp_amount:.2f}")
+            logger.info(f"   SL Level: {sl_price:.4f} → Loss: ${sl_amount:.2f}")
             
+            # Build limit order request
+            # For multipliers, stop_loss is negative (loss amount) and take_profit is positive (profit amount)
             limit_request = {
                 "limit_order": {
                     "add": {
                         "take_profit": round(tp_amount, 2),
-                        "stop_loss": round(sl_amount, 2)
+                        "stop_loss": round(-sl_amount, 2)  # Negative for loss
                     }
                 },
                 "contract_id": contract_id
             }
             
-            logger.info(f"📤 Applying TP/SL limits to Deriv...")
+            logger.info(f"📤 Sending limit order to Deriv...")
+            logger.debug(f"   Request: {limit_request}")
             response = await self.send_request(limit_request)
             
             if "error" in response:
                 logger.error(f"❌ Failed to apply limits: {response['error']['message']}")
-                logger.error(f"   Request: {limit_request}")
+                logger.error(f"   Error code: {response['error'].get('code', 'N/A')}")
+                logger.error(f"   Request sent: {limit_request}")
                 return False
             
-            logger.info(f"✅ TP/SL limits applied successfully!")
-            logger.info(f"   Take Profit: ${tp_amount:.2f} at {tp_price:.4f}")
-            logger.info(f"   Stop Loss: ${sl_amount:.2f} at {sl_price:.4f}")
+            if "limit_order" in response:
+                logger.info(f"✅ TP/SL limits applied successfully!")
+                logger.info(f"   Take Profit: ${tp_amount:.2f} at {tp_price:.4f}")
+                logger.info(f"   Stop Loss: ${sl_amount:.2f} at {sl_price:.4f}")
+                return True
+            else:
+                logger.warning(f"⚠️ Unexpected response format: {response}")
+                return False
             
-            return True
         except Exception as e:
             logger.error(f"❌ Error applying limits: {e}")
             import traceback
