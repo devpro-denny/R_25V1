@@ -119,11 +119,17 @@ class TelegramNotifier:
         """Notify that bot has started"""
         strategy_mode = "🛡️ Top-Down Structure" if config.USE_TOPDOWN_STRATEGY else "⚡ Classic Scalping"
         
-        if config.ENABLE_CANCELLATION:
+        if config.ENABLE_CANCELLATION and not config.USE_TOPDOWN_STRATEGY:
             risk_text = (
                 f"🛡️ <b>Cancellation Protection</b>\n"
                 f"   • Duration: {config.CANCELLATION_DURATION}s\n"
                 f"   • Fee: {format_currency(config.CANCELLATION_FEE)}"
+            )
+        elif config.USE_TOPDOWN_STRATEGY:
+            risk_text = (
+                f"🛡️ <b>Risk Management</b>\n"
+                f"   • TP/SL: Dynamic (Structure)\n"
+                f"   • Min R:R: 1:{config.TOPDOWN_MIN_RR_RATIO}"
             )
         else:
             risk_text = (
