@@ -9,6 +9,15 @@ import json
 import sys
 from datetime import datetime
 from typing import Dict, Any, Optional
+from app.core.context import user_id_var
+
+class ContextInjectingFilter(logging.Filter):
+    """
+    Injects user_id from contextvars into the log record.
+    """
+    def filter(self, record):
+        record.user_id = user_id_var.get()
+        return True
 
 def setup_logger(log_file: str = "trading_bot.log", level: str = "INFO") -> logging.Logger:
     """
@@ -30,8 +39,10 @@ def setup_logger(log_file: str = "trading_bot.log", level: str = "INFO") -> logg
         return logger
     
     # Create formatters
+    # Create formatters with User ID support
+    # We include user_id in the message string so it's written to file
     detailed_formatter = logging.Formatter(
-        '%(asctime)s | %(levelname)s | %(message)s',
+        '%(asctime)s | %(levelname)s | [%(user_id)s] %(message)s',
         datefmt='%Y-%m-%d %H:%M:%S'
     )
     
@@ -52,6 +63,10 @@ def setup_logger(log_file: str = "trading_bot.log", level: str = "INFO") -> logg
     file_handler.setLevel(logging.DEBUG)  # File gets everything
     file_handler.setFormatter(detailed_formatter)
     
+    # Utilities logger also needs context filter
+    context_filter = ContextInjectingFilter()
+    logger.addFilter(context_filter)
+
     # Add handlers
     logger.addHandler(console_handler)
     logger.addHandler(file_handler)

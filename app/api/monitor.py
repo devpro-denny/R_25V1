@@ -63,14 +63,36 @@ async def get_recent_logs(
         if not os.path.exists(log_file):
             return {"logs": []}
         
+        # Read and filter logs
+        filtered_logs = []
+        user_id = current_user['id']
+        
         with open(log_file, 'r', encoding='utf-8') as f:
+            # Read from end efficiently (simplification: read all for now as logs aren't huge yet)
+            # For production, utilize seek/tell or unix 'tail' equivalent
             all_lines = f.readlines()
-            recent_lines = all_lines[-lines:]
             
-        return prepare_response({  # ← WRAP WITH prepare_response
-            "logs": [line.strip() for line in recent_lines],
+            for line in reversed(all_lines):
+                # Stop if we have enough
+                if len(filtered_logs) >= lines:
+                    break
+                    
+                # Filter logic:
+                # 1. System logs: "[None]"
+                # 2. User logs: "[{user_id}]"
+                # 3. Allow legacy logs (no bracketed ID) if strict_mode is False (optional)
+                
+                if f"[{user_id}]" in line or "[None]" in line:
+                    filtered_logs.append(line.strip())
+                # If neither, it belongs to another user -> Skip
+        
+        # Reverse back to chronological order
+        filtered_logs.reverse()
+            
+        return prepare_response({
+            "logs": filtered_logs,
             "total_lines": len(all_lines),
-            "showing": len(recent_lines)
+            "showing": len(filtered_logs)
         })
     except Exception as e:
         return prepare_response({  # ← WRAP WITH prepare_response
