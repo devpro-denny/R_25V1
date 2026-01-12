@@ -345,18 +345,18 @@ class TradeEngine:
             logger.info(f"   SL Level: {sl_price:.4f} → Loss: ${sl_amount:.2f}")
             
             # Build limit order request
-            # For multipliers, stop_loss is negative (loss amount) and take_profit is positive (profit amount)
+            # Use contract_update instead of limit_order for open contracts
+            # Ensure values are strictly Python floats (not numpy types)
             limit_request = {
+                "contract_update": 1,
+                "contract_id": int(contract_id),  # Ensure int
                 "limit_order": {
-                    "add": {
-                        "take_profit": round(tp_amount, 2),
-                        "stop_loss": round(-sl_amount, 2)  # Negative for loss
-                    }
-                },
-                "contract_id": contract_id
+                    "take_profit": float(round(tp_amount, 2)),
+                    "stop_loss": float(round(sl_amount, 2))  # Positive amount for contract_update
+                }
             }
             
-            logger.info(f"📤 Sending limit order to Deriv...")
+            logger.info(f"📤 Sending limit order (contract_update) to Deriv...")
             logger.debug(f"   Request: {limit_request}")
             response = await self.send_request(limit_request)
             
@@ -366,7 +366,7 @@ class TradeEngine:
                 logger.error(f"   Request sent: {limit_request}")
                 return False
             
-            if "limit_order" in response:
+            if "contract_update" in response:
                 logger.info(f"✅ TP/SL limits applied successfully!")
                 logger.info(f"   Take Profit: ${tp_amount:.2f} at {tp_price:.4f}")
                 logger.info(f"   Stop Loss: ${sl_amount:.2f} at {sl_price:.4f}")
