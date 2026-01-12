@@ -270,15 +270,8 @@ class RiskManager:
             return False, f"Stake {stake:.2f} exceeds max {max_stake:.2f} for {symbol}"
         
         # Top-Down: TP/SL validation done by strategy
+        # Strategy already validates R:R correctly using price distances
         if self.use_topdown:
-            if take_profit and stop_loss:
-                # Validate basic R:R if both provided
-                risk = abs(stop_loss)
-                reward = abs(take_profit)
-                if risk > 0:
-                    rr_ratio = reward / risk
-                    if rr_ratio < config.TOPDOWN_MIN_RR_RATIO:
-                        return False, f"R:R {rr_ratio:.2f} below minimum {config.TOPDOWN_MIN_RR_RATIO}"
             return True, f"Valid (Top-Down mode for {symbol})"
         
         # Cancellation mode: TP/SL applied after Phase 1
