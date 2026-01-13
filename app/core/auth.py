@@ -95,7 +95,7 @@ async def get_current_user(
         }
         
     except Exception as e:
-        logger.error(f"Auth error: {e}")
+        logger.warning(f"Auth error: {e}")
         return None
 
 
