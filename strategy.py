@@ -94,6 +94,7 @@ class TradingStrategy:
         structure_levels.extend(self._find_levels(data_1w, "1w"))
         structure_levels.extend(self._find_levels(data_1d, "1d"))
         structure_levels.extend(self._find_levels(data_4h, "4h"))
+        structure_levels.extend(self._find_levels(data_1h, "1h")) # Added 1h levels for closer targets
         
         # Identify Targets (TP) and Structure Points (SL)
         target_level, sl_level = self._identify_tp_sl_levels(
@@ -102,7 +103,7 @@ class TradingStrategy:
         )
 
         if not target_level:
-            response["details"]["reason"] = "No clear Untested Level (Price Magnet) found for Target"
+            response["details"]["reason"] = "No clear Structure Level found for Target"
             return response
             
         if not sl_level:
@@ -185,7 +186,7 @@ class TradingStrategy:
         score += 1 if self._determine_trend(data_1h, "1h") == bias else 0
         score += 2 # Entry trigger valid
         
-        # Untested levels bonus
+        # Untested levels bonus (still valuable for scoring, even if not forced for TP)
         is_magnet = any(l['price'] == target_level and not l['tested'] for l in structure_levels)
         if is_magnet:
             score += 2
@@ -330,7 +331,7 @@ class TradingStrategy:
                                data_4h: pd.DataFrame,
                                data_1h: pd.DataFrame) -> Tuple[Optional[float], Optional[float]]:
         """
-        TP: Nearest Untested Level (Price Magnet).
+        TP: Nearest Structure Level (Tested or Untested).
         SL: Price behind last Swing Point (Prioritize 1H -> 4H -> Daily).
         """
         target = None
@@ -343,12 +344,9 @@ class TradingStrategy:
             # Sort by proximity
             potential_tps.sort(key=lambda x: x['price'])
             
-            # Prioritize Untested (Magnets)
-            untested_tps = [l for l in potential_tps if not l['tested']]
-            if untested_tps:
-                target = untested_tps[0]['price']
-            elif potential_tps:
-                target = potential_tps[0]['price'] # Fallback to nearest tested
+            # Prioritize NEAREST level (closer TP = better win rate)
+            if potential_tps:
+                target = potential_tps[0]['price']
 
             # SL: Last Swing Low BELOW current price (1H -> 4H -> Daily)
             # Try 1H first
@@ -377,11 +375,8 @@ class TradingStrategy:
             # Sort by proximity (descending)
             potential_tps.sort(key=lambda x: x['price'], reverse=True)
             
-            # Prioritize Untested
-            untested_tps = [l for l in potential_tps if not l['tested']]
-            if untested_tps:
-                target = untested_tps[0]['price']
-            elif potential_tps:
+            # Prioritize NEAREST level
+            if potential_tps:
                 target = potential_tps[0]['price']
 
             # SL: Last Swing High ABOVE current price (1H -> 4H -> Daily)
