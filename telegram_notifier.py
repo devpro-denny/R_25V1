@@ -252,9 +252,23 @@ class TelegramNotifier:
     async def notify_trade_closed(self, result: Dict, trade_info: Dict):
         """Notify that a trade has been closed"""
         status = result.get('status', 'unknown')
-        profit = result.get('profit', 0)
+        # Safely get profit, default to 0.0 if None
+        profit = result.get('profit')
+        if profit is None:
+            profit = 0.0
+        else:
+            profit = float(profit)
+            
         symbol = trade_info.get('symbol', config.SYMBOL)
-        stake = trade_info.get('stake', 1)
+        
+        # Safely get stake, default to 1.0 (to avoid division by zero) if None or 0
+        stake = trade_info.get('stake')
+        if stake is None:
+            stake = 1.0
+        else:
+            stake = float(stake)
+            if stake == 0:
+                stake = 1.0
         
         # Determine emoji and outcome
         if profit > 0:
@@ -267,7 +281,7 @@ class TelegramNotifier:
             emoji = "⚪"
             header = "TRADE CLOSED"
             
-        roi = (profit / stake) * 100 if stake > 0 else 0
+        roi = (profit / stake) * 100
         
         # Duration calculation
         # assuming we don't have exact duration easily, we can skip or add if timestamp available
