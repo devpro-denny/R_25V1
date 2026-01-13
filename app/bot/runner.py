@@ -321,6 +321,7 @@ class BotRunner:
                 
                 self.strategy = TradingStrategy()
                 self.risk_manager = RiskManager()
+                self.risk_manager.set_bot_state(self.state)
                 
                 logger.info("✅ Components initialized for multi-asset mode")
             except Exception as e:
@@ -743,6 +744,7 @@ class BotRunner:
                 
                 # Record closure
                 self.risk_manager.record_trade_close(contract_id, pnl, status)
+                self.state.update_trade(contract_id, trade_status)
                 
                 logger.info(f"🔓 {symbol} trade closed - system unlocked")
                 logger.info(f"💰 P&L: ${pnl:.2f}")

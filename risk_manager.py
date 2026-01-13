@@ -84,6 +84,13 @@ class RiskManager:
         
         # Initialize TP/SL amounts based on strategy
         self._initialize_strategy_parameters()
+        
+        # Link to BotState for API updates
+        self.bot_state = None
+    
+    def set_bot_state(self, state):
+        """Set BotState instance for real-time API updates"""
+        self.bot_state = state
     
     def _initialize_strategy_parameters(self):
         """Initialize parameters based on active strategy"""
@@ -354,6 +361,10 @@ class RiskManager:
             # Legacy trade
             logger.info(f"   TP: {format_currency(trade_record['take_profit'])}")
             logger.info(f"   SL: {format_currency(trade_record['stop_loss'])}")
+        
+        # Update BotState if linked
+        if self.bot_state:
+            self.bot_state.add_trade(trade_record)
     
     def record_trade_cancelled(self, contract_id: str, refund: float):
         """Record a trade cancellation (wait-and-cancel at 4-min mark)"""
@@ -766,6 +777,10 @@ class RiskManager:
                     self.active_symbol = symbol
                     
                     logger.info(f"✅ Global lock restored - monitoring {symbol} position")
+                    
+                    # Update BotState if linked
+                    if self.bot_state:
+                        self.bot_state.add_trade(self.active_trade)
                     return True
             
             logger.info(f"✅ No existing positions - ready for first signal")

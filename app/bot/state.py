@@ -89,6 +89,7 @@ class BotState:
             if trade:
                 # Add final status
                 trade['final_status'] = final_status
+                trade['status'] = final_status.get('status', 'closed')
                 trade['closed_at'] = datetime.now().isoformat()
                 trade['pnl'] = final_status.get('profit', 0.0)
                 
