@@ -325,8 +325,7 @@ class RiskManager:
             'strategy': 'topdown' if self.use_topdown else ('scalping_cancel' if self.cancellation_enabled else 'legacy'),
             'phase': 'cancellation' if self.cancellation_enabled else 'committed',
             'cancellation_enabled': trade_info.get('cancellation_enabled', False),
-            'cancellation_expiry': trade_info.get('cancellation_expiry'),
-            'highest_unrealized_pnl': 0.0 # Track peak profit for trailing stop
+            'cancellation_expiry': trade_info.get('cancellation_expiry')
         }
         
         self.trades_today.append(trade_record)
@@ -426,29 +425,6 @@ class RiskManager:
                 'message': f'Emergency: GLOBAL daily loss approaching limit ({format_currency(potential_daily_loss)})',
                 'current_pnl': current_pnl
             }
-        
-        # ----------------------------------------------------------------------
-        # Secure Profit Logic (Trailing Stop)
-        # ----------------------------------------------------------------------
-        # Update highest unrealized PnL
-        current_peak = self.active_trade.get('highest_unrealized_pnl', 0.0)
-        if current_pnl > current_peak:
-            self.active_trade['highest_unrealized_pnl'] = current_pnl
-            current_peak = current_pnl
-            
-        # Rule: Once profit hit +$20, enforce trailing stop
-        SECURE_PROFIT_TRIGGER = 20.0
-        TRAILING_BUFFER = 5.0
-        
-        if current_peak >= SECURE_PROFIT_TRIGGER:
-            stop_level = current_peak - TRAILING_BUFFER
-            if current_pnl <= stop_level:
-                return {
-                    'should_close': True,
-                    'reason': 'secure_profit_trailing_stop',
-                    'message': f'🔒 Secure Profit Hit: Peak {format_currency(current_peak)} → Dropped to {format_currency(current_pnl)}',
-                    'current_pnl': current_pnl
-                }
         
         # Otherwise let Deriv handle exits (TP/SL via limit_order)
         return {'should_close': False, 'reason': 'Deriv limit_order active'}
