@@ -154,7 +154,8 @@ class RiskManager:
         
         logger.info(f"   Circuit Breaker: {self.max_consecutive_losses} consecutive losses (GLOBAL)")
         logger.info(f"   Max Trades/Day: {self.max_trades_per_day} (GLOBAL)")
-        logger.info(f"   Max Daily Loss: {format_currency(self.max_daily_loss)} (GLOBAL)")
+        max_daily_display = format_currency(self.max_daily_loss) if self.max_daily_loss is not None else "WAITING_FOR_STAKE"
+        logger.info(f"   Max Daily Loss: {max_daily_display} (GLOBAL)")
     
     def reset_daily_stats(self):
         """Reset daily statistics at start of new day"""

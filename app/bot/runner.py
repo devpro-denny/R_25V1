@@ -133,9 +133,8 @@ class BotRunner:
             
         current_stake = self.user_stake
         
-        # APPLY DYNAMIC RISK LIMITS (User Request: Max Loss = Stake, Daily Loss = 3x Stake)
-        if hasattr(self.risk_manager, 'update_risk_settings'):
-            self.risk_manager.update_risk_settings(current_stake)
+        # Risk settings will be applied in _run_bot after components are initialized
+        # (self.risk_manager is None here until _run_bot starts)
             
         try:
             logger.info(f"🚀 Starting bot for {self.account_id or 'default user'}...")
@@ -355,6 +354,11 @@ class BotRunner:
                 self.strategy = TradingStrategy()
                 self.risk_manager = RiskManager()
                 self.risk_manager.set_bot_state(self.state)
+                
+                # CRITICAL: Apply user stake immediately after initialization
+                if self.user_stake:
+                    self.risk_manager.update_risk_settings(self.user_stake)
+                    logger.info(f"✅ Risk limits updated for stake: ${self.user_stake}")
                 
                 logger.info("✅ Components initialized for multi-asset mode")
             except Exception as e:
