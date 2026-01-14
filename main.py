@@ -125,7 +125,8 @@ class TradingBot:
                 asset_info = config.get_asset_info(symbol)
                 logger.info(f"   • {symbol}: {asset_info['multiplier']}x ({asset_info['description']})")
             
-            logger.info(f"💵 Stake: {format_currency(config.FIXED_STAKE)}")
+            stake_display = format_currency(config.FIXED_STAKE) if config.FIXED_STAKE else "USER_DEFINED"
+            logger.info(f"💵 Stake: {stake_display}")
             logger.info(f"🎯 Max Concurrent Trades: {config.MAX_CONCURRENT_TRADES}")
             
             if config.USE_TOPDOWN_STRATEGY:
@@ -139,7 +140,8 @@ class TradingBot:
             
             logger.info(f"⏰ Cooldown: {config.COOLDOWN_SECONDS}s")
             logger.info(f"🔢 Max Daily Trades: {config.MAX_TRADES_PER_DAY}")
-            logger.info(f"💸 Max Daily Loss: {format_currency(config.MAX_DAILY_LOSS)}")
+            daily_loss_display = format_currency(config.MAX_DAILY_LOSS) if config.MAX_DAILY_LOSS else "DYNAMIC (3x Stake)"
+            logger.info(f"💸 Max Daily Loss: {daily_loss_display}")
             logger.info("="*60)
             
             logger.info("✅ Bot initialized successfully!")
@@ -327,7 +329,7 @@ class TradingBot:
             else:
                 # Legacy: Validate only stake
                 valid, msg = self.risk_manager.validate_trade_parameters(
-                    stake=config.FIXED_STAKE
+                    stake=config.FIXED_STAKE or 50.0
                 )
             
             if not valid:

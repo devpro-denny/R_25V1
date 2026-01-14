@@ -35,8 +35,11 @@ class RiskManager:
     def __init__(self):
         """Initialize RiskManager with global multi-asset position control"""
         self.max_trades_per_day = config.MAX_TRADES_PER_DAY
-        self.max_daily_loss = config.MAX_DAILY_LOSS
+        self.max_trades_per_day = config.MAX_TRADES_PER_DAY
+        self.max_daily_loss = getattr(config, 'MAX_DAILY_LOSS', None) # Default None, set dynamically
         self.cooldown_seconds = config.COOLDOWN_SECONDS
+        self.max_loss_per_trade_base = getattr(config, 'MAX_LOSS_PER_TRADE', None) # Default None, set dynamically
+        self.fixed_stake = None # STRICTLY USER DEFINED - Must be set via update_risk_settings
         
         # Trade tracking - GLOBAL across all assets
         self.trades_today: List[Dict] = []
@@ -92,8 +95,29 @@ class RiskManager:
         """Set BotState instance for real-time API updates"""
         self.bot_state = state
     
+    def update_risk_settings(self, stake: float):
+        """
+        Update risk limits based on user's stake.
+        Request:
+        - daily_loss = 3 * stake
+        - max_loss_per_trade = stake
+        """
+        self.fixed_stake = stake
+        self.max_daily_loss = stake * 3.0
+        self.max_loss_per_trade_base = stake
+        
+        # Update strategy params if needed (re-calc based on new stake)
+        self._initialize_strategy_parameters()
+        
+        logger.info(f"🔄 Risk Limits Updated for Stake ${stake}:")
+        logger.info(f"   Max Daily Loss: ${self.max_daily_loss} (3x Stake)")
+        logger.info(f"   Max Loss/Trade: ${self.max_loss_per_trade_base} (1x Stake)")
+
     def _initialize_strategy_parameters(self):
         """Initialize parameters based on active strategy"""
+        # Use self.fixed_stake instead of config.FIXED_STAKE
+        base_stake = self.fixed_stake
+
         if self.use_topdown:
             # Top-Down: Dynamic TP/SL from strategy
             self.target_profit = None  # Set dynamically per trade
@@ -108,7 +132,6 @@ class RiskManager:
         elif self.cancellation_enabled:
             # Scalping with cancellation: Wait-and-cancel logic
             # Note: Uses base stake, actual amount calculated per symbol
-            base_stake = config.FIXED_STAKE
             self.target_profit = (config.POST_CANCEL_TAKE_PROFIT_PERCENT / 100) * base_stake * config.MULTIPLIER
             self.max_loss = (config.POST_CANCEL_STOP_LOSS_PERCENT / 100) * base_stake * config.MULTIPLIER
             logger.info("[OK] Risk Manager initialized (SCALPING + WAIT-CANCEL MODE - MULTI-ASSET)")
@@ -121,7 +144,6 @@ class RiskManager:
             
         else:
             # Legacy: Fixed percentages
-            base_stake = config.FIXED_STAKE
             self.target_profit = (config.TAKE_PROFIT_PERCENT / 100) * base_stake * config.MULTIPLIER
             self.max_loss = (config.STOP_LOSS_PERCENT / 100) * base_stake * config.MULTIPLIER
             logger.info("[OK] Risk Manager initialized (LEGACY MODE - MULTI-ASSET)")
@@ -270,8 +292,20 @@ class RiskManager:
             return False, "Stake must be positive"
         
         # Get symbol-specific max stake
+        # Get symbol-specific max stake
         multiplier = self.asset_config.get(symbol, {}).get('multiplier', config.MULTIPLIER)
-        max_stake = config.FIXED_STAKE * multiplier * 1.2
+        
+        # Ensure stake is set
+        if self.fixed_stake is None:
+             # If called before initialization, we can't validate max stake properly relative to user setting
+             # But we can check for absolute sanity or just return info
+             logger.warning("⚠️ Accessing validation before stake initialized. Defaulting base to stake.")
+             base_reference = stake # Treat current stake as base for check
+        else:
+             base_reference = self.fixed_stake
+
+        # Limit: 1.5x of user's base stake setting
+        max_stake = base_reference * multiplier * 1.5
         
         if stake > max_stake:
             return False, f"Stake {stake:.2f} exceeds max {max_stake:.2f} for {symbol}"
@@ -292,7 +326,8 @@ class RiskManager:
         if stop_loss is not None and stop_loss <= 0:
             return False, "Stop loss must be positive"
         
-        max_loss_per_trade = config.MAX_LOSS_PER_TRADE * multiplier
+        # Use dynamic max loss base
+        max_loss_per_trade = self.max_loss_per_trade_base * multiplier
         if stop_loss and stop_loss > max_loss_per_trade * 1.15:
             return False, f"SL {format_currency(stop_loss)} exceeds max for {symbol}"
         

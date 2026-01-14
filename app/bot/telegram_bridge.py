@@ -29,12 +29,12 @@ class TelegramBridge:
         else:
             logger.warning("âš ï¸ Telegram bridge inactive")
     
-    async def notify_bot_started(self, balance: float):
+    async def notify_bot_started(self, balance: float, stake: float = None):
         """Notify bot started"""
         if not self.active:
             return
         try:
-            await notifier.notify_bot_started(balance)
+            await notifier.notify_bot_started(balance, stake)
         except Exception as e:
             logger.error(f"Telegram error (bot_started): {e}")
     

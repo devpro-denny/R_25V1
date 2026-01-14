@@ -123,8 +123,19 @@ class BotRunner:
         if strategy_name:
             self.active_strategy = strategy_name
         
-        # Default fallback for logging
-        current_stake = self.user_stake if self.user_stake else config.FIXED_STAKE
+        # STRICT ENFORCEMENT: User Stake Must Be Present
+        if self.user_stake is None:
+            return {
+                "success": False,
+                "message": "❌ Start Failed: Stake amount not configured. Please set your stake in Settings.",
+                "status": self.status.value
+            }
+            
+        current_stake = self.user_stake
+        
+        # APPLY DYNAMIC RISK LIMITS (User Request: Max Loss = Stake, Daily Loss = 3x Stake)
+        if hasattr(self.risk_manager, 'update_risk_settings'):
+            self.risk_manager.update_risk_settings(current_stake)
             
         try:
             logger.info(f"🚀 Starting bot for {self.account_id or 'default user'}...")
@@ -397,7 +408,7 @@ class BotRunner:
             
             # Notify Telegram
             try:
-                await self.telegram_bridge.notify_bot_started(balance or 0.0)
+                await self.telegram_bridge.notify_bot_started(balance or 0.0, current_stake)
             except Exception as e:
                 logger.warning(f"⚠️ Telegram notification failed: {e}")
             
@@ -670,8 +681,13 @@ class BotRunner:
         # Get symbol-specific configuration
         multiplier = self.asset_config.get(symbol, {}).get('multiplier', config.MULTIPLIER)
         
-        # Determine Stake (User Preference > Config Default)
-        base_stake = self.user_stake if self.user_stake else config.FIXED_STAKE
+        # Determine Stake (User Preference)
+        base_stake = self.user_stake
+        if base_stake is None:
+             # Should not happen due to start_bot check, but safety first
+             logger.error(f"❌ {symbol} - Critical: User stake is None during analysis")
+             return False
+             
         stake = base_stake * multiplier
         
         # Validate with risk manager (including global checks)

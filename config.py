@@ -71,7 +71,7 @@ CONTRACT_TYPE_DOWN = "MULTDOWN"    # Multiplier Down
 # Risk mode configuration
 RISK_MODE = "TOP_DOWN"             # "TOP_DOWN" = Dynamic TP/SL based on structure, "FIXED" = Fixed percentages
 
-FIXED_STAKE = 50.0                 # $50 stake per trade
+FIXED_STAKE = None               # NO DEFAULT - STRICTLY USER DEFINED
 # Note: MULTIPLIER is now asset-specific in ASSET_CONFIG
 
 # Standard TP/SL Parameters (used when RISK_MODE = "FIXED")
@@ -79,13 +79,13 @@ TAKE_PROFIT_PERCENT = 0.24         # 0.24% TP
 STOP_LOSS_PERCENT = 0.0413           # 0.0413% SL
 
 # Maximum loss per trade (acts as emergency stop)
-MAX_LOSS_PER_TRADE = 50.0           # Maximum loss per trade (USD) - hard limit
+MAX_LOSS_PER_TRADE = None           # DYNAMIC (1x User Stake)
 
 # Minimum Risk-to-Reward Ratio
 MIN_RR_RATIO = 2.0                 # Minimum 1:2.0 risk/reward to take trade
 COOLDOWN_SECONDS = 180             # 3 minutes between trades
 MAX_TRADES_PER_DAY = 30            # Maximum trades per day
-MAX_DAILY_LOSS = 150.0              # Stop if lose $150 in a day
+MAX_DAILY_LOSS = None               # DYNAMIC (3x User Stake)
 
 # Valid multipliers for all assets
 VALID_MULTIPLIERS = [50, 80, 160, 400, 800, 1200, 1600]
@@ -237,7 +237,7 @@ def validate_config():
         errors.append(f"RISK_MODE must be 'TOP_DOWN' or 'FIXED', not {RISK_MODE}")
     
     # Validate risk parameters
-    if FIXED_STAKE <= 0:
+    if FIXED_STAKE is not None and FIXED_STAKE <= 0:
         errors.append("FIXED_STAKE must be positive")
     
     if TAKE_PROFIT_PERCENT <= 0:
@@ -363,7 +363,7 @@ if __name__ == "__main__":
         print(f"   Assets Monitored: {len(SYMBOLS)}")
         print(f"   Monitor All Assets: {'Yes' if MONITOR_ALL_ASSETS else 'No'}")
         print(f"   Max Concurrent Trades: {MAX_CONCURRENT_TRADES}")
-        print(f"   Fixed Stake: ${FIXED_STAKE}")
+        print(f"   Fixed Stake: {FIXED_STAKE if FIXED_STAKE else 'USER_DEFINED'}")
         
         print("\n💎 CONFIGURED ASSETS:")
         for symbol in SYMBOLS:
@@ -429,7 +429,7 @@ if __name__ == "__main__":
         print("\n⏰ TRADING LIMITS:")
         print(f"   Cooldown: {COOLDOWN_SECONDS}s ({COOLDOWN_SECONDS//60} min)")
         print(f"   Max Trades/Day: {MAX_TRADES_PER_DAY}")
-        print(f"   Max Daily Loss: ${MAX_DAILY_LOSS}")
+        print(f"   Max Daily Loss: {MAX_DAILY_LOSS if MAX_DAILY_LOSS else 'DYNAMIC (3x Stake)'}")
         
         print("\n🔐 API CONFIGURATION:")
         print(f"   APP_ID: {DERIV_APP_ID}")

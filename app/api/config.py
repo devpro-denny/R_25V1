@@ -49,13 +49,13 @@ async def get_current_config(current_user: dict = Depends(get_current_active_use
         "trading": {
             "symbol": config.SYMBOL,
             "multiplier": config.MULTIPLIER,
-            "fixed_stake": config.FIXED_STAKE,
+            "fixed_stake": stake_amount, # Show effective user stake
             "take_profit_percent": config.TAKE_PROFIT_PERCENT,
             "stop_loss_percent": config.STOP_LOSS_PERCENT,
         },
         "risk_management": {
             "max_trades_per_day": config.MAX_TRADES_PER_DAY,
-            "max_daily_loss": config.MAX_DAILY_LOSS,
+            "max_daily_loss": stake_amount * 3.0, # Dynamic Calculation
             "cooldown_seconds": config.COOLDOWN_SECONDS,
         },
         "strategy": {
@@ -102,12 +102,6 @@ async def update_config(
             # Save to Supabase profile
             supabase.table('profiles').update(user_updates).eq("id", current_user["id"]).execute()
             # If the bot is running for this user, it might need restart (handled by BotManager/Runner logic on next cycle or restart)
-        
-        # Trading config (Global/Shared for now - requires restart)
-        if "fixed_stake" in updates:
-            config.FIXED_STAKE = float(updates["fixed_stake"])
-            updated_fields.append("fixed_stake")
-            requires_restart.append("fixed_stake")
         
         # Risk management (can update live)
         if "max_trades_per_day" in updates:

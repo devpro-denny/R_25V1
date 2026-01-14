@@ -118,7 +118,7 @@ class TelegramNotifier:
             logger.error(f"❌ Telegram error: {e}")
             return False
     
-    async def notify_bot_started(self, balance: float):
+    async def notify_bot_started(self, balance: float, stake: float = None):
         """Notify that bot has started"""
         strategy_mode = "🛡️ Top-Down Structure" if config.USE_TOPDOWN_STRATEGY else "⚡ Classic Scalping"
         
@@ -149,7 +149,7 @@ class TelegramNotifier:
             f"⚙️ <b>Configuration</b>\n"
             f"   • Strategy: {strategy_mode}\n"
             f"   • Symbols: {len(config.SYMBOLS)} Active\n"
-            f"   • Stake: {format_currency(config.FIXED_STAKE)}\n\n"
+            f"   • Stake: {format_currency(stake) if stake else 'USER_DEFINED'}\n\n"
             f"{risk_text}\n\n"
             f"⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
         )
