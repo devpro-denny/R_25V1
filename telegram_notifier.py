@@ -308,6 +308,9 @@ class TelegramNotifier:
         # assuming we don't have exact duration easily, we can skip or add if timestamp available
         # For now, just show result
         
+        if result.get('exit_reason') == 'secure_profit_trailing_stop':
+            status = 'TRAILING STOP 🎯'
+        
         message = (
             f"{emoji} <b>{header}: {symbol}</b>\n"
             "━━━━━━━━━━━━━━━━━━━━\n"

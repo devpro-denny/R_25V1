@@ -629,6 +629,8 @@ class TradeEngine:
                         await self.close_trade(contract_id)
                         await asyncio.sleep(2)
                         final_status = await self.get_trade_status(contract_id)
+                        if final_status:
+                            final_status['exit_reason'] = exit_check['reason']
                         # Removed redundant notification here - Runner handles it
                         return final_status
                     

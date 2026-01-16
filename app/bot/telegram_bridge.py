@@ -74,14 +74,16 @@ class TelegramBridge:
                 "status": status,
                 "profit": pnl,
                 "current_price": trade.get("exit_price", 0),
-                "contract_id": trade.get("contract_id")
+                "contract_id": trade.get("contract_id"),
+                "exit_reason": trade.get("exit_reason")
             }
             
             trade_info = {
                 "direction": trade.get("direction"),
                 "entry_price": trade.get("entry_price"),
                 "stake": trade.get("stake"),
-                "multiplier": trade.get("multiplier")
+                "multiplier": trade.get("multiplier"),
+                "symbol": trade.get("symbol")
             }
             
             await notifier.notify_trade_closed(result, trade_info)
