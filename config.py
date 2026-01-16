@@ -28,10 +28,16 @@ if not DERIV_API_TOKEN or DERIV_API_TOKEN == "your_api_token_here":
 
 # ==================== MULTI-ASSET CONFIGURATION ====================
 # List of symbols to monitor and trade
-SYMBOLS = ["R_25", "R_50", "1HZ50V", "R_75", "1HZ75V"]
+# List of symbols to monitor and trade
+SYMBOLS = ["R_10", "R_25", "R_50", "R_75", "R_100"]
 
 # Asset-specific configuration
 ASSET_CONFIG = {
+    "R_10": {
+        "multiplier": 400,
+        "description": "Volatility 10 Index",
+        "tick_size": 0.001
+    },
     "R_25": {
         "multiplier": 160,
         "description": "Volatility 25 Index",
@@ -42,19 +48,14 @@ ASSET_CONFIG = {
         "description": "Volatility 50 Index",
         "tick_size": 0.01
     },
-    "1HZ50V": {
-        "multiplier": 80,
-        "description": "Volatility 50 (1s) Index",
-        "tick_size": 0.01
-    },
     "R_75": {
         "multiplier": 50,
         "description": "Volatility 75 Index",
         "tick_size": 0.01
     },
-    "1HZ75V": {
-        "multiplier": 50,
-        "description": "Volatility 75 (1s) Index",
+    "R_100": {
+        "multiplier": 40,
+        "description": "Volatility 100 Index",
         "tick_size": 0.01
     }
 }
@@ -88,7 +89,8 @@ MAX_TRADES_PER_DAY = 30            # Maximum trades per day
 MAX_DAILY_LOSS = None               # DYNAMIC (3x User Stake)
 
 # Valid multipliers for all assets
-VALID_MULTIPLIERS = [50, 80, 160, 400, 800, 1200, 1600]
+# Valid multipliers for all assets
+VALID_MULTIPLIERS = [40, 50, 80, 160, 400, 800, 1200, 1600]
 
 # ==================== MULTI-ASSET MONITORING ====================
 MONITOR_ALL_ASSETS = True          # Monitor all assets simultaneously
@@ -246,7 +248,7 @@ def validate_config():
     if STOP_LOSS_PERCENT <= 0:
         errors.append("STOP_LOSS_PERCENT must be positive")
     
-    if MAX_LOSS_PER_TRADE <= 0:
+    if MAX_LOSS_PER_TRADE is not None and MAX_LOSS_PER_TRADE <= 0:
         errors.append("MAX_LOSS_PER_TRADE must be positive")
     
     if MIN_RR_RATIO < 1.0:
