@@ -1,12 +1,10 @@
-﻿"""
-WebSocket Event Manager
-Broadcasts events to all connected clients AND registered handlers
-"""
+﻿# WebSocket Event Manager
+# Broadcasts events to all connected clients AND registered handlers
 
 import asyncio
 import logging
 from typing import Set, Dict, Callable, List
-from fastapi import WebSocket
+from fastapi import WebSocket, WebSocketDisconnect
 
 logger = logging.getLogger(__name__)
 
@@ -34,14 +32,14 @@ class EventManager:
             self.event_handlers[event_type] = []
         
         self.event_handlers[event_type].append(handler)
-        logger.info(f"ðŸ“ Registered handler for event type: {event_type}")
+        logger.info(f"📝 Registered handler for event type: {event_type}")
     
     def unregister(self, event_type: str, handler: Callable):
         """Remove an event handler"""
         if event_type in self.event_handlers:
             try:
                 self.event_handlers[event_type].remove(handler)
-                logger.info(f"ðŸ—‘ï¸ Unregistered handler for event type: {event_type}")
+                logger.info(f"🗑️ Unregistered handler for event type: {event_type}")
             except ValueError:
                 pass
     
@@ -79,7 +77,8 @@ class EventManager:
             ws_tasks = []
             target_account = message.get("account_id")
             
-            for connection, user_id in self.active_connections.items():
+            # Iterate over a copy to avoid "dictionary changed size during iteration"
+            for connection, user_id in list(self.active_connections.items()):
                 # Filter: If message has account_id, only send to matching user
                 if target_account and user_id != target_account:
                     continue
@@ -101,12 +100,20 @@ class EventManager:
             logger.error(f"Error in event handler: {e}", exc_info=True)
     
     async def _send_message(self, websocket: WebSocket, message: Dict):
-        """Send message to a single WebSocket client"""
+        """Send message to a single WebSocket client safely"""
         try:
             await websocket.send_json(message)
+        except (WebSocketDisconnect, RuntimeError) as e:
+            # Client disconnected or socket closed
+            # Remove silently or with debug log to avoid cluttering error logs
+            # RuntimeError is often raised by Starlette if socket is closed
+            if websocket in self.active_connections:
+               self.disconnect(websocket)
         except Exception as e:
-            logger.error(f"Error sending WebSocket message: {e}")
-            self.disconnect(websocket)
+            # Use type(e).__name__ to get specific error name even if message is empty
+            logger.error(f"Error sending WebSocket message: {type(e).__name__}: {e}")
+            if websocket in self.active_connections:
+                self.disconnect(websocket)
 
 # Global event manager instance
 event_manager = EventManager()
