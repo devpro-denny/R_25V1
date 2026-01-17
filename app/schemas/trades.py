@@ -8,9 +8,10 @@ from typing import Optional
 class TradeResponse(BaseModel):
     """Schema for individual trade response"""
     contract_id: str  # ✅ Already correct as string
-    direction: str
-    stake: float
-    entry_price: float
+    direction: str = Field(alias='signal')
+    stake: Optional[float] = None
+    entry_price: Optional[float] = None
+    exit_price: Optional[float] = None
     take_profit: Optional[float] = None
     stop_loss: Optional[float] = None
     status: str
