@@ -749,6 +749,10 @@ class BotRunner:
                 
                 logger.info(f"✅ {symbol} - Trade completed: {status}")
                 logger.info(f"💰 P&L: ${pnl:.2f}")
+
+                # CRITICAL FIX: Add signal to result for DB persistence
+                if 'signal' not in result:
+                    result['signal'] = signal_with_symbol['signal']
                 
                 # Record trade closure
                 self.risk_manager.record_trade_close(contract_id, pnl, status)
