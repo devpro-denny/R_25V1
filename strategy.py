@@ -70,6 +70,24 @@ class TradingStrategy:
         current_price = data_1m['close'].iloc[-1]
 
         # ---------------------------------------------------------
+        # 0.1 Indicator Calculation & Pre-Filtering
+        # ---------------------------------------------------------
+        try:
+            rsi_val = calculate_rsi(data_5m).iloc[-1] if not data_5m.empty else 50
+            adx_val = calculate_adx(data_5m).iloc[-1] if not data_5m.empty else 0
+        except Exception as e:
+            logger.error(f"Indicator calculation failed: {e}")
+            rsi_val = 50
+            adx_val = 0
+
+        # ADX Filter (Trend Strength)
+        if adx_val < config.ADX_THRESHOLD:
+            response["details"]["reason"] = f"Trend too weak (ADX {adx_val:.1f} < {config.ADX_THRESHOLD})"
+            response["details"]["adx"] = round(adx_val, 2)
+            response["details"]["rsi"] = round(rsi_val, 2)
+            return response
+
+        # ---------------------------------------------------------
         # Phase 1: Directional Bias (Weekly + Daily)
         # ---------------------------------------------------------
         weekly_trend = self._determine_trend(data_1w, "Weekly")
@@ -79,11 +97,35 @@ class TradingStrategy:
         if weekly_trend == "BULLISH" and daily_trend == "BULLISH":
             bias = "BULLISH"
             signal_direction = "UP"
-            passed_checks.append("Trend Alignment (Bullish)")
+            
+            # RSI Momentum Check (UP)
+            # Require RSI > Buy Threshold (Momentum) AND RSI < 75 (Not Overbought)
+            if rsi_val < config.RSI_BUY_THRESHOLD:
+                 response["details"]["reason"] = f"RSI too weak for UP ({rsi_val:.1f} < {config.RSI_BUY_THRESHOLD})"
+                 response["details"]["rsi"] = round(rsi_val, 2)
+                 return response
+            if rsi_val > 75:
+                 response["details"]["reason"] = f"RSI Overbought ({rsi_val:.1f} > 75)"
+                 return response
+                 
+            passed_checks.append("Trend Alignment (Bullish) + RSI Momentum")
+            
         elif weekly_trend == "BEARISH" and daily_trend == "BEARISH":
             bias = "BEARISH"
             signal_direction = "DOWN"
-            passed_checks.append("Trend Alignment (Bearish)")
+            
+            # RSI Momentum Check (DOWN)
+            # Require RSI < Sell Threshold (Momentum) AND RSI > 25 (Not Oversold)
+            if rsi_val > config.RSI_SELL_THRESHOLD:
+                 response["details"]["reason"] = f"RSI too weak for DOWN ({rsi_val:.1f} > {config.RSI_SELL_THRESHOLD})"
+                 response["details"]["rsi"] = round(rsi_val, 2)
+                 return response
+            if rsi_val < 25:
+                 response["details"]["reason"] = f"RSI Oversold ({rsi_val:.1f} < 25)"
+                 return response
+                 
+            passed_checks.append("Trend Alignment (Bearish) + RSI Momentum")
+            
         else:
             response["details"]["reason"] = f"Trend Conflict - Weekly: {weekly_trend}, Daily: {daily_trend}"
             return response

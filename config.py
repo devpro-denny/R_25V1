@@ -115,14 +115,14 @@ RSI_BUY_THRESHOLD = 58            # Buy signal threshold
 RSI_SELL_THRESHOLD = 42           # Sell signal threshold
 
 # ADX Threshold
-ADX_THRESHOLD = 22                # Minimum trend strength
+ADX_THRESHOLD = 25                # Minimum trend strength (Increased for quality)
 
 # Moving Averages
 SMA_PERIOD = 100
 EMA_PERIOD = 20
 
 # Signal Scoring
-MINIMUM_SIGNAL_SCORE = 6          # Minimum score to trade
+MINIMUM_SIGNAL_SCORE = 7          # Minimum score to trade (Increased for quality)
 
 # Filters
 VOLATILITY_SPIKE_MULTIPLIER = 2.0
@@ -185,7 +185,7 @@ STRUCTURE_CONFIRMATION_CANDLES = 3 # Wait N candles to confirm structure break
 TOPDOWN_USE_DYNAMIC_TP = True      # TP based on untested levels (not fixed %)
 TOPDOWN_USE_STRUCTURE_SL = True    # SL based on swing points (not fixed %)
 TOPDOWN_MIN_RR_RATIO = 2.0         # Minimum 1:2.0 risk/reward to take trade (aligned with MIN_RR_RATIO)
-TOPDOWN_MAX_SL_DISTANCE_PCT = 1.5  # Maximum SL distance: 1.5% from entry
+TOPDOWN_MAX_SL_DISTANCE_PCT = 0.5   # Maximum SL distance: 0.5% from entry (Reduced Risk)
 
 # Exit strategy - TP/SL only (no time-based exits)
 EXIT_STRATEGY = "TP_SL_ONLY"       # Only exit on Take Profit or Stop Loss hits
