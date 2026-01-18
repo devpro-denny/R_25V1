@@ -68,6 +68,7 @@ class TradingStrategy:
             return response
 
         current_price = data_1m['close'].iloc[-1]
+        passed_checks.append("Data Validated")
 
         # ---------------------------------------------------------
         # 0.1 Indicator Calculation & Pre-Filtering
@@ -77,8 +78,9 @@ class TradingStrategy:
             adx_val = calculate_adx(data_5m).iloc[-1] if not data_5m.empty else 0
             
             # Sanitization
-            if pd.isna(rsi_val): rsi_val = 50
             if pd.isna(adx_val): adx_val = 0
+            
+            passed_checks.append("Indicators Calculated")
             
         except Exception as e:
             logger.error(f"Indicator calculation failed: {e}")

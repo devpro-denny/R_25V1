@@ -674,7 +674,9 @@ class BotRunner:
         logger.info(f"🎯 {symbol} - SIGNAL DETECTED!")
         logger.info(f"   Direction: {signal['signal']}")
         logger.info(f"   Score: {signal.get('score', 0):.2f}")
+        checks_passed = ", ".join(signal.get('details', {}).get('passed_checks', []))
         logger.info(f"   Confidence: {signal.get('confidence', 0):.1f}%")
+        logger.info(f"   Checks Passed: {checks_passed}")
         
         # Track signal
         self.signals_by_symbol[symbol] = self.signals_by_symbol.get(symbol, 0) + 1
