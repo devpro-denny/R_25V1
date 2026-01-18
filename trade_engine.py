@@ -436,21 +436,16 @@ class TradeEngine:
             print("Blocked By: TRADE ENGINE (Invalid Symbol)")
             return None
             
-        print("\n" + "="*50)
-        print("EXECUTION START")
-        print("="*50)
+        print("\n[EXECUTION] 🚀 Connecting to Deriv for Execution...")
         
         # 1. Connection Check
-        print("\n[EXECUTION] CHECK: WebSocket Status")
-        if self.is_connected and self.ws and not self.ws.closed:
-             print("Status: CONNECTED")
-             print("Result: PASS")
-        else:
-             print("Status: DISCONNECTED")
-             print("Result: FAIL")
-             print("FINAL DECISION: ❌ EXECUTION FAILED")
-             print("Blocked By: TRADE ENGINE (Connection Lost)")
-             return None
+        if not (self.is_connected and self.ws and not self.ws.closed):
+             print("[EXECUTION] ❌ DISCONNECTED - Attempting Reconnect...")
+             if not await self.reconnect():
+                 print("[EXECUTION] ❌ Reconnect Failed")
+                 print("FINAL DECISION: ❌ EXECUTION FAILED")
+                 print("Blocked By: TRADE ENGINE (Connection Lost)")
+                 return None
         
         for attempt in range(max_retries):
             try:
@@ -459,20 +454,19 @@ class TradeEngine:
                     await asyncio.sleep(0.5)
                 
                 # Get proposal for this specific asset
-                print(f"\n[EXECUTION] CHECK: Contract Proposal ({attempt+1}/{max_retries})")
+                # print(f"[EXECUTION] 📋 Fetching Proposal ({attempt+1}/{max_retries})...")
                 proposal = await self.get_proposal(direction, stake, symbol)
                 if not proposal:
-                    print("Status: Proposal Fetch Failed")
-                    print("Result: FAIL")
+                    print(f"[EXECUTION] ❌ Proposal Failed ({attempt+1}/{max_retries})")
                     logger.error(f"❌ Failed to get proposal for {symbol}")
                     if attempt < max_retries - 1:
+                        await asyncio.sleep(1) # Backoff
                         continue
                     print("FINAL DECISION: ❌ EXECUTION FAILED")
                     print("Blocked By: TRADE ENGINE (Proposal Failed)")
                     return None
-                
-                print("Status: VALID")
-                print("Result: PASS")
+                 
+                print(f"[EXECUTION] ✅ Proposal Received: {proposal.get('multiplier')}x Multiplier")
                 
                 proposal_id = proposal["id"]
                 ask_price = proposal["ask_price"]
@@ -485,19 +479,15 @@ class TradeEngine:
                 
                 if not buy_info:
                     if attempt < max_retries - 1:
-                        logger.warning("⚠️ Price moved, retrying with fresh proposal...")
-                        print("\n[EXECUTION] CHECK: Price Stability")
-                        print("Status: UNSTABLE (Price moved)")
-                        print("Result: RETRY")
+                        logger.warning("⚠️ Price moved, retrying...")
+                        print(f"[EXECUTION] ⚠️ Price Unstable, Retrying ({attempt+1})...")
+                        await asyncio.sleep(0.5)
                         continue
                     logger.error(f"❌ Failed to buy {symbol} after all retries")
                     print("FINAL DECISION: ❌ EXECUTION FAILED")
-                    print("Blocked By: TRADE ENGINE (Buy Failed / Price Unstable)")
                     return None
                 
-                print("\n[EXECUTION] CHECK: Price Stability")
-                print("Status: STABLE")
-                print("Result: PASS")
+                print("[EXECUTION] ✅ Price Stable - Buy Confirmed")
                 
                 # Success! Extract trade info
                 contract_id = buy_info["contract_id"]

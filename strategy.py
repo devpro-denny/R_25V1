@@ -63,20 +63,13 @@ class TradingStrategy:
         }
 
         # ---------------------------------------------------------
-        # MANDATORY LOGGING HEADER
+        # MANDATORY LOGGING HEADER (Simplified)
         # ---------------------------------------------------------
-        current_time = pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')
-        print("\n" + "="*50)
-        print("TRADE EVALUATION START")
-        # Note: Direction is unknown at start, but we can log the asset if we had it. 
-        # Strategy doesn't know the symbol in this scope usually, but we'll adapt.
-        print(f"Time: {current_time}")
-        print("="*50)
+        # Only print specific header if meaningful progress is expected or for debugging
+        # For now, we reduce it to a simple separator if verbose execution is triggered later,
+        # but here we keep it silent until a check fails or passes significant stages.
         
         # 0. Data Validation
-        print("\n[STRATEGY] CHECK: Data Validation")
-        print(f"Rule: All timeframes (1m, 5m, 1h, 4h, 1D, 1W) must be present")
-        
         missing_dfs = []
         if data_1m is None or data_1m.empty: missing_dfs.append("1m")
         if data_5m is None or data_5m.empty: missing_dfs.append("5m")
@@ -86,20 +79,13 @@ class TradingStrategy:
         if data_1w is None or data_1w.empty: missing_dfs.append("1w")
         
         if missing_dfs:
-            print(f"Actual: Missing {', '.join(missing_dfs)}")
-            print("Result: FAIL")
-            print("\n[STRATEGY RESULT] ❌ FAILED")
-            print(f"Reason: Insufficient data across timeframes ({', '.join(missing_dfs)})")
-            print("FINAL DECISION: ❌ TRADE REJECTED")
-            print("Blocked By: STRATEGY")
+            print(f"[STRATEGY] ❌ Data Missing: {', '.join(missing_dfs)}")
             response["details"]["reason"] = "Insufficient data across timeframes"
             return response
             
-        print("Actual: All timeframes present")
-        print("Result: PASS")
+        passed_checks.append("Data Validated")
 
         current_price = data_1m['close'].iloc[-1]
-        passed_checks.append("Data Validated")
 
         # ---------------------------------------------------------
         # 0.1 Indicator Calculation & Pre-Filtering
@@ -107,120 +93,71 @@ class TradingStrategy:
         try:
             rsi_val = calculate_rsi(data_5m).iloc[-1] if not data_5m.empty else 50
             adx_val = calculate_adx(data_5m).iloc[-1] if not data_5m.empty else 0
-            
-            # Sanitization
             if pd.isna(adx_val): adx_val = 0
-            
             passed_checks.append("Indicators Calculated")
-            
         except Exception as e:
             logger.error(f"Indicator calculation failed: {e}")
             rsi_val = 50
             adx_val = 0
 
         # ADX Filter (Trend Strength)
-        print("\n[STRATEGY] CHECK: ADX Trend Strength")
-        print(f"Rule: ADX > {config.ADX_THRESHOLD}")
-        print(f"Actual: {adx_val:.1f}")
-        
         if adx_val < config.ADX_THRESHOLD:
-            print("Result: FAIL")
-            print("\n[STRATEGY RESULT] ❌ FAILED")
-            print(f"Reason: Trend too weak (ADX {adx_val:.1f} < {config.ADX_THRESHOLD})")
-            print("FINAL DECISION: ❌ TRADE REJECTED")
-            print("Blocked By: STRATEGY")
-            
+            print(f"[STRATEGY] ⚠️ Trend Weak: ADX {adx_val:.1f} < {config.ADX_THRESHOLD}")
             response["details"]["reason"] = f"Trend too weak (ADX {adx_val:.1f} < {config.ADX_THRESHOLD})"
             response["details"]["adx"] = round(adx_val, 2)
             response["details"]["rsi"] = round(rsi_val, 2)
             return response
         
-        print("Result: PASS")
         passed_checks.append(f"Trend Strength (ADX {adx_val:.1f} > {config.ADX_THRESHOLD})")
 
+        # ---------------------------------------------------------
+        # Phase 1: Directional Bias (Weekly + Daily)
+        # ---------------------------------------------------------
         # ---------------------------------------------------------
         # Phase 1: Directional Bias (Weekly + Daily)
         # ---------------------------------------------------------
         weekly_trend = self._determine_trend(data_1w, "Weekly")
         daily_trend = self._determine_trend(data_1d, "Daily")
 
-        print("\n[STRATEGY] CHECK: Directional Bias")
-        print(f"Rule: Weekly and Daily Trends must align")
-        print(f"Actual: Weekly={weekly_trend}, Daily={daily_trend}")
-
         # Bias Confirmation
         if weekly_trend == "BULLISH" and daily_trend == "BULLISH":
             bias = "BULLISH"
             signal_direction = "UP"
-            print("Result: PASS (Alignment: BULLISH)")
             passed_checks.append("Trend Alignment (Bullish)")
             
-            # RSI Momentum Check (UP)
-            print("\n[STRATEGY] CHECK: RSI Momentum (BUY)")
-            print(f"Rule: RSI < {config.RSI_BUY_THRESHOLD} AND RSI < 75")
-            print(f"Actual: {rsi_val:.1f}")
-            
-            # Require RSI > Buy Threshold (Momentum) AND RSI < 75 (Not Overbought)
+            # RSI Momentum Check (UP): RSI < Threshold (Momentum) AND RSI < 75 (Not Overbought)
             if rsi_val < config.RSI_BUY_THRESHOLD:
-                 print("Result: FAIL")
-                 print("\n[STRATEGY RESULT] ❌ FAILED")
-                 print(f"Reason: RSI too weak for UP ({rsi_val:.1f} < {config.RSI_BUY_THRESHOLD})")
-                 print("FINAL DECISION: ❌ TRADE REJECTED")
-                 print("Blocked By: STRATEGY")
+                 print(f"[STRATEGY] ⚠️ RSI Weak (UP): {rsi_val:.1f} < {config.RSI_BUY_THRESHOLD}")
                  response["details"]["reason"] = f"RSI too weak for UP ({rsi_val:.1f} < {config.RSI_BUY_THRESHOLD})"
                  response["details"]["rsi"] = round(rsi_val, 2)
                  return response
             if rsi_val > 75:
-                 print("Result: FAIL (Overbought)")
-                 print("\n[STRATEGY RESULT] ❌ FAILED")
-                 print(f"Reason: RSI Overbought ({rsi_val:.1f} > 75)")
-                 print("FINAL DECISION: ❌ TRADE REJECTED")
-                 print("Blocked By: STRATEGY")
+                 print(f"[STRATEGY] ⚠️ RSI Overbought: {rsi_val:.1f} > 75")
                  response["details"]["reason"] = f"RSI Overbought ({rsi_val:.1f} > 75)"
                  return response
             
-            print("Result: PASS")     
             passed_checks.append("RSI Momentum (UP)")
             
         elif weekly_trend == "BEARISH" and daily_trend == "BEARISH":
             bias = "BEARISH"
             signal_direction = "DOWN"
-            print("Result: PASS (Alignment: BEARISH)")
             passed_checks.append("Trend Alignment (Bearish)")
             
-            # RSI Momentum Check (DOWN)
-            print("\n[STRATEGY] CHECK: RSI Momentum (SELL)")
-            print(f"Rule: RSI > {config.RSI_SELL_THRESHOLD} AND RSI > 25")
-            print(f"Actual: {rsi_val:.1f}")
-            
-            # Require RSI < Sell Threshold (Momentum) AND RSI > 25 (Not Oversold)
+            # RSI Momentum Check (DOWN): RSI > Threshold (Momentum) AND RSI > 25 (Not Oversold)
             if rsi_val > config.RSI_SELL_THRESHOLD:
-                 print("Result: FAIL")
-                 print("\n[STRATEGY RESULT] ❌ FAILED")
-                 print(f"Reason: RSI too weak for DOWN ({rsi_val:.1f} > {config.RSI_SELL_THRESHOLD})")
-                 print("FINAL DECISION: ❌ TRADE REJECTED")
-                 print("Blocked By: STRATEGY")
+                 print(f"[STRATEGY] ⚠️ RSI Weak (DOWN): {rsi_val:.1f} > {config.RSI_SELL_THRESHOLD}")
                  response["details"]["reason"] = f"RSI too weak for DOWN ({rsi_val:.1f} > {config.RSI_SELL_THRESHOLD})"
                  response["details"]["rsi"] = round(rsi_val, 2)
                  return response
             if rsi_val < 25:
-                 print("Result: FAIL (Oversold)")
-                 print("\n[STRATEGY RESULT] ❌ FAILED")
-                 print(f"Reason: RSI Oversold ({rsi_val:.1f} < 25)")
-                 print("FINAL DECISION: ❌ TRADE REJECTED")
-                 print("Blocked By: STRATEGY")
+                 print(f"[STRATEGY] ⚠️ RSI Oversold: {rsi_val:.1f} < 25")
                  response["details"]["reason"] = f"RSI Oversold ({rsi_val:.1f} < 25)"
                  return response
             
-            print("Result: PASS")
             passed_checks.append("RSI Momentum (DOWN)")
             
         else:
-            print("Result: FAIL")
-            print("\n[STRATEGY RESULT] ❌ FAILED")
-            print(f"Reason: Trend Conflict - Weekly: {weekly_trend}, Daily: {daily_trend}")
-            print("FINAL DECISION: ❌ TRADE REJECTED")
-            print("Blocked By: STRATEGY")
+            print(f"[STRATEGY] ⚠️ Trend Conflict: W:{weekly_trend} | D:{daily_trend}")
             response["details"]["reason"] = f"Trend Conflict - Weekly: {weekly_trend}, Daily: {daily_trend}"
             return response
         
@@ -240,33 +177,22 @@ class TradingStrategy:
             data_1d, data_4h, data_1h, data_5m
         )
 
-        print("\n[STRATEGY] CHECK: Market Structure (TP/SL)")
-        print(f"Rule: Valid Target and Swing Point must be found")
-        
         if not target_level:
-            print("Actual: No Target Level Found")
-            print("Result: FAIL")
-            print("\n[STRATEGY RESULT] ❌ FAILED")
-            print("Reason: No clear Structure Level found for Target")
-            print("FINAL DECISION: ❌ TRADE REJECTED")
-            print("Blocked By: STRATEGY")
+            print("[STRATEGY] ⚠️ No Target Found")
+            # response["details"]["reason"] = "No clear Structure Level found for Target"
+            # return response
+            # Note: Previously this returned early. 
+            # If we want detailed logging just for failures we can keep it.
             response["details"]["reason"] = "No clear Structure Level found for Target"
             return response
             
         if not sl_level:
-            print("Actual: No Swing Point Found for SL")
-            print("Result: FAIL")
-            print("\n[STRATEGY RESULT] ❌ FAILED")
-            print("Reason: No clear Structure Swing Point found for Stop Loss")
-            print("FINAL DECISION: ❌ TRADE REJECTED")
-            print("Blocked By: STRATEGY")
+            print("[STRATEGY] ⚠️ No Stop Loss Found")
             response["details"]["reason"] = "No clear Structure Swing Point found for Stop Loss"
             return response
 
         # Calc Distance
         tp_dist = abs(target_level - current_price) / current_price * 100
-        print(f"Actual: Target Found (dist {tp_dist:.2f}%), SL Found")
-        print("Result: PASS")
         passed_checks.append("Market Structure (TP/SL Found)")
 
         # ---------------------------------------------------------
@@ -300,8 +226,10 @@ class TradingStrategy:
         # 3. Check Momentum Breakout & Weak Retest
         # We look at recent history in 1m data to see if we just broke this level
         
-        print("\n[STRATEGY] CHECK: Entry Trigger (Breakout + Retest)")
-        print(f"Rule: Candle body > {self.momentum_threshold}x ATR, Weak Retest")
+        # 3. Check Momentum Breakout & Weak Retest
+        # We look at recent history in 1m data to see if we just broke this level
+        
+        # print("\n[STRATEGY] CHECK: Entry Trigger (Breakout + Retest)")
         
         entry_valid, entry_reason = self._check_entry_trigger(
             data_1m, nearest_exec_level, signal_direction
@@ -310,25 +238,14 @@ class TradingStrategy:
         # Logic: If we have a valid breakout/retest, we ignore Middle Zone warning
         if not entry_valid:
             if is_mid_zone:
-                print("Actual: Price in Middle Zone & No Momentum Breakout")
-                print("Result: FAIL")
-                print("\n[STRATEGY RESULT] ❌ FAILED")
-                print("Reason: Price in Middle Zone & No Momentum Breakout")
-                print("FINAL DECISION: ❌ TRADE REJECTED")
-                print("Blocked By: STRATEGY")
+                # print("[STRATEGY] ⚠️ Middle Zone (No Momentum)")
                 response["details"]["reason"] = "Price in Middle Zone & No Momentum Breakout"
             else:
-                print(f"Actual: {entry_reason}")
-                print("Result: FAIL")
-                print("\n[STRATEGY RESULT] ❌ FAILED")
-                print(f"Reason: {entry_reason}")
-                print("FINAL DECISION: ❌ TRADE REJECTED")
-                print("Blocked By: STRATEGY")
+                # print(f"[STRATEGY] ⚠️ Entry Invalid: {entry_reason}")
                 response["details"]["reason"] = entry_reason
             return response
             
-        print("Actual: Momentum Breakout Confirmed")
-        print("Result: PASS")
+        print("[STRATEGY] ✅ Momentum Breakout Confirmed")
         passed_checks.append("Momentum Breakout Confirmed")
 
         # ---------------------------------------------------------
@@ -344,23 +261,15 @@ class TradingStrategy:
         else:
             rr_ratio = distance_to_tp / distance_to_sl
 
-        print(f"\n[STRATEGY] CHECK: Risk-Reward Ratio")
-        print(f"Rule: >= 1:{self.min_rr_ratio}")
-        print(f"Actual: 1:{rr_ratio:.2f}")
-
         if rr_ratio < self.min_rr_ratio:
-            print("Result: FAIL")
-            print("\n[STRATEGY RESULT] ❌ FAILED")
-            print(f"Reason: Risk-Reward ratio below 1:{self.min_rr_ratio} (Actual 1:{rr_ratio:.2f})")
-            print("FINAL DECISION: ❌ TRADE REJECTED")
-            print("Blocked By: STRATEGY")
+            print(f"[STRATEGY] ⚠️ R:R Too Low: 1:{rr_ratio:.2f} < 1:{self.min_rr_ratio}")
             response["details"]["reason"] = f"Poor R:R Ratio ({rr_ratio:.2f} < {self.min_rr_ratio})"
             response["take_profit"] = target_level
             response["stop_loss"] = sl_level
             response["risk_reward_ratio"] = round(rr_ratio, 2)
             return response
 
-        print("Result: PASS")
+        # print("Result: PASS")
         passed_checks.append(f"R:R Ratio OK ({rr_ratio:.2f})")
 
         # Confluence Score calculation
