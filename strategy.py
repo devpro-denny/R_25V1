@@ -75,6 +75,11 @@ class TradingStrategy:
         try:
             rsi_val = calculate_rsi(data_5m).iloc[-1] if not data_5m.empty else 50
             adx_val = calculate_adx(data_5m).iloc[-1] if not data_5m.empty else 0
+            
+            # Sanitization
+            if pd.isna(rsi_val): rsi_val = 50
+            if pd.isna(adx_val): adx_val = 0
+            
         except Exception as e:
             logger.error(f"Indicator calculation failed: {e}")
             rsi_val = 50
@@ -86,6 +91,8 @@ class TradingStrategy:
             response["details"]["adx"] = round(adx_val, 2)
             response["details"]["rsi"] = round(rsi_val, 2)
             return response
+        
+        passed_checks.append(f"Trend Strength (ADX {adx_val:.1f} > {config.ADX_THRESHOLD})")
 
         # ---------------------------------------------------------
         # Phase 1: Directional Bias (Weekly + Daily)
@@ -97,6 +104,7 @@ class TradingStrategy:
         if weekly_trend == "BULLISH" and daily_trend == "BULLISH":
             bias = "BULLISH"
             signal_direction = "UP"
+            passed_checks.append("Trend Alignment (Bullish)")
             
             # RSI Momentum Check (UP)
             # Require RSI > Buy Threshold (Momentum) AND RSI < 75 (Not Overbought)
@@ -108,11 +116,12 @@ class TradingStrategy:
                  response["details"]["reason"] = f"RSI Overbought ({rsi_val:.1f} > 75)"
                  return response
                  
-            passed_checks.append("Trend Alignment (Bullish) + RSI Momentum")
+            passed_checks.append("RSI Momentum (UP)")
             
         elif weekly_trend == "BEARISH" and daily_trend == "BEARISH":
             bias = "BEARISH"
             signal_direction = "DOWN"
+            passed_checks.append("Trend Alignment (Bearish)")
             
             # RSI Momentum Check (DOWN)
             # Require RSI < Sell Threshold (Momentum) AND RSI > 25 (Not Oversold)
@@ -124,7 +133,7 @@ class TradingStrategy:
                  response["details"]["reason"] = f"RSI Oversold ({rsi_val:.1f} < 25)"
                  return response
                  
-            passed_checks.append("Trend Alignment (Bearish) + RSI Momentum")
+            passed_checks.append("RSI Momentum (DOWN)")
             
         else:
             response["details"]["reason"] = f"Trend Conflict - Weekly: {weekly_trend}, Daily: {daily_trend}"
