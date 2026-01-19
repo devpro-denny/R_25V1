@@ -631,8 +631,7 @@ class RiskManager:
                 updated = True
                 
         if updated:
-             # Log update (optional, reduced spam)
-             pass
+             logger.info(f"🛡️ Trailing Update ({active_tier['name']}): Moving Stop to {potential_stop:.4f} (Profit: {pnl_pct:.1f}%)")
         
         return {
             'stop_price': trade['dynamic_stop_price'], 

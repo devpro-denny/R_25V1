@@ -127,7 +127,7 @@ EMA_PERIOD = 20
 
 # Signal Scoring
 MIN_SIGNAL_STRENGTH = 8.0          # Only strength 8.0+ signals (Absolute score)
-MINIMUM_SIGNAL_SCORE = 7          # Legacy param (Keep for compatibility, but MIN_SIGNAL_STRENGTH takes precedence)
+MINIMUM_SIGNAL_SCORE = 8           # Legacy param (Keep for compatibility, matches MIN_SIGNAL_STRENGTH)
 
 # Filters
 VOLATILITY_SPIKE_MULTIPLIER = 2.0
