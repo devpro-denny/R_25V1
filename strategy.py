@@ -296,6 +296,7 @@ class TradingStrategy:
         # Construct Final Response
         response["can_trade"] = True
         response["signal"] = signal_direction
+        response["entry_price"] = current_price
         response["take_profit"] = target_level
         response["stop_loss"] = sl_level
         response["risk_reward_ratio"] = round(rr_ratio, 2)

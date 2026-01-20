@@ -721,6 +721,9 @@ class BotRunner:
         # not the total exposure.
         stake = base_stake
         
+        # Debug: Log signal structure before validation
+        logger.debug(f"Signal structure - Entry: {signal.get('entry_price')}, TP: {signal.get('take_profit')}, SL: {signal.get('stop_loss')}")
+        
         # Validate with risk manager (including global checks)
         can_open, validation_msg = self.risk_manager.can_open_trade(
             symbol=symbol,

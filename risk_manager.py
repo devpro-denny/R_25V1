@@ -318,7 +318,14 @@ class RiskManager:
         multiplier = self.asset_config.get(symbol, {}).get('multiplier', config.MULTIPLIER)
 
         if entry_price == 0:
-             return {}
+            # Fallback: Try to use current_price from signal as entry point
+            current_price = signal_dict.get('current_price', 0.0)
+            if current_price > 0:
+                entry_price = current_price
+                logger.warning(f"⚠️ entry_price was 0, using current_price as fallback: {current_price}")
+            else:
+                logger.error(f"❌ Cannot calculate R:R: entry_price and current_price both missing")
+                return {}
 
         # Risk in dollars
         risk_distance_pct = abs(entry_price - stop_loss) / entry_price * 100
