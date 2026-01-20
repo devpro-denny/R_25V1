@@ -213,6 +213,10 @@ TP_BUFFER_PCT = 0.1                # 0.1% before actual level (early exit buffer
 SL_BUFFER_PCT = 0.3                # 0.3% beyond swing (safety margin)
 MIN_TP_DISTANCE_PCT = 0.2          # Minimum TP distance from entry
 
+# ==================== ENTRY PROXIMITY SETTINGS ====================
+MAX_ENTRY_DISTANCE_PCT = 0.5       # Max distance from level to entry (prevents chasing)
+ALLOW_MIDDLE_ZONE_WITH_BREAKOUT = True  # Allow middle zone entry IF strong momentum breakout
+
 # ==================== TRAILING STOP SETTINGS ====================
 # Breakeven Protection (DISABLED - Was Killing Profits)
 ENABLE_BREAKEVEN_PROTECTION = False  # ❌ PERMANENTLY OFF

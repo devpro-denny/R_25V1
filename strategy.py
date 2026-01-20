@@ -209,9 +209,10 @@ class TradingStrategy:
             # Only skip if we are NOT in a breakout scenario
             # Breakout logic below might override this if we are crossing a level
             is_mid_zone = True
+            logger.debug(f"[STRATEGY] Price in middle zone - momentum breakout required for entry")
         else:
             is_mid_zone = False
-            passed_checks.append("Not in Middle Zone")
+            # Don't add to passed_checks yet - validate entry trigger first
 
         # 2. Find nearest active execution level (could be a 1h or 4h level we are breaking)
         # We add 1h and 5m levels for precise execution
@@ -222,33 +223,47 @@ class TradingStrategy:
              # Fallback to structure levels if no local levels found
             nearest_exec_level = self._find_nearest_level(current_price, structure_levels)
 
-        if nearest_exec_level:
-             passed_checks.append(f"Key Level Found ({nearest_exec_level:.2f})")
+        if not nearest_exec_level:
+            response["details"]["reason"] = "No execution level found"
+            return response
+
+        passed_checks.append(f"Key Level Found ({nearest_exec_level:.2f})")
+
+        # 2.5. Validate Entry Distance to Level (NEW)
+        # Prevent entries too close to swing points (quick reversals)
+        proximity_valid, proximity_reason, distance_pct = self._validate_level_proximity(
+            current_price, nearest_exec_level, signal_direction
+        )
+        
+        if not proximity_valid:
+            response["details"]["reason"] = f"Entry proximity invalid: {proximity_reason}"
+            return response
+        
+        passed_checks.append(f"Entry Proximity OK ({distance_pct:.3f}%)")
 
         # 3. Check Momentum Breakout & Weak Retest
         # We look at recent history in 1m data to see if we just broke this level
-        
-        # 3. Check Momentum Breakout & Weak Retest
-        # We look at recent history in 1m data to see if we just broke this level
-        
-        # print("\n[STRATEGY] CHECK: Entry Trigger (Breakout + Retest)")
-        
         entry_valid, entry_reason = self._check_entry_trigger(
             data_1m, nearest_exec_level, signal_direction
         )
 
-        # Logic: If we have a valid breakout/retest, we ignore Middle Zone warning
+        # Logic: If we have a valid breakout/retest, we acknowledge middle zone status
         if not entry_valid:
             if is_mid_zone:
-                # print("[STRATEGY] ⚠️ Middle Zone (No Momentum)")
-                response["details"]["reason"] = "Price in Middle Zone & No Momentum Breakout"
+                response["details"]["reason"] = f"Middle Zone + Invalid Entry: {entry_reason}"
             else:
-                # print(f"[STRATEGY] ⚠️ Entry Invalid: {entry_reason}")
                 response["details"]["reason"] = entry_reason
             return response
             
         print("[STRATEGY] ✅ Momentum Breakout Confirmed")
         passed_checks.append("Momentum Breakout Confirmed")
+        
+        # Document middle zone override if applicable
+        if is_mid_zone:
+            logger.debug(f"⚠️ Entry in middle zone but breakout validated - entry quality: CAUTION")
+            passed_checks.append("Momentum Override Middle Zone")
+        else:
+            passed_checks.append("Entry at Structure Boundary")
 
         # ---------------------------------------------------------
         # Final Calculations & Confluence Score
@@ -603,6 +618,39 @@ class TradingStrategy:
             return None
         sorted_levels = sorted(levels, key=lambda x: abs(x['price'] - current_price))
         return sorted_levels[0]['price']
+
+    def _validate_level_proximity(self, current_price: float, level_price: Optional[float], 
+                                  direction: str) -> Tuple[bool, str, float]:
+        """
+        Ensure entry is at reasonable distance from level.
+        Prevents entries too close to support/resistance (quick reversals).
+        
+        Returns: (is_valid, reason, distance_pct)
+        """
+        if not level_price or level_price == 0:
+            return False, "No level price provided", 0.0
+        
+        distance_pct = abs(current_price - level_price) / current_price * 100
+        max_distance = getattr(config, 'MAX_ENTRY_DISTANCE_PCT', 0.5)
+        
+        if direction == "UP":
+            # For UP: Entry should be above level
+            if current_price < level_price:
+                return False, f"Price {current_price:.2f} below level {level_price:.2f}", distance_pct
+            # Entry too far from level (likely chasing)
+            if distance_pct > max_distance:
+                return False, f"Entry too far from level ({distance_pct:.3f}% > {max_distance}%)", distance_pct
+                
+        else:  # DOWN
+            # For DOWN: Entry should be below level
+            if current_price > level_price:
+                return False, f"Price {current_price:.2f} above level {level_price:.2f}", distance_pct
+            # Entry too far from level (likely chasing)
+            if distance_pct > max_distance:
+                return False, f"Entry too far from level ({distance_pct:.3f}% > {max_distance}%)", distance_pct
+        
+        return True, f"Proximity valid ({distance_pct:.3f}%)", distance_pct
+
 
     def _check_entry_trigger(self, df_1m: pd.DataFrame, level_price: Optional[float], direction: str) -> Tuple[bool, str]:
         """
