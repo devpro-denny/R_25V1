@@ -117,6 +117,8 @@ ATR_MAX_5M = 3.5                  # Maximum 5m ATR
 # RSI Thresholds
 RSI_BUY_THRESHOLD = 58            # Buy signal threshold
 RSI_SELL_THRESHOLD = 42           # Sell signal threshold
+RSI_MAX_THRESHOLD = 75            # Maximum RSI for UP signals (overbought boundary)
+RSI_MIN_THRESHOLD = 25            # Minimum RSI for DOWN signals (oversold boundary)
 
 # ADX Threshold
 ADX_THRESHOLD = 25                # Minimum trend strength (Increased for quality)

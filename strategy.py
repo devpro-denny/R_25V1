@@ -125,15 +125,16 @@ class TradingStrategy:
             signal_direction = "UP"
             passed_checks.append("Trend Alignment (Bullish)")
             
-            # RSI Momentum Check (UP): RSI < Threshold (Momentum) AND RSI < 75 (Not Overbought)
+            # RSI Momentum Check (UP): RSI within valid range for momentum
+            rsi_max_threshold = getattr(config, 'RSI_MAX_THRESHOLD', 75)
             if rsi_val < config.RSI_BUY_THRESHOLD:
                  print(f"[STRATEGY] ⚠️ RSI Weak (UP): {rsi_val:.1f} < {config.RSI_BUY_THRESHOLD}")
                  response["details"]["reason"] = f"RSI too weak for UP ({rsi_val:.1f} < {config.RSI_BUY_THRESHOLD})"
                  response["details"]["rsi"] = round(rsi_val, 2)
                  return response
-            if rsi_val > 75:
-                 print(f"[STRATEGY] ⚠️ RSI Overbought: {rsi_val:.1f} > 75")
-                 response["details"]["reason"] = f"RSI Overbought ({rsi_val:.1f} > 75)"
+            if rsi_val > rsi_max_threshold:
+                 print(f"[STRATEGY] ⚠️ RSI Overbought: {rsi_val:.1f} > {rsi_max_threshold}")
+                 response["details"]["reason"] = f"RSI Overbought ({rsi_val:.1f} > {rsi_max_threshold})"
                  return response
             
             passed_checks.append("RSI Momentum (UP)")
@@ -143,15 +144,16 @@ class TradingStrategy:
             signal_direction = "DOWN"
             passed_checks.append("Trend Alignment (Bearish)")
             
-            # RSI Momentum Check (DOWN): RSI > Threshold (Momentum) AND RSI > 25 (Not Oversold)
+            # RSI Momentum Check (DOWN): RSI within valid range for momentum
+            rsi_min_threshold = getattr(config, 'RSI_MIN_THRESHOLD', 25)
             if rsi_val > config.RSI_SELL_THRESHOLD:
                  print(f"[STRATEGY] ⚠️ RSI Weak (DOWN): {rsi_val:.1f} > {config.RSI_SELL_THRESHOLD}")
                  response["details"]["reason"] = f"RSI too weak for DOWN ({rsi_val:.1f} > {config.RSI_SELL_THRESHOLD})"
                  response["details"]["rsi"] = round(rsi_val, 2)
                  return response
-            if rsi_val < 25:
-                 print(f"[STRATEGY] ⚠️ RSI Oversold: {rsi_val:.1f} < 25")
-                 response["details"]["reason"] = f"RSI Oversold ({rsi_val:.1f} < 25)"
+            if rsi_val < rsi_min_threshold:
+                 print(f"[STRATEGY] ⚠️ RSI Oversold: {rsi_val:.1f} < {rsi_min_threshold}")
+                 response["details"]["reason"] = f"RSI Oversold ({rsi_val:.1f} < {rsi_min_threshold})"
                  return response
             
             passed_checks.append("RSI Momentum (DOWN)")
