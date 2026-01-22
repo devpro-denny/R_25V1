@@ -58,6 +58,7 @@ class Settings(BaseSettings):
             "http://127.0.0.1:8000",
             # Add your Vercel deployment URLs
             "https://r25bot.vercel.app",
+            "https://malibot.vercel.app",
         ]
     )
     CORS_ALLOW_CREDENTIALS: bool = True
