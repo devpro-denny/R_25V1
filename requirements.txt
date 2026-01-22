@@ -24,7 +24,6 @@ numpy==2.2.6
 
 # Technical Indicators
 ta==0.11.0
-git+https://github.com/twopirllc/pandas-ta.git@development
 
 # Telegram
 python-telegram-bot==22.5
