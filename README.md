@@ -10,7 +10,19 @@ Automated trading bot for Deriv's volatility indices using top-down market struc
 - Auto-recovery on restart
 - Telegram notifications
 - REST API with authentication
-- Cloud-deployable (Render.com)
+- Cloud-deployable (Render.com, Railway.app)
+
+## Deployment
+
+### Render
+1.  Connect your GitHub repository.
+2.  Render will auto-detect `render.yaml`.
+3.  Add environment variables in the dashboard.
+
+### Railway
+1.  Connect your GitHub repository.
+2.  Railway will auto-detect `railway.json` and `Procfile`.
+3.  Add environment variables in the dashboard.
 
 ## Quick Setup
 
