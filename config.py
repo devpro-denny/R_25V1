@@ -116,7 +116,7 @@ RSI_MAX_THRESHOLD = 75            # Maximum RSI for UP signals (overbought bound
 RSI_MIN_THRESHOLD = 25            # Minimum RSI for DOWN signals (oversold boundary)
 
 # ADX Threshold
-ADX_THRESHOLD = 25                # Minimum trend strength (Increased for quality)
+ADX_THRESHOLD = 20                # Minimum trend strength
 
 # Moving Averages
 SMA_PERIOD = 100
