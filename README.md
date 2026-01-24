@@ -4,7 +4,7 @@ Automated trading bot for Deriv's volatility indices using top-down market struc
 
 ## Features
 
-- Multi-asset monitoring (R_25, R_50, R_75, 1HZ50V, 1HZ75V)
+- Multi-asset monitoring (R_25, R_50, R_75, R_100)
 - Global risk control: 1 active trade max across all assets
 - Top-down strategy: Weekly/Daily bias + structure-based entries
 - Auto-recovery on restart
