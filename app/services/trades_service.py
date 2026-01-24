@@ -1,5 +1,6 @@
 import logging
 from typing import Dict, List, Optional
+from datetime import datetime
 from app.core.supabase import supabase
 
 logger = logging.getLogger(__name__)
@@ -15,6 +16,11 @@ class UserTradesService:
         Save a completed trade to Supabase.
         """
         try:
+            # Get timestamp and convert to string if it's a datetime object
+            timestamp = trade_data.get("timestamp") or trade_data.get("closed_at")
+            if isinstance(timestamp, datetime):
+                timestamp = timestamp.isoformat()
+            
             # Prepare record
             record = {
                 "user_id": user_id,
@@ -26,7 +32,7 @@ class UserTradesService:
                 "exit_price": trade_data.get("exit_price"),
                 "profit": trade_data.get("profit"),
                 "status": trade_data.get("status"),
-                "timestamp": trade_data.get("timestamp") or trade_data.get("closed_at"),
+                "timestamp": timestamp,
                 "duration": trade_data.get("duration")
             }
 
