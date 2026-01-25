@@ -16,8 +16,17 @@ from slowapi.middleware import SlowAPIMiddleware
 from secure import Secure, ContentSecurityPolicy, StrictTransportSecurity, XFrameOptions, ReferrerPolicy
 
 # Security Headers Configuration
-# Define policies
-csp = ContentSecurityPolicy().default_src("'self'").script_src("'self'").object_src("'none'")
+# Define policies - Updated to support frontend requirements
+csp = (
+    ContentSecurityPolicy()
+    .default_src("'self'")
+    .script_src("'self'", "'unsafe-inline'", "'unsafe-eval'")  # Allow inline scripts for frontend frameworks
+    .style_src("'self'", "'unsafe-inline'", "https://fonts.googleapis.com")  # Allow Google Fonts
+    .font_src("'self'", "https://fonts.gstatic.com", "data:")  # Allow Google Font files
+    .connect_src("'self'", "https://*.supabase.co", "wss://*", "https://*.railway.app", "https://*.render.com")  # Allow Supabase, Railway, and Render
+    .img_src("'self'", "data:", "https:", "blob:")  # Allow images from various sources
+    .object_src("'none'")
+)
 hsts = StrictTransportSecurity().max_age(31536000).include_subdomains()
 xfo = XFrameOptions().deny()
 referrer = ReferrerPolicy().no_referrer()
