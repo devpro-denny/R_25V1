@@ -5,6 +5,8 @@ from app.core.supabase import supabase
 
 logger = logging.getLogger(__name__)
 
+from app.core.cache import cache
+
 class UserTradesService:
     """
     Service to handle persistence of user trades to Supabase.
@@ -41,6 +43,11 @@ class UserTradesService:
             
             if response.data:
                 logger.info(f"✅ Trade persisted to DB: {record['contract_id']}")
+                
+                # Invalidate Cache
+                cache.delete_pattern(f"trades:{user_id}:*")
+                cache.delete(f"stats:{user_id}")
+                
                 return response.data[0]
             else:
                 logger.error("Failed to persist trade: No data returned")
@@ -56,6 +63,12 @@ class UserTradesService:
         Fetch trade history for a user from Supabase.
         """
         try:
+            # Check Cache
+            cache_key = f"trades:{user_id}:limit:{limit}"
+            cached_data = cache.get(cache_key)
+            if cached_data:
+                return cached_data
+
             response = supabase.table("trades")\
                 .select("*")\
                 .eq("user_id", user_id)\
@@ -63,7 +76,12 @@ class UserTradesService:
                 .limit(limit)\
                 .execute()
             
-            return response.data if response.data else []
+            data = response.data if response.data else []
+            
+            # Set Cache (TTL 60s for live history)
+            cache.set(cache_key, data, ttl=60)
+            
+            return data
             
         except Exception as e:
             logger.error(f"❌ Error fetching trade history: {e}")
@@ -75,6 +93,12 @@ class UserTradesService:
         Calculate lifetime statistics for a user from the database.
         """
         try:
+            # Check Cache
+            cache_key = f"stats:{user_id}"
+            cached_stats = cache.get(cache_key)
+            if cached_stats:
+                return cached_stats
+
             # Fetch all user trades (or a sufficiently large limit for stats)
             # Efficient way would be specific aggregation query, but Supabase-py might be limited.
             # For now, fetch ALL (assuming < 10k trades) or last 1000.
@@ -121,7 +145,7 @@ class UserTradesService:
             gross_loss = sum(losses)
             profit_factor = gross_profit / gross_loss if gross_loss > 0 else (float('inf') if gross_profit > 0 else 0.0)
 
-            return {
+            result = {
                 "total_trades": total_trades,
                 "winning_trades": winning_trades,
                 "losing_trades": losing_trades,
@@ -134,6 +158,11 @@ class UserTradesService:
                 "largest_loss": largest_loss,
                 "profit_factor": profit_factor
             }
+            
+            # Cache Stats (TTL 5 mins)
+            cache.set(cache_key, result, ttl=300)
+            
+            return result
                 
         except Exception as e:
             logger.error(f"❌ Error calculating user stats: {e}")

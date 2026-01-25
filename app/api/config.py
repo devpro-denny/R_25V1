@@ -12,6 +12,8 @@ from app.core.auth import get_current_active_user
 
 router = APIRouter()
 
+from app.core.cache import cache
+
 from app.core.supabase import supabase
 
 @router.get("/current", response_model=ConfigResponse)
@@ -23,12 +25,25 @@ async def get_current_config(current_user: dict = Depends(get_current_active_use
     stake_amount = 50.0 # Default
     active_strategy = "Conservative" # Default
 
+    active_strategy = "Conservative" # Default
+
     try:
-        profile = supabase.table('profiles').select('deriv_api_key, stake_amount, active_strategy').eq('id', current_user['id']).single().execute()
-        if profile.data:
+        # Check Cache
+        cache_key = f"profile:{current_user['id']}"
+        profile_data = cache.get(cache_key)
+        
+        if profile_data:
+            data = profile_data
+        else:
+            profile = supabase.table('profiles').select('deriv_api_key, stake_amount, active_strategy').eq('id', current_user['id']).single().execute()
+            data = profile.data if profile.data else {}
+            # Cache Profile (TTL 10 mins)
+            cache.set(cache_key, data, ttl=600)
+
+        if data:
             # API Key
-            if profile.data.get('deriv_api_key'):
-                key = profile.data['deriv_api_key']
+            if data.get('deriv_api_key'):
+                key = data['deriv_api_key']
                 # Mask the key (show last 4 chars if long enough)
                 if len(key) > 4:
                     deriv_api_key = f"*****{key[-4:]}"
@@ -36,11 +51,11 @@ async def get_current_config(current_user: dict = Depends(get_current_active_use
                     deriv_api_key = "*****"
             
             # Stake & Strategy
-            if profile.data.get('stake_amount') is not None:
-                stake_amount = float(profile.data['stake_amount'])
+            if data.get('stake_amount') is not None:
+                stake_amount = float(data['stake_amount'])
             
-            if profile.data.get('active_strategy'):
-                active_strategy = profile.data['active_strategy']
+            if data.get('active_strategy'):
+                active_strategy = data['active_strategy']
 
     except Exception:
         pass
@@ -101,6 +116,10 @@ async def update_config(
         if user_updates:
             # Save to Supabase profile
             supabase.table('profiles').update(user_updates).eq("id", current_user["id"]).execute()
+            
+            # Invalidate Cache
+            cache.delete(f"profile:{current_user['id']}")
+            
             # If the bot is running for this user, it might need restart (handled by BotManager/Runner logic on next cycle or restart)
         
         # Risk management (can update live)
