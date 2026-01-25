@@ -143,8 +143,8 @@ EARLY_EXIT_LOSS_PCT = 5.0          # Exit if down 5% of stake
 
 # Stagnation Exit Settings (Percentage Based)
 ENABLE_STAGNATION_EXIT = True      # Close if trade is stuck in loss
-STAGNATION_EXIT_TIME = 90          # 90 seconds
-STAGNATION_LOSS_PCT = 6.0          # Exit if losing 6% of stake after 90s
+STAGNATION_EXIT_TIME = 390          # 390 seconds
+STAGNATION_LOSS_PCT = 8.0          # Exit if losing 8% of stake after 90s
 
 # ==================== LOGGING ====================
 LOG_FILE = "trading_bot.log"
