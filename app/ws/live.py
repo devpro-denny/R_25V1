@@ -26,10 +26,34 @@ async def websocket_live(websocket: WebSocket, token: Optional[str] = Query(None
     # Authenticate
     from app.core.settings import settings
     user_id = None
+    subprotocol = None
     
-    if token:
+    # Try query param first
+    token_candidate = token
+    
+    # If no query param, check Sec-WebSocket-Protocol header
+    if not token_candidate and "sec-websocket-protocol" in websocket.headers:
+        # The header can contain a comma-separated list of subprotocols
+        protocols = [p.strip() for p in websocket.headers["sec-websocket-protocol"].split(",")]
+        
+        # Iterate to find a valid token
+        for p in protocols:
+            try:
+                # Attempt to validate as token
+                user_resp = supabase.auth.get_user(p)
+                if user_resp and user_resp.user:
+                    token_candidate = p
+                    subprotocol = p # We must return the selected protocol (token) to the client
+                    break
+            except Exception:
+                continue
+
+    if token_candidate:
         try:
-            user_resp = supabase.auth.get_user(token)
+            # Re-verify if we haven't already (optimization: if we found it in loop, we already verified, but this is safe)
+            # Actually, if we found it in the loop, we know it's valid. If it came from query, we validte here.
+            # To be clean:
+            user_resp = supabase.auth.get_user(token_candidate)
             if user_resp and user_resp.user:
                 user_id = user_resp.user.id
         except Exception as e:
@@ -38,10 +62,16 @@ async def websocket_live(websocket: WebSocket, token: Optional[str] = Query(None
     # Enforce Authentication if required
     if settings.WS_REQUIRE_AUTH and not user_id:
         logger.warning("Rejected unauthenticated WebSocket connection")
+        # If we fail here, we haven't accepted the socket yet.
+        # But we must accept or close. FastAPI/Starlette handles close on unaccepted socket?
+        # Standard: await websocket.close() works if accepted, but here we haven't.
+        # It's better to just return, FastAPI will close it with 403 Forbidden usually or we can explicitly close.
+        # However, to send a close code, we technically need to accept or just let it drop?
+        # Actually, best practice for unaccepted is just return. But we can try to close with code.
         await websocket.close(code=4001, reason="Authentication required")
         return
             
-    await event_manager.connect(websocket, user_id)
+    await event_manager.connect(websocket, user_id, subprotocol=subprotocol)
     
     try:
         # Send initial state

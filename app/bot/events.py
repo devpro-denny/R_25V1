@@ -43,9 +43,9 @@ class EventManager:
             except ValueError:
                 pass
     
-    async def connect(self, websocket: WebSocket, user_id: str = None):
+    async def connect(self, websocket: WebSocket, user_id: str = None, subprotocol: str = None):
         """Add new WebSocket connection with optional user context"""
-        await websocket.accept()
+        await websocket.accept(subprotocol=subprotocol)
         self.active_connections[websocket] = user_id
         logger.info(f"WebSocket client connected (User: {user_id}). Total: {len(self.active_connections)}")
     
