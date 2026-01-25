@@ -44,36 +44,14 @@ services:
         sync: false
       
       # Authentication (ADD IN RENDER DASHBOARD - SENSITIVE)
-      - key: JWT_SECRET_KEY
-        sync: false
+
       - key: ENABLE_AUTHENTICATION
         value: true
-      - key: ADMIN_USERNAME
-        value: admin
-      - key: ADMIN_PASSWORD
-        sync: false
-      - key: ADMIN_EMAIL
-        value: admin@tradingbot.com
+
       - key: INITIAL_ADMIN_EMAIL
         sync: false
       
-      # Password Requirements
-      - key: MIN_PASSWORD_LENGTH
-        value: 8
-      - key: REQUIRE_PASSWORD_UPPERCASE
-        value: false
-      - key: REQUIRE_PASSWORD_LOWERCASE
-        value: false
-      - key: REQUIRE_PASSWORD_DIGITS
-        value: false
-      - key: REQUIRE_PASSWORD_SPECIAL
-        value: false
-      
-      # Account Security
-      - key: MAX_FAILED_LOGIN_ATTEMPTS
-        value: 5
-      - key: LOCKOUT_DURATION_MINUTES
-        value: 15
+
       
       # CORS (UPDATE WITH YOUR VERCEL URL)
       - key: CORS_ORIGINS
@@ -87,7 +65,7 @@ services:
       
       # WebSocket
       - key: WS_REQUIRE_AUTH
-        value: false
+        value: true
       - key: WS_MAX_CONNECTIONS
         value: 100
       - key: WS_HEARTBEAT_INTERVAL

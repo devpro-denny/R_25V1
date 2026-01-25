@@ -13,6 +13,17 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
+from secure import Secure, ContentSecurityPolicy, StrictTransportSecurity, XFrameOptions, ReferrerPolicy
+
+# Security Headers Configuration
+# Define policies
+csp = ContentSecurityPolicy().default_src("'self'").script_src("'self'").object_src("'none'")
+hsts = StrictTransportSecurity().max_age(31536000).include_subdomains()
+xfo = XFrameOptions().deny()
+referrer = ReferrerPolicy().no_referrer()
+
+# Initialize Secure with policies
+secure_headers = Secure(csp=csp, hsts=hsts, xfo=xfo, referrer=referrer)
 
 from app.core.settings import settings
 from app.core.logging import setup_api_logger
@@ -89,6 +100,15 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# Security Headers Middleware
+@app.middleware("http")
+async def set_secure_headers(request, call_next):
+    """Add security headers to all responses"""
+    response = await call_next(request)
+    secure_headers.framework.fastapi(response)
+    return response
 
 # Health check endpoint (for Render)
 @app.get("/health")

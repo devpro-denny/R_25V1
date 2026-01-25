@@ -8,6 +8,7 @@ from typing import Dict, Any
 
 import config
 from app.schemas.common import ConfigResponse
+from app.schemas.config import ConfigUpdateRequest
 from app.core.auth import get_current_active_user
 
 router = APIRouter()
@@ -86,7 +87,7 @@ async def get_current_config(current_user: dict = Depends(get_current_active_use
 
 @router.put("/update")
 async def update_config(
-    updates: Dict[str, Any],
+    updates: ConfigUpdateRequest,
     current_user: dict = Depends(get_current_active_user)
 ):
     """
@@ -101,16 +102,16 @@ async def update_config(
         # User-Specific Config (Supabase)
         user_updates = {}
         
-        if "deriv_api_key" in updates:
-            user_updates["deriv_api_key"] = updates["deriv_api_key"]
+        if updates.deriv_api_key is not None:
+            user_updates["deriv_api_key"] = updates.deriv_api_key
             updated_fields.append("deriv_api_key")
             
-        if "stake_amount" in updates:
-            user_updates["stake_amount"] = float(updates["stake_amount"])
+        if updates.stake_amount is not None:
+            user_updates["stake_amount"] = updates.stake_amount
             updated_fields.append("stake_amount")
 
-        if "active_strategy" in updates:
-            user_updates["active_strategy"] = updates["active_strategy"]
+        if updates.active_strategy is not None:
+            user_updates["active_strategy"] = updates.active_strategy
             updated_fields.append("active_strategy")
 
         if user_updates:
@@ -123,12 +124,12 @@ async def update_config(
             # If the bot is running for this user, it might need restart (handled by BotManager/Runner logic on next cycle or restart)
         
         # Risk management (can update live)
-        if "max_trades_per_day" in updates:
-            config.MAX_TRADES_PER_DAY = int(updates["max_trades_per_day"])
+        if updates.max_trades_per_day is not None:
+            config.MAX_TRADES_PER_DAY = updates.max_trades_per_day
             updated_fields.append("max_trades_per_day")
         
-        if "cooldown_seconds" in updates:
-            config.COOLDOWN_SECONDS = int(updates["cooldown_seconds"])
+        if updates.cooldown_seconds is not None:
+            config.COOLDOWN_SECONDS = updates.cooldown_seconds
             updated_fields.append("cooldown_seconds")
         
         return {

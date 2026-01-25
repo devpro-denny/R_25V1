@@ -23,7 +23,10 @@ async def websocket_live(websocket: WebSocket, token: Optional[str] = Query(None
     Streams: bot status, trades, signals, statistics
     """
     # Authenticate
+    # Authenticate
+    from app.core.settings import settings
     user_id = None
+    
     if token:
         try:
             user_resp = supabase.auth.get_user(token)
@@ -31,6 +34,12 @@ async def websocket_live(websocket: WebSocket, token: Optional[str] = Query(None
                 user_id = user_resp.user.id
         except Exception as e:
             logger.warning(f"WebSocket auth failed: {e}")
+
+    # Enforce Authentication if required
+    if settings.WS_REQUIRE_AUTH and not user_id:
+        logger.warning("Rejected unauthenticated WebSocket connection")
+        await websocket.close(code=4001, reason="Authentication required")
+        return
             
     await event_manager.connect(websocket, user_id)
     

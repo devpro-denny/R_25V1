@@ -1,9 +1,11 @@
 # FastAPI and Server
 fastapi==0.115.0
 uvicorn==0.32.1
-python-multipart==0.0.6
+python-multipart>=0.0.20
 slowapi==0.1.9
 psutil==6.0.0
+secure==0.3.0
+pip-audit==2.7.3
 
 # Performance extras for uvicorn (manually selected - compatible versions)
 httptools>=0.6.0
