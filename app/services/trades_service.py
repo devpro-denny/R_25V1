@@ -163,14 +163,22 @@ class UserTradesService:
             cache.set(cache_key, result, ttl=300)
             
             return result
-                
+        
         except Exception as e:
-            logger.error(f"❌ Error calculating user stats: {e}")
+            import traceback
+            error_details = traceback.format_exc()
+            logger.error(f"❌ Error calculating user stats: {e}\n{error_details}")
+            # Return empty structure on error to prevent API 500
             return {
                 "total_trades": 0,
                 "winning_trades": 0,
                 "losing_trades": 0,
                 "win_rate": 0.0,
                 "total_pnl": 0.0,
-                "daily_pnl": 0.0
+                "daily_pnl": 0.0,
+                "avg_win": 0.0,
+                "avg_loss": 0.0,
+                "largest_win": 0.0,
+                "largest_loss": 0.0,
+                "profit_factor": 0.0
             }
