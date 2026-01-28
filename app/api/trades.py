@@ -99,7 +99,6 @@ async def debug_trade_stats(
         from app.services.trades_service import UserTradesService
         from app.core.supabase import supabase
         from app.core.cache import cache
-        from datetime import datetime, timedelta
         
         user_id = current_user['id']
         
@@ -229,12 +228,12 @@ async def debug_trade_stats(
                 "error": str(e)
             })
         
-        return debug_info
+        return prepare_response(debug_info)
         
     except Exception as e:
         import traceback
-        return {
+        return prepare_response({
             "critical_error": str(e),
             "traceback": traceback.format_exc(),
             "partial_debug_info": debug_info
-        }
+        })
