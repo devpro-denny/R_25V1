@@ -20,7 +20,7 @@ from secure import Secure, ContentSecurityPolicy, StrictTransportSecurity, XFram
 csp = (
     ContentSecurityPolicy()
     .default_src("'self'")
-    .script_src("'self'", "'unsafe-inline'", "'unsafe-eval'")  # Allow inline scripts for frontend frameworks
+    .script_src("'self'", "'unsafe-inline'", "'unsafe-eval'", "https://vercel.live")  # Allow inline scripts for frontend frameworks and Vercel Live
     .style_src("'self'", "'unsafe-inline'", "https://fonts.googleapis.com")  # Allow Google Fonts
     .font_src("'self'", "https://fonts.gstatic.com", "data:")  # Allow Google Font files
     .connect_src("'self'", "https://*.supabase.co", "wss://*", "https://*.railway.app", "https://*.render.com")  # Allow Supabase, Railway, and Render
