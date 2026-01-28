@@ -195,19 +195,36 @@ class Settings(BaseSettings):
     @classmethod
     def validate_cors_origins(cls, v):
         """Parse CORS_ORIGINS from string or list"""
+        # Handle None or empty values
+        if v is None or v == "":
+            return []
+        
+        # If already a list, return it
         if isinstance(v, list):
             return v
+        
+        # If string, parse it
         if isinstance(v, str):
+            # Strip whitespace
+            v = v.strip()
+            
+            # If empty after stripping, return empty list
+            if not v:
+                return []
+            
+            # Try parsing as JSON first (handles ["url1","url2"] format)
             import json
-            # Try parsing as JSON first
             try:
                 parsed = json.loads(v)
                 if isinstance(parsed, list):
                     return parsed
-            except json.JSONDecodeError:
+            except (json.JSONDecodeError, ValueError):
                 pass
-            # Fall back to comma-separated
+            
+            # Fall back to comma-separated (handles url1,url2 format)
             return [origin.strip() for origin in v.split(",") if origin.strip()]
+        
+        # Fallback for any other type
         return v
     
     # JWT validator removed (using Supabase Auth now)
