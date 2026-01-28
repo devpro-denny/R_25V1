@@ -5,6 +5,7 @@ import asyncio
 import logging
 from typing import Set, Dict, Callable, List
 from fastapi import WebSocket, WebSocketDisconnect
+from app.core.serializers import ensure_json_serializable
 
 logger = logging.getLogger(__name__)
 
@@ -102,7 +103,9 @@ class EventManager:
     async def _send_message(self, websocket: WebSocket, message: Dict):
         """Send message to a single WebSocket client safely"""
         try:
-            await websocket.send_json(message)
+            # Serialize message to handle datetime and other non-JSON types
+            serialized_message = ensure_json_serializable(message)
+            await websocket.send_json(serialized_message)
         except (WebSocketDisconnect, RuntimeError) as e:
             # Client disconnected or socket closed
             # Remove silently or with debug log to avoid cluttering error logs
