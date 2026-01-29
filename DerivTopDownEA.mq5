@@ -2,7 +2,7 @@
 //|                                           TopDownEA.mq5          |
 //|                   Multi-Timeframe Top-Down Strategy              |
 //+------------------------------------------------------------------+
-#property copyright "MaliBot 2026"
+#property copyright "MaliBot 2026 - Aligned with Python Bot Config"
 #property version   "1.00"
 #property description "Top-Down Market Structure Analysis EA"
 #property strict
@@ -27,7 +27,7 @@ input int      RSI_MaxThreshold = 75;           // RSI Overbought Limit
 input int      RSI_MinThreshold = 25;           // RSI Oversold Limit
 
 input int      ADX_Period = 14;                 // ADX Period
-input int      ADX_Threshold = 20;              // Minimum ADX (Trend Strength)
+input int      ADX_Threshold = 25;              // Minimum ADX (Trend Strength)
 
 input int      ATR_Period = 14;                 // ATR Period
 input double   MomentumThreshold = 1.5;         // Momentum Close Threshold (x ATR)
@@ -37,14 +37,16 @@ input double   MinTPDistancePercent = 0.2;      // Minimum TP Distance (%)
 input double   MaxSLDistancePercent = 0.5;      // Maximum SL Distance (%)
 input double   MinRRRatio = 2.5;                // Minimum Risk:Reward Ratio
 
-//--- Trailing Stop Settings
+//--- Trailing Stop Settings (4-Tier System - Aligned with Python Config)
 input bool     EnableMultiTierTrailing = true;  // Enable Multi-Tier Trailing Stop
-input double   TrailTrigger1 = 8.0;             // Tier 1: Trigger at % Profit
-input double   TrailStop1 = 4.0;                // Tier 1: Trail % Behind
-input double   TrailTrigger2 = 15.0;            // Tier 2: Trigger at % Profit
-input double   TrailStop2 = 6.0;                // Tier 2: Trail % Behind
-input double   TrailTrigger3 = 25.0;            // Tier 3: Trigger at % Profit
-input double   TrailStop3 = 8.0;                // Tier 3: Trail % Behind
+input double   TrailTrigger1 = 25.0;            // Tier 1: Trigger at % Profit
+input double   TrailStop1 = 8.0;                // Tier 1: Trail % Behind
+input double   TrailTrigger2 = 40.0;            // Tier 2: Trigger at % Profit
+input double   TrailStop2 = 12.0;               // Tier 2: Trail % Behind
+input double   TrailTrigger3 = 60.0;            // Tier 3: Trigger at % Profit
+input double   TrailStop3 = 18.0;               // Tier 3: Trail % Behind
+input double   TrailTrigger4 = 100.0;           // Tier 4: Trigger at % Profit
+input double   TrailStop4 = 25.0;               // Tier 4: Trail % Behind
 
 //--- Swing Detection
 input int      SwingLookback = 20;              // Candles for Swing Detection
@@ -622,11 +624,16 @@ void UpdateTrailingStop(ulong ticket, double currentPrice, double currentProfit)
    if(currentProfit <= 0)
       return; // Only trail in profit
    
-   //--- Determine active tier
+   //--- Determine active tier (4-Tier System)
    int newTier = 0;
    double trailPercent = 0;
    
-   if(profitPercent >= TrailTrigger3)
+   if(profitPercent >= TrailTrigger4)
+   {
+      newTier = 4;
+      trailPercent = TrailStop4;
+   }
+   else if(profitPercent >= TrailTrigger3)
    {
       newTier = 3;
       trailPercent = TrailStop3;
