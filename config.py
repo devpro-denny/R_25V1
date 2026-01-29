@@ -143,8 +143,8 @@ EARLY_EXIT_LOSS_PCT = 5.0          # Exit if down 5% of stake
 
 # Stagnation Exit Settings (Percentage Based)
 ENABLE_STAGNATION_EXIT = True      # Close if trade is stuck in loss
-STAGNATION_EXIT_TIME = 390          # 390 seconds
-STAGNATION_LOSS_PCT = 8.0          # Exit if losing 8% of stake after 390s
+STAGNATION_EXIT_TIME = 600          # 600 seconds
+STAGNATION_LOSS_PCT = 10.0          # Exit if losing 10% of stake after 600s
 
 # ==================== LOGGING ====================
 LOG_FILE = "trading_bot.log"
@@ -221,29 +221,29 @@ ENABLE_MULTI_TIER_TRAILING = True
 
 # Tiers: Lock profits as they grow
 TRAILING_STOPS = [
-    # Stage 1: Initial protection
+    # Stage 1: Initial protection (starts at 25%)
     {
-        'trigger_pct': 8.0,      # Activate at 8% profit
-        'trail_pct': 4.0,        # Trail 4% behind current price
+        'trigger_pct': 25.0,     # Activate at 25% profit
+        'trail_pct': 8.0,       # Trail 8% behind current price
         'name': 'Initial Lock'
     },
-    # Stage 2: Profit secured
+    # Stage 2: Big winner
     {
-        'trigger_pct': 15.0,     # At 15% profit
-        'trail_pct': 6.0,        # Trail 6% behind
-        'name': 'Profit Secured'
-    },
-    # Stage 3: Big winner
-    {
-        'trigger_pct': 25.0,     # At 25% profit
-        'trail_pct': 8.0,        # Trail 8% behind
+        'trigger_pct': 40.0,     # At 40% profit
+        'trail_pct': 12.0,       # Trail 12% behind
         'name': 'Big Winner'
     },
-    # Stage 4: Excellent winner
+    # Stage 3: Excellent winner
     {
-        'trigger_pct': 50.0,     # At 50% profit
-        'trail_pct': 15.0,       # Trail 15% behind
+        'trigger_pct': 60.0,     # At 60% profit
+        'trail_pct': 18.0,       # Trail 18% behind
         'name': 'Excellent Winner'
+    },
+    # Stage 4: Exceptional winner
+    {
+        'trigger_pct': 100.0,    # At 100% profit
+        'trail_pct': 25.0,       # Trail 25% behind
+        'name': 'Exceptional Winner'
     }
 ]
 
