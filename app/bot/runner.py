@@ -704,8 +704,12 @@ class BotRunner:
         self.state.add_signal(signal)
         
         # Get symbol-specific configuration
-        multiplier = self.asset_config.get(symbol, {}).get('multiplier', config.MULTIPLIER)
+        multiplier = self.asset_config.get(symbol, {}).get('multiplier')
         
+        if not multiplier:
+            logger.error(f"❌ {symbol} - Critical: Missing multiplier in asset_config")
+            return False
+
         # Determine Stake (User Preference)
         base_stake = self.user_stake
         if base_stake is None:

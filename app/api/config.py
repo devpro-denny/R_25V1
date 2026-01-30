@@ -63,11 +63,11 @@ async def get_current_config(current_user: dict = Depends(get_current_active_use
 
     return {
         "trading": {
-            "symbol": config.SYMBOL,
-            "multiplier": config.MULTIPLIER,
+            "symbol": config.SYMBOLS[0] if config.SYMBOLS else "UNKNOWN", # Default to first symbol
+            "multiplier": config.ASSET_CONFIG.get(config.SYMBOLS[0], {}).get('multiplier') if config.SYMBOLS else 0,
             "fixed_stake": stake_amount, # Show effective user stake
-            "take_profit_percent": config.TAKE_PROFIT_PERCENT,
-            "stop_loss_percent": config.STOP_LOSS_PERCENT,
+            "take_profit_percent": 0.0, # Dynamic
+            "stop_loss_percent": 0.0,   # Dynamic
         },
         "risk_management": {
             "max_trades_per_day": config.MAX_TRADES_PER_DAY,

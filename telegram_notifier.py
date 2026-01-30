@@ -208,7 +208,7 @@ class TelegramNotifier:
         direction = signal.get('signal', 'UNKNOWN')
         score = signal.get('score', 0)
         details = signal.get('details', {})
-        symbol = signal.get('symbol', config.SYMBOL)
+        symbol = signal.get('symbol', 'UNKNOWN')
         
         if direction == 'HOLD':
             return  # Don't notify for HOLD signals
@@ -242,7 +242,7 @@ class TelegramNotifier:
         """Notify that a trade has been opened"""
         direction = trade_info.get('direction', 'UNKNOWN')
         emoji = "🟢" if direction == "BUY" else "🔴"
-        symbol = trade_info.get('symbol', config.SYMBOL)
+        symbol = trade_info.get('symbol', 'UNKNOWN')
         stake = trade_info.get('stake', 0)
         
         # Calculate projected targets
@@ -250,7 +250,7 @@ class TelegramNotifier:
         sl_risk = 0
         
         entry_spot = trade_info.get('entry_spot') or trade_info.get('entry_price', 0)
-        multiplier = trade_info.get('multiplier', config.MULTIPLIER)
+        multiplier = trade_info.get('multiplier', 0)
         
         # 1. Try to calculate from exact price levels (Dynamic/Top-Down)
         if entry_spot > 0 and trade_info.get('take_profit') and trade_info.get('stop_loss'):
@@ -324,7 +324,7 @@ class TelegramNotifier:
             if len(self.processed_closed_trades) > 100:
                 self.processed_closed_trades.pop()
         
-        symbol = trade_info.get('symbol', config.SYMBOL)
+        symbol = trade_info.get('symbol', 'UNKNOWN')
         
         # Safely get stake, default to 1.0 (to avoid division by zero) if None or 0
         stake = trade_info.get('stake')
