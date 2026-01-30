@@ -214,7 +214,7 @@ class TelegramNotifier:
             return  # Don't notify for HOLD signals
             
         emoji = "🟢" if direction == "BUY" else "🔴"
-        strength_bar = self._create_strength_bar(score, config.MINIMUM_SIGNAL_SCORE + 4) # Adjust scale
+        strength_bar = self._create_strength_bar(score, config.MIN_SIGNAL_STRENGTH + 4) # Adjust scale
         
         # Safely get values with defaults
         rsi = details.get('rsi', 0)

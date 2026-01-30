@@ -725,13 +725,17 @@ class BotRunner:
         # Debug: Log signal structure before validation
         logger.debug(f"Signal structure - Entry: {signal.get('entry_price')}, TP: {signal.get('take_profit')}, SL: {signal.get('stop_loss')}")
         
+        # CRITICAL FIX: Add symbol to signal before validation
+        signal_for_validation = signal.copy()
+        signal_for_validation['symbol'] = symbol
+        
         # Validate with risk manager (including global checks)
         can_open, validation_msg = self.risk_manager.can_open_trade(
             symbol=symbol,
             stake=stake,
             take_profit=signal.get('take_profit'),
             stop_loss=signal.get('stop_loss'),
-            signal_dict=signal
+            signal_dict=signal_for_validation
         )
         
         if not can_open:
