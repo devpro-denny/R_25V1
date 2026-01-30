@@ -142,7 +142,7 @@ EARLY_EXIT_TIME_NIGHT = 20         # 20 seconds during risky hours
 EARLY_EXIT_LOSS_PCT = 5.0          # Exit if down 5% of stake
 
 # Stagnation Exit Settings (Percentage Based)
-ENABLE_STAGNATION_EXIT = True      # Close if trade is stuck in loss
+ENABLE_STAGNATION_EXIT = False      # Close if trade is stuck in loss
 STAGNATION_EXIT_TIME = 600          # 600 seconds
 STAGNATION_LOSS_PCT = 10.0          # Exit if losing 10% of stake after 600s
 
