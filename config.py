@@ -55,24 +55,13 @@ ASSET_CONFIG = {
     }
 }
 
-# Backward compatibility: Default to R_25 if single symbol access is needed
-SYMBOL = SYMBOLS[0]  # Default symbol for legacy code
-MULTIPLIER = ASSET_CONFIG[SYMBOL]["multiplier"]  # Default multiplier
-
 MARKET = "synthetic_index"         # Market type
-CONTRACT_TYPE = "MULTUP"           # Multiplier Up
-CONTRACT_TYPE_DOWN = "MULTDOWN"    # Multiplier Down
 
 # ==================== RISK MANAGEMENT ====================
 # Risk mode configuration
-RISK_MODE = "TOP_DOWN"             # "TOP_DOWN" = Dynamic TP/SL based on structure, "FIXED" = Fixed percentages
+USE_TOPDOWN_STRATEGY = True        # Active Strategy
 
 FIXED_STAKE = None               # NO DEFAULT - STRICTLY USER DEFINED
-# Note: MULTIPLIER is now asset-specific in ASSET_CONFIG
-
-# Standard TP/SL Parameters (used when RISK_MODE = "FIXED")
-TAKE_PROFIT_PERCENT = 0.24         # 0.24% TP
-STOP_LOSS_PERCENT = 0.0413           # 0.0413% SL
 
 # Maximum Risk (Percentage of Stake)
 MAX_RISK_PCT = 15.0                # Never risk more than 15% of stake
@@ -84,9 +73,13 @@ MAX_LOSS_PER_TRADE = None           # DYNAMIC (1x User Stake)
 MIN_RR_RATIO = 2.5                 # Minimum 1:2.5 risk/reward to take trade (Increased from 2.0)
 STRICT_RR_ENFORCEMENT = True       # Hard reject if fails
 
+MAX_CONSECUTIVE_LOSSES = 3         # Stop trading after 3 losses in a row (Global)
+DAILY_LOSS_MULTIPLIER = 3.0        # Max Daily Loss = 3.0x Stake
+STAKE_LIMIT_MULTIPLIER = 1.5       # Max Stake Limit = 1.5x Base Stake
+
 COOLDOWN_SECONDS = 180             # 3 minutes between trades
 MAX_TRADES_PER_DAY = 30            # Maximum trades per day
-MAX_DAILY_LOSS = None               # DYNAMIC (1.5x User Stake)
+MAX_DAILY_LOSS = None               # DYNAMIC (Multiplied by DAILY_LOSS_MULTIPLIER)
 
 # Valid multipliers for all assets
 VALID_MULTIPLIERS = [40, 50, 80, 160, 400, 800, 1200, 1600]
@@ -124,7 +117,6 @@ EMA_PERIOD = 20
 
 # Signal Scoring
 MIN_SIGNAL_STRENGTH = 8.0          # Only strength 8.0+ signals (Absolute score)
-MINIMUM_SIGNAL_SCORE = 8           # Legacy param (Keep for compatibility, matches MIN_SIGNAL_STRENGTH)
 
 # Filters
 VOLATILITY_SPIKE_MULTIPLIER = 2.0
@@ -135,11 +127,7 @@ WEAK_CANDLE_MULTIPLIER = 0.35
 MAX_TRADE_DURATION = None          # No maximum duration - let TP/SL handle exits
 MONITOR_INTERVAL = 2               # Check every 2 seconds for TP/SL hits
 
-# Early Exit "Fast Failure" Settings (Percentage Based)
-ENABLE_EARLY_EXIT = False          # Enable early exit monitoring
-EARLY_EXIT_TIME_DAY = 45           # 45 seconds during safe hours (12-22)
-EARLY_EXIT_TIME_NIGHT = 20         # 20 seconds during risky hours
-EARLY_EXIT_LOSS_PCT = 5.0          # Exit if down 5% of stake
+
 
 # Stagnation Exit Settings (Percentage Based)
 ENABLE_STAGNATION_EXIT = False      # Close if trade is stuck in loss
@@ -213,8 +201,6 @@ MAX_ENTRY_DISTANCE_PCT = 0.5       # Max distance from level to entry (prevents 
 ALLOW_MIDDLE_ZONE_WITH_BREAKOUT = True  # Allow middle zone entry IF strong momentum breakout
 
 # ==================== TRAILING STOP SETTINGS ====================
-# Breakeven Protection (DISABLED - Was Killing Profits)
-ENABLE_BREAKEVEN_PROTECTION = False  # ❌ PERMANENTLY OFF
 
 # percentage-based trailing stop tiers
 ENABLE_MULTI_TIER_TRAILING = True
@@ -247,8 +233,7 @@ TRAILING_STOPS = [
     }
 ]
 
-SECURE_PROFIT_TRIGGER_PCT = 15.0     # Legacy param fallback
-SECURE_PROFIT_BUFFER_PCT = 5.0       # Legacy param fallback
+
 
 # ==================== CONFLUENCE SCORING ====================
 CONFLUENCE_WEIGHT_HIGHER_TF = 2.0  # Higher timeframe levels weighted 2x
@@ -285,23 +270,9 @@ def validate_config():
         # In multi-tenant, this is allowed. We just warn.
         pass
     
-    # Validate contract types
-    if CONTRACT_TYPE not in ["MULTUP", "MULTDOWN"]:
-        errors.append(f"CONTRACT_TYPE must be MULTUP or MULTDOWN, not {CONTRACT_TYPE}")
-    
-    # Validate risk mode
-    if RISK_MODE not in ["TOP_DOWN", "FIXED"]:
-        errors.append(f"RISK_MODE must be 'TOP_DOWN' or 'FIXED', not {RISK_MODE}")
-    
     # Validate risk parameters
     if FIXED_STAKE is not None and FIXED_STAKE <= 0:
         errors.append("FIXED_STAKE must be positive")
-    
-    if TAKE_PROFIT_PERCENT <= 0:
-        errors.append("TAKE_PROFIT_PERCENT must be positive")
-    
-    if STOP_LOSS_PERCENT <= 0:
-        errors.append("STOP_LOSS_PERCENT must be positive")
     
     if MAX_LOSS_PER_TRADE is not None and MAX_LOSS_PER_TRADE <= 0:
         errors.append("MAX_LOSS_PER_TRADE must be positive")
@@ -407,14 +378,12 @@ if __name__ == "__main__":
         validate_config()
         
         print("=" * 75)
-        print("✅ MULTI-ASSET MULTI-STRATEGY CONFIGURATION VALIDATED")
+        print("✅ MULTI-ASSET TOP-DOWN CONFIGURATION VALIDATED")
         print("=" * 75)
         
-        print("\n🎯 RISK MODE: {}".format(RISK_MODE))
-        print(f"   Exit Strategy: {EXIT_STRATEGY}")
+        print(f"\n🎯 STRATEGY: Top-Down Multi-Timeframe")
         print(f"   Min Risk:Reward Ratio: 1:{MIN_RR_RATIO}")
         print(f"   Max Loss Per Trade: ${MAX_LOSS_PER_TRADE}")
-        print(f"   Time-Based Exits: {'Disabled' if MAX_TRADE_DURATION is None else 'Enabled'}")
         
         print("\n📊 MULTI-ASSET CONFIGURATION:")
         print(f"   Assets Monitored: {len(SYMBOLS)}")
@@ -429,7 +398,11 @@ if __name__ == "__main__":
         
         # Display strategy-specific configuration
         if USE_TOPDOWN_STRATEGY:
-            validate_topdown_config()
+            # Note: validate_topdown_config() function might rely on deleted params too, checking...
+            # For now assuming it's independent or imported from strategy.py? 
+            # Actually validate_topdown_config is not defined in this file. It was called but not imported?
+            # Looking at previous file content, it seemed to be missing or I missed it.
+            # Safe bet is to print values directly.
             
             print("\n" + "=" * 75)
             print("🎯 TOP-DOWN MULTI-TIMEFRAME STRATEGY")
@@ -471,18 +444,6 @@ if __name__ == "__main__":
             print(f"   Max Levels/TF: {MAX_LEVELS_PER_TIMEFRAME}")
             print(f"   Min Confluence Score: {MIN_CONFLUENCE_SCORE}")
             
-        else:
-            print("\n" + "=" * 75)
-            print("⚡ LEGACY SCALPING STRATEGY")
-            print("=" * 75)
-            
-            tp_amount = TAKE_PROFIT_PERCENT / 100 * FIXED_STAKE * MULTIPLIER
-            sl_amount = STOP_LOSS_PERCENT / 100 * FIXED_STAKE * MULTIPLIER
-            print("\n💰 RISK MANAGEMENT:")
-            print(f"   Take Profit: {TAKE_PROFIT_PERCENT}% → ${tp_amount:.2f}")
-            print(f"   Stop Loss: {STOP_LOSS_PERCENT}% → ${sl_amount:.2f}")
-            print(f"   Risk-to-Reward: 1:{tp_amount/sl_amount:.1f}")
-        
         print("\n⏰ TRADING LIMITS:")
         print(f"   Cooldown: {COOLDOWN_SECONDS}s ({COOLDOWN_SECONDS//60} min)")
         print(f"   Max Trades/Day: {MAX_TRADES_PER_DAY}")

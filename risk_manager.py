@@ -74,12 +74,11 @@ class RiskManager:
         
         # Circuit breaker - GLOBAL across all assets
         self.consecutive_losses = 0
-        self.max_consecutive_losses = 3
+        self.max_consecutive_losses = config.MAX_CONSECUTIVE_LOSSES
         
         # Strategy detection
         self.use_topdown = config.USE_TOPDOWN_STRATEGY
-        self.cancellation_enabled = config.ENABLE_CANCELLATION and not self.use_topdown
-        self.cancellation_fee = getattr(config, 'CANCELLATION_FEE', 0.45)
+        self.cancellation_enabled = False # Legacy feature disabled
         
         # Multi-asset configuration
         self.symbols = config.SYMBOLS
@@ -99,18 +98,18 @@ class RiskManager:
         """
         Update risk limits based on user's stake.
         Request:
-        - daily_loss = 3 * stake
+        - daily_loss = DAILY_LOSS_MULTIPLIER * stake
         - max_loss_per_trade = stake
         """
         self.fixed_stake = stake
-        self.max_daily_loss = stake * 3.0
+        self.max_daily_loss = stake * config.DAILY_LOSS_MULTIPLIER
         self.max_loss_per_trade_base = stake
         
         # Update strategy params if needed (re-calc based on new stake)
         self._initialize_strategy_parameters()
         
         logger.info(f"🔄 Risk Limits Updated for Stake ${stake}:")
-        logger.info(f"   Max Daily Loss: ${self.max_daily_loss} (3x Stake)")
+        logger.info(f"   Max Daily Loss: ${self.max_daily_loss} ({config.DAILY_LOSS_MULTIPLIER}x Stake)")
         logger.info(f"   Max Loss/Trade: ${self.max_loss_per_trade_base} (1x Stake)")
 
     def _initialize_strategy_parameters(self):
@@ -118,40 +117,16 @@ class RiskManager:
         # Use self.fixed_stake instead of config.FIXED_STAKE
         base_stake = self.fixed_stake
 
-        if self.use_topdown:
-            # Top-Down: Dynamic TP/SL from strategy
-            self.target_profit = None  # Set dynamically per trade
-            self.max_loss = None        # Set dynamically per trade
-            logger.info("[OK] Risk Manager initialized (TOP-DOWN MODE - MULTI-ASSET)")
-            logger.info(f"   Strategy: Market Structure Analysis")
-            logger.info(f"   Assets: {', '.join(self.symbols)}")
-            logger.info(f"   TP/SL: Dynamic (based on levels & swings)")
-            logger.info(f"   Min R:R: 1:{config.TOPDOWN_MIN_RR_RATIO}")
-            logger.info(f"   Trailing Stop: Trigger @ {config.SECURE_PROFIT_TRIGGER_PCT}% | Trail Buffer {config.SECURE_PROFIT_BUFFER_PCT}%")
-            logger.info(f"   ⚠️ GLOBAL LIMIT: 1 active trade across ALL assets")
-            
-        elif self.cancellation_enabled:
-            # Scalping with cancellation: Wait-and-cancel logic
-            # Note: Uses base stake, actual amount calculated per symbol
-            self.target_profit = (config.POST_CANCEL_TAKE_PROFIT_PERCENT / 100) * base_stake * config.MULTIPLIER
-            self.max_loss = (config.POST_CANCEL_STOP_LOSS_PERCENT / 100) * base_stake * config.MULTIPLIER
-            logger.info("[OK] Risk Manager initialized (SCALPING + WAIT-CANCEL MODE - MULTI-ASSET)")
-            logger.info(f"   Assets: {', '.join(self.symbols)}")
-            logger.info(f"   Phase 1: Wait 4-min → Cancel if unprofitable")
-            logger.info(f"   Phase 2 Target: {format_currency(self.target_profit)} (base)")
-            logger.info(f"   Phase 2 Max Loss: {format_currency(self.max_loss)} (base)")
-            logger.info(f"   Cancellation Fee: {format_currency(self.cancellation_fee)}")
-            logger.info(f"   ⚠️ GLOBAL LIMIT: 1 active trade across ALL assets")
-            
-        else:
-            # Legacy: Fixed percentages
-            self.target_profit = (config.TAKE_PROFIT_PERCENT / 100) * base_stake * config.MULTIPLIER
-            self.max_loss = (config.STOP_LOSS_PERCENT / 100) * base_stake * config.MULTIPLIER
-            logger.info("[OK] Risk Manager initialized (LEGACY MODE - MULTI-ASSET)")
-            logger.info(f"   Assets: {', '.join(self.symbols)}")
-            logger.info(f"   Target Profit: {format_currency(self.target_profit)} (base)")
-            logger.info(f"   Max Loss: {format_currency(self.max_loss)} (base)")
-            logger.info(f"   ⚠️ GLOBAL LIMIT: 1 active trade across ALL assets")
+        # Top-Down: Dynamic TP/SL from strategy
+        self.target_profit = None  # Set dynamically per trade
+        self.max_loss = None        # Set dynamically per trade
+        logger.info("[OK] Risk Manager initialized (TOP-DOWN MODE - MULTI-ASSET)")
+        logger.info(f"   Strategy: Market Structure Analysis")
+        logger.info(f"   Assets: {', '.join(self.symbols)}")
+        logger.info(f"   TP/SL: Dynamic (based on levels & swings)")
+        logger.info(f"   Min R:R: 1:{config.TOPDOWN_MIN_RR_RATIO}")
+        # Note: SECURE_PROFIT settings were removed from config, using hardcoded trace for log if needed or removing log
+        logger.info(f"   ⚠️ GLOBAL LIMIT: 1 active trade across ALL assets")
         
         logger.info(f"   Circuit Breaker: {self.max_consecutive_losses} consecutive losses (GLOBAL)")
         logger.info(f"   Max Trades/Day: {self.max_trades_per_day} (GLOBAL)")
@@ -315,7 +290,11 @@ class RiskManager:
         stop_loss = signal_dict.get('stop_loss', 0.0)
         take_profit = signal_dict.get('take_profit', 0.0)
         symbol = signal_dict.get('symbol', 'UNKNOWN')
-        multiplier = self.asset_config.get(symbol, {}).get('multiplier', config.MULTIPLIER)
+        multiplier = self.asset_config.get(symbol, {}).get('multiplier')
+        
+        if not multiplier:
+            logger.error(f"❌ Unknown multiplier for {symbol}")
+            return {}
 
         if entry_price == 0:
             # Fallback: Try to use current_price from signal as entry point
@@ -327,19 +306,21 @@ class RiskManager:
                 logger.error(f"❌ ENTRY_PRICE_MISSING | Signal: {signal_dict.get('symbol', 'UNKNOWN')} | entry_price: {entry_price} | current_price: {current_price} | Root cause: Both entry_price and current_price are missing or zero")
                 return {}
 
-        # Risk in dollars (without multiplier - multiplier affects P&L magnitude, not risk %)
+        # Risk in dollars (WITH multiplier - this is the actual risk to your capital)
+        # Formula: Stake * (Distance% / 100) * Multiplier
         risk_distance_pct = abs(entry_price - stop_loss) / entry_price * 100
-        risk_usd = stake * (risk_distance_pct / 100)
+        risk_usd = stake * (risk_distance_pct / 100) * multiplier
 
-        # Reward in dollars (without multiplier)
+        # Reward in dollars (WITH multiplier)
         reward_distance_pct = abs(take_profit - entry_price) / entry_price * 100
-        reward_usd = stake * (reward_distance_pct / 100)
+        reward_usd = stake * (reward_distance_pct / 100) * multiplier
 
-        # R:R ratio (stake-independent, calculated from distances)
+        # R:R ratio (remains the same as Ratio of Distances = Ratio of USD)
         rr_ratio = reward_usd / risk_usd if risk_usd > 0 else 0
 
-        # Risk as percentage of stake (simplified: distance_pct IS the risk %)
-        risk_pct = risk_distance_pct
+        # Risk as percentage of stake (This is the "True Risk")
+        # Example: 0.1% distance * 100x multiplier = 10% risk of stake
+        risk_pct = risk_distance_pct * multiplier
 
         return {
             'risk_usd': risk_usd,
@@ -358,7 +339,9 @@ class RiskManager:
             return False, "Stake must be positive"
         
         # Get symbol-specific max stake
-        multiplier = self.asset_config.get(symbol, {}).get('multiplier', config.MULTIPLIER)
+        multiplier = self.asset_config.get(symbol, {}).get('multiplier')
+        if not multiplier:
+            return False, f"Unknown symbol: {symbol}"
         
         # Ensure stake is set
         if self.fixed_stake is None:
@@ -368,7 +351,7 @@ class RiskManager:
              base_reference = self.fixed_stake
 
         # Limit: 1.5x of user's base stake setting
-        max_stake = base_reference * multiplier * 1.5
+        max_stake = base_reference * multiplier * config.STAKE_LIMIT_MULTIPLIER
         
         if stake > max_stake:
             reason = f"Stake {stake:.2f} exceeds max {max_stake:.2f} for {symbol}"
@@ -384,20 +367,20 @@ class RiskManager:
             if amounts.get('rr_ratio', 0) < config.MIN_RR_RATIO:
                 # Only enforce STRICTLY if configured
                 msg = f"R:R {amounts.get('rr_ratio', 0):.2f} < {config.MIN_RR_RATIO}"
-                if getattr(config, 'STRICT_RR_ENFORCEMENT', False):
+                if config.STRICT_RR_ENFORCEMENT:
                     logger.warning(f"❌ REJECTED: {msg}")
                     return False, f"Invalid R:R: {amounts.get('rr_ratio', 0):.2f}"
                 else:
                     logger.warning(f"⚠️ Low R:R: {msg}")
 
             # Check 2: Maximum Risk Percentage
-            max_risk_pct = getattr(config, 'MAX_RISK_PCT', 15.0)
+            max_risk_pct = config.MAX_RISK_PCT
             if amounts.get('risk_pct', 0) > max_risk_pct:
                 logger.warning(f"❌ REJECTED: Risk {amounts.get('risk_pct', 0):.1f}% > {max_risk_pct}%")
                 return False, f"Risk too high: {amounts.get('risk_pct', 0):.1f}% of stake"
 
             # Check 3: Signal Strength
-            min_strength = getattr(config, 'MIN_SIGNAL_STRENGTH', 8.0)
+            min_strength = config.MIN_SIGNAL_STRENGTH
             strength = signal_dict.get('score', 0)
             if strength < min_strength:
                 logger.warning(f"❌ REJECTED: Strength {strength:.1f} < {min_strength}")
@@ -406,15 +389,8 @@ class RiskManager:
             logger.info(f"✅ VALIDATED: R:R {amounts.get('rr_ratio', 0):.2f}, Risk {amounts.get('risk_pct', 0):.1f}%, Strength {strength:.1f}")
 
         
-        # Legacy Validation (Fallbacks)
-        if self.cancellation_enabled and (take_profit is None or stop_loss is None):
-            return True, f"Valid (wait-and-cancel mode for {symbol})"
-        
-        if take_profit is not None and take_profit <= 0:
-            return False, "Take profit must be positive"
-        
-        if stop_loss is not None and stop_loss <= 0:
-            return False, "Stop loss must be positive"
+        # Legacy Validation (Fallbacks) - LEFT EMPTY intentionally as we migrated to Top-Down
+        # This function primarily uses signal_dict validation now.
         
         return True, "Valid"
     
@@ -438,10 +414,10 @@ class RiskManager:
             'take_profit': trade_info.get('take_profit'),
             'stop_loss': trade_info.get('stop_loss'),
             'status': 'open',
-            'strategy': 'topdown' if self.use_topdown else ('scalping_cancel' if self.cancellation_enabled else 'legacy'),
-            'phase': 'cancellation' if self.cancellation_enabled else 'committed',
-            'cancellation_enabled': trade_info.get('cancellation_enabled', False),
-            'cancellation_expiry': trade_info.get('cancellation_expiry'),
+            'strategy': 'topdown',
+            'phase': 'committed',
+            'cancellation_enabled': False,
+            'cancellation_expiry': None,
             'highest_unrealized_pnl': 0.0, # Track peak profit for trailing stop
             'has_been_profitable': False   # Track if trade ever went into profit
         }
@@ -462,18 +438,11 @@ class RiskManager:
         logger.info(f"📝 Trade #{self.total_trades}: {trade_info.get('direction')} {symbol} @ {trade_info.get('entry_price'):.4f}")
         logger.info(f"   Active: 1/1 | All other assets BLOCKED")
         
-        if self.use_topdown:
-            # Top-Down trade
-            tp = trade_info.get('take_profit')
-            sl = trade_info.get('stop_loss')
-            if tp and sl:
-                logger.info(f"🎯 Top-Down: TP {tp:.4f} | SL {sl:.4f} ({symbol})")
-        elif self.cancellation_enabled:
-            # Wait-and-cancel trade
-            logger.info(f"🛡️ Phase 1: Wait-and-Cancel (decision @ 240s)")
-        else:
-            # Legacy trade
-            logger.debug(f"TP: {format_currency(trade_record['take_profit'])} | SL: {format_currency(trade_record['stop_loss'])}")
+        # Top-Down trade logging
+        tp = trade_info.get('take_profit')
+        sl = trade_info.get('stop_loss')
+        if tp and sl:
+            logger.info(f"🎯 Top-Down: TP {tp:.4f} | SL {sl:.4f} ({symbol})")
         
         # Update BotState if linked
         if self.bot_state:
@@ -523,43 +492,7 @@ class RiskManager:
                 
                 break
     
-    def check_early_exit(self, trade, current_price, elapsed_seconds, stake):
-        """Check if trade should be exited early (Fast Failure)"""
-        if not getattr(config, 'ENABLE_EARLY_EXIT', True):
-            return False, None
 
-        # Get time window based on hour
-        current_hour = datetime.now().hour
-        time_window = getattr(config, 'EARLY_EXIT_TIME_DAY', 45) if 12 <= current_hour <= 22 else getattr(config, 'EARLY_EXIT_TIME_NIGHT', 20)
-
-        if elapsed_seconds > time_window:
-            return False, None  # Past early exit window
-
-        entry_price = trade.get('entry_price', 0.0)
-        direction = trade.get('direction', 'UP')
-
-        # Calculate current loss as percentage of stake (using distances)
-        # Note: We need approx loss pct.
-        # Loss Pct = (Dist / Entry) * Multiplier * Stake / Stake * 100
-        #          = (Dist / Entry) * Multiplier * 100
-        
-        symbol = trade.get('symbol', 'UNKNOWN')
-        multiplier = self.asset_config.get(symbol, {}).get('multiplier', config.MULTIPLIER)
-        
-        if direction == "UP":
-            dist = entry_price - current_price
-        else:
-            dist = current_price - entry_price
-
-        if dist > 0 and entry_price > 0:
-            loss_pct_of_stake = (dist / entry_price) * multiplier * 100
-            
-            threshold = getattr(config, 'EARLY_EXIT_LOSS_PCT', 5.0)
-            if loss_pct_of_stake >= threshold:
-                logger.warning(f"⚠️ Early exit triggered: Loss {loss_pct_of_stake:.1f}% > {threshold}% at {elapsed_seconds}s")
-                return True, f"early_exit_fast_failure_{loss_pct_of_stake:.1f}pct"
-
-        return False, None
 
     def update_trailing_stop(self, trade, current_pnl, stake):
         """
@@ -570,7 +503,7 @@ class RiskManager:
         
         This ensures predictable protection: you keep at least (trigger% - trail%) of your stake.
         """
-        if not getattr(config, 'ENABLE_MULTI_TIER_TRAILING', True):
+        if not config.ENABLE_MULTI_TIER_TRAILING:
             return None
 
         if stake <= 0: 
@@ -581,7 +514,7 @@ class RiskManager:
 
         # Find active tier based on current profit
         active_tier = None
-        tiers = getattr(config, 'TRAILING_STOPS', [])
+        tiers = config.TRAILING_STOPS
         for tier in sorted(tiers, key=lambda x: x['trigger_pct'], reverse=True):
             if current_profit_pct >= tier['trigger_pct']:
                 active_tier = tier
@@ -628,17 +561,12 @@ class RiskManager:
 
         elapsed_seconds = (datetime.now() - self.active_trade.get('timestamp', datetime.now())).total_seconds()
 
-        # 1. Early Exit (Fast Failure)
-        should_exit, reason_msg = self.check_early_exit(self.active_trade, current_price, elapsed_seconds, stake)
-        if should_exit:
-             return {'should_close': True, 'reason': 'early_exit', 'message': reason_msg, 'current_pnl': current_pnl}
-
         # 2. Stagnation Exit
-        if getattr(config, 'ENABLE_STAGNATION_EXIT', True):
-             stagnation_time = getattr(config, 'STAGNATION_EXIT_TIME', 90)
+        if getattr(config, 'ENABLE_STAGNATION_EXIT', False):
+             stagnation_time = config.STAGNATION_EXIT_TIME
              if elapsed_seconds >= stagnation_time and current_pnl < 0:
                   loss_pct = (abs(current_pnl) / stake) * 100
-                  stagnation_loss_limit = getattr(config, 'STAGNATION_LOSS_PCT', 6.0)
+                  stagnation_loss_limit = config.STAGNATION_LOSS_PCT
                   
                   if loss_pct >= stagnation_loss_limit:
                        return {
