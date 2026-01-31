@@ -875,19 +875,24 @@ class RiskManager:
         return max(0.0, remaining)
     
     def get_active_trade_info(self) -> Optional[Dict]:
-        """Get information about the current active trade"""
-        if not self.has_active_trade or not self.active_trade:
+        """Get information about the current active trade (returns first if multiple)"""
+        if not self.active_trades:
             return None
         
+        # Return the most recent one or the first one? Let's return the first one (oldest) or last (newest).
+        # Usually for status display, maybe the newest is better? Or just the first.
+        # Let's go with the first one for consistency with "active trade" singular.
+        trade = self.active_trades[0]
+        
         return {
-            'symbol': self.active_symbol,
-            'contract_id': self.active_trade.get('contract_id'),
-            'direction': self.active_trade.get('direction'),
-            'entry_price': self.active_trade.get('entry_price'),
-            'stake': self.active_trade.get('stake'),
-            'timestamp': self.active_trade.get('timestamp'),
-            'strategy': self.active_trade.get('strategy'),
-            'phase': self.active_trade.get('phase')
+            'symbol': trade.get('symbol'),
+            'contract_id': trade.get('contract_id'),
+            'direction': trade.get('direction'),
+            'entry_price': trade.get('entry_price'),
+            'stake': trade.get('stake'),
+            'timestamp': trade.get('timestamp'),
+            'strategy': trade.get('strategy'),
+            'phase': trade.get('phase')
         }
     
     def print_status(self):
@@ -910,34 +915,37 @@ class RiskManager:
         if not can_trade:
             print(f"Reason: {reason}")
         
-        print(f"\n📍 Active Trades: {1 if self.has_active_trade else 0}/1 (GLOBAL)")
-        if self.has_active_trade and self.active_trade:
-            symbol = self.active_symbol
-            strategy = self.active_trade.get('strategy', 'unknown')
-            phase = self.active_trade.get('phase', 'unknown')
-            print(f"  🔒 LOCKED BY: {symbol}")
-            print(f"  └─ Strategy: {strategy.upper()}")
-            print(f"  └─ Phase: {phase.upper()}")
-            print(f"  └─ {self.active_trade.get('direction')} @ {self.active_trade.get('entry_price', 0):.4f}")
-            
-            if strategy == 'topdown':
-                tp = self.active_trade.get('take_profit')
-                sl = self.active_trade.get('stop_loss')
-                if tp and sl:
-                    print(f"  └─ TP: {tp:.4f} (structure level)")
-                    print(f"  └─ SL: {sl:.4f} (swing point)")
-            elif phase == 'cancellation':
-                print(f"  └─ Waiting for 4-min decision point")
-            else:
-                print(f"  └─ TP: {format_currency(self.target_profit)}")
-                print(f"  └─ SL: {format_currency(self.max_loss)}")
-            
-            # Show which assets are blocked
-            blocked = [s for s in self.symbols if s != symbol]
-            if blocked:
-                print(f"  └─ ⛔ BLOCKED: {', '.join(blocked)}")
+        print(f"\n📍 Active Trades: {len(self.active_trades)}/{self.max_concurrent_trades} (GLOBAL)")
+        
+        if self.active_trades:
+            for i, trade in enumerate(self.active_trades):
+                symbol = trade.get('symbol', 'UNKNOWN')
+                strategy = trade.get('strategy', 'unknown')
+                phase = trade.get('phase', 'unknown')
+                print(f"  [{i+1}] 🔒 {symbol}")
+                print(f"      └─ Strategy: {strategy.upper()}")
+                print(f"      └─ Phase: {phase.upper()}")
+                print(f"      └─ {trade.get('direction')} @ {trade.get('entry_price', 0):.4f}")
+                
+                if strategy == 'topdown':
+                    tp = trade.get('take_profit')
+                    sl = trade.get('stop_loss')
+                    if tp and sl:
+                        print(f"      └─ TP: {tp:.4f}")
+                        print(f"      └─ SL: {sl:.4f}")
+                
+                # Show cancellation info if applicable
+                if phase == 'cancellation':
+                     print(f"      └─ Waiting for decision point")
+
+            # Show which assets are blocked (if limit reached)
+            if len(self.active_trades) >= self.max_concurrent_trades:
+                active_symbols = [t.get('symbol') for t in self.active_trades]
+                blocked = [s for s in self.symbols if s not in active_symbols]
+                if blocked:
+                    print(f"  ⛔ MAX CAPACITY REACHED: {', '.join(blocked)} Blocked")
         else:
-            print(f"  ✅ All assets competing for next signal")
+            print(f"  ✅ All {len(self.symbols)} assets competing for next signal")
         
         print(f"\n📊 Today's Performance (GLOBAL):")
         print(f"  Trades: {len(self.trades_today)}/{self.max_trades_per_day}")
@@ -1008,7 +1016,7 @@ class RiskManager:
                     logger.warning(f"   🔒 LOCKING GLOBAL POSITION")
                     
                     # Reconstruct active trade record
-                    self.active_trade = {
+                    active_trade = {
                         'timestamp': datetime.now(),
                         'symbol': symbol,
                         'contract_id': contract_id,
@@ -1020,8 +1028,9 @@ class RiskManager:
                         'phase': 'committed'
                     }
                     
-                    self.has_active_trade = True
-                    self.active_symbol = symbol
+                    self.active_trades.append(active_trade)
+                    # self.has_active_trade = True # Removed
+                    # self.active_symbol = symbol # Removed
                     
                     logger.info(f"✅ Global lock restored - monitoring {symbol} position")
                     

@@ -308,7 +308,11 @@ class BotRunner:
         
         # Get active trade info from risk manager
         active_trade_info = None
-        if self.risk_manager and self.risk_manager.has_active_trade:
+        if self.risk_manager and self.risk_manager.active_trades:
+            # For status display, just show the first one or latest
+            # Ideally we return all, but for backward compatibility, let's see.
+            # RiskManager.get_active_trade_info() also needs fixing.
+            # For now, let's call it and assume I fix it to use active_trades[0]
             active_trade_info = self.risk_manager.get_active_trade_info()
         
         return {
@@ -459,9 +463,9 @@ class BotRunner:
                     cooldown = self.risk_manager.get_cooldown_remaining()
                     
                     # If actively monitoring a trade, check more frequently
-                    if self.risk_manager.has_active_trade:
+                    if self.risk_manager.active_trades:
                         wait_time = max(cooldown, 10)  # Check every 10s when trade active
-                        logger.debug(f"⏱️ Active trade - next check in {wait_time}s")
+                        logger.debug(f"⏱️ Active trade ({len(self.risk_manager.active_trades)}) - next check in {wait_time}s")
                     else:
                         wait_time = max(cooldown, 30)  # Standard 30s cycle when scanning
                         logger.debug(f"⏱️ No active trade - next scan in {wait_time}s")
@@ -530,8 +534,8 @@ class BotRunner:
         can_trade_global, reason = self.risk_manager.can_trade()
         
         # If we have an active trade, monitor it instead of scanning
-        if self.risk_manager.has_active_trade:
-            logger.debug(f"🔒 Monitoring active {self.risk_manager.active_symbol} trade")
+        if self.risk_manager.active_trades:
+            logger.debug(f"🔒 Monitoring {len(self.risk_manager.active_trades)} active trades")
             await self._monitor_active_trade()
             return
         

@@ -77,6 +77,14 @@ def ensure_json_serializable(obj: Any) -> Any:
             return None
         return val
     
+    # Standard Python float - check for inf/nan
+    if isinstance(obj, float):
+        import math
+        if math.isnan(obj) or math.isinf(obj):
+            logger.warning(f"Converting standard NaN/Inf to None in response data")
+            return None
+        return obj
+    
     # NumPy boolean
     if isinstance(obj, np.bool_):
         return bool(obj)

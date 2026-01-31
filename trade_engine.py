@@ -833,8 +833,9 @@ class TradeEngine:
             
             if final_status is None:
                 logger.error("❌ Monitoring failed - unlocking trade slot")
-                risk_manager.has_active_trade = False
-                risk_manager.active_trade = None
+                # risk_manager.has_active_trade = False  # Legacy attribute removed
+                if risk_manager and hasattr(risk_manager, 'active_trades'):
+                     risk_manager.active_trades = [t for t in risk_manager.active_trades if t.get('contract_id') != contract_id]
             
             return final_status
             
@@ -844,8 +845,9 @@ class TradeEngine:
             logger.error(traceback.format_exc())
             
             try:
-                risk_manager.has_active_trade = False
-                risk_manager.active_trade = None
+                # risk_manager.has_active_trade = False  # Legacy attribute removed
+                if risk_manager and hasattr(risk_manager, 'active_trades'):
+                     risk_manager.active_trades = [t for t in risk_manager.active_trades if t.get('contract_id') != contract_id]
                 logger.info("🔓 Trade slot unlocked after error")
             except:
                 pass

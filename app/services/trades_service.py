@@ -140,14 +140,26 @@ class UserTradesService:
                 }
             
             # Calculate stats
-            wins = [t.get('profit', 0) for t in trades if t.get('profit', 0) > 0]
-            losses = [abs(t.get('profit', 0)) for t in trades if t.get('profit', 0) < 0]
+            # Handle possible None values in profit
+            wins = []
+            losses = []
+            
+            for t in trades:
+                profit = t.get('profit')
+                if profit is None:
+                    continue
+                    
+                if profit > 0:
+                    wins.append(profit)
+                elif profit < 0:
+                    losses.append(abs(profit))
             
             winning_trades = len(wins)
             losing_trades = len(losses)
-            win_rate = (winning_trades / total_trades) * 100
+            # Avoid division by zero
+            win_rate = (winning_trades / total_trades * 100) if total_trades > 0 else 0.0
             
-            total_pnl = sum([t.get('profit', 0) for t in trades])
+            total_pnl = sum([t.get('profit') or 0 for t in trades])
             
             avg_win = sum(wins) / winning_trades if winning_trades else 0
             avg_loss = sum(losses) / losing_trades if losing_trades else 0
@@ -157,7 +169,15 @@ class UserTradesService:
             
             gross_profit = sum(wins)
             gross_loss = sum(losses)
-            profit_factor = gross_profit / gross_loss if gross_loss > 0 else (float('inf') if gross_profit > 0 else 0.0)
+            
+            # profit_factor = gross_profit / gross_loss
+            # If gross_loss is 0:
+            #   - if gross_profit > 0 -> technically infinite, but we return 0.0 or a high number to avoid JSON errors
+            #   - if gross_profit == 0 -> 0.0
+            if gross_loss > 0:
+                profit_factor = gross_profit / gross_loss
+            else:
+                profit_factor = 0.0  # Return 0.0 instead of infinite for JSON safety
 
             result = {
                 "total_trades": total_trades,
