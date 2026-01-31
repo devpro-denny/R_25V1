@@ -37,7 +37,7 @@ secure_headers = Secure(csp=csp, hsts=hsts, xfo=xfo, referrer=referrer)
 
 from app.core.settings import settings
 from app.core.logging import setup_api_logger
-from app.bot.runner import bot_runner
+from app.bot.manager import bot_manager
 from app.api import bot, trades, monitor, config as config_api, auth
 from app.ws import live
 
@@ -81,9 +81,8 @@ async def lifespan(app: FastAPI):
     
     # Shutdown
     logger.info("🛑 FastAPI application shutting down...")
-    if bot_runner.is_running:
-        logger.info("Stopping trading bot...")
-        await bot_runner.stop_bot()
+    # Stop all running user bots
+    await bot_manager.stop_all()
     logger.info("✅ Shutdown complete")
 
 # Create FastAPI app

@@ -1,17 +1,16 @@
 """
-Bot module initialization
+Bot Module - Multi-User Bot Management
 """
 
-from app.bot.runner import bot_runner, BotRunner, BotStatus
-from app.bot.state import bot_state
+from app.bot.manager import bot_manager
+from app.bot.runner import BotRunner, BotStatus
+from app.bot.state import BotState
 from app.bot.events import event_manager
-from app.bot.telegram_bridge import telegram_bridge
 
 __all__ = [
-    'bot_runner',
-    'BotRunner', 
+    'bot_manager',  # Primary interface for multi-user bot management
+    'BotRunner',
     'BotStatus',
-    'bot_state',
+    'BotState',
     'event_manager',
-    'telegram_bridge'
 ]
