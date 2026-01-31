@@ -26,6 +26,11 @@ if not DERIV_API_TOKEN or DERIV_API_TOKEN == "your_api_token_here":
     print("⚠️ WARNING: Global API_TOKEN not set. Startup will proceed, but global bot cannot run.")
     DERIV_API_TOKEN = None
 
+# ==================== CONTRACT TYPES ====================
+# Multiplier contract types for Deriv API
+CONTRACT_TYPE = "MULTUP"        # Multiplier Up (for UP/BUY signals)
+CONTRACT_TYPE_DOWN = "MULTDOWN"  # Multiplier Down (for DOWN/SELL signals)
+
 # ==================== MULTI-ASSET CONFIGURATION ====================
 # List of symbols to monitor and trade
 # Removed R_10: 400x multiplier incompatible with 0.5% SL (would exceed stake on Deriv multipliers)
