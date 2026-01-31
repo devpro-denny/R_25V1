@@ -638,6 +638,7 @@ class TradeEngine:
                 # Check if risk manager wants to close
                 if risk_manager:
                     exit_check = risk_manager.should_close_trade(
+                        contract_id,  # Pass contract_id to identify which trade
                         status['profit'],
                         status['current_spot'],
                         previous_spot

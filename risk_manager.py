@@ -1,9 +1,9 @@
 """
 Risk Manager for Deriv Multi-Asset Trading Bot
-ENHANCED VERSION - Multi-Asset Scanner with Global Position Control
-✅ Scans: R_25, R_50, R_501s, R_75, R_751s
-✅ GLOBAL limit: 1 active trade across ALL assets
-✅ First-Come, First-Served: First qualifying signal locks system
+ENHANCED VERSION - Multi-Asset Scanner with Configurable Concurrent Trades
+✅ Scans: R_25, R_50, R_75, R_100, 1HZ100V, RB200, stpRNG5, stpRNG4
+✅ CONFIGURABLE limit: MAX_CONCURRENT_TRADES (default 2) active trades across ALL assets
+✅ Slot-based system: Trades compete for available slots
 ✅ Top-Down strategy with dynamic TP/SL
 ✅ Wait-and-cancel logic (4-minute decision point)
 ✅ Legacy scalping with two-phase risk
@@ -20,15 +20,15 @@ logger = setup_logger()
 class RiskManager:
     """
     Manages risk limits with GLOBAL position control across multiple assets:
-    - CRITICAL: Only 1 active trade allowed across ALL symbols
+    - CONFIGURABLE: MAX_CONCURRENT_TRADES limit across ALL symbols (default 2)
     - Top-Down: Dynamic TP/SL based on market structure
     - Scalping + Cancellation: Wait-and-cancel (4-min decision)
     - Legacy: Fixed TP/SL percentages
     
     Multi-Asset Logic:
-    - Scans all configured symbols (R_25, R_50, R_501s, R_75, R_751s)
-    - First qualifying signal LOCKS the system
-    - All other assets blocked until active trade closes
+    - Scans all configured symbols (R_25, R_50, R_75, R_100, etc.)
+    - Allows concurrent trades up to MAX_CONCURRENT_TRADES limit
+    - Once limit reached, all other assets blocked until a slot frees
     - Daily limits apply GLOBALLY across portfolio
     """
     
@@ -47,11 +47,9 @@ class RiskManager:
         self.daily_pnl: float = 0.0
         self.current_date = datetime.now().date()
         
-        # CRITICAL: Global active trade tracking
-        # Only ONE trade allowed across ALL assets
-        self.active_trade: Optional[Dict] = None
-        self.has_active_trade = False
-        self.active_symbol: Optional[str] = None  # Which asset is locked
+        # CRITICAL: Global active trades tracking
+        # Configurable limit via MAX_CONCURRENT_TRADES
+        self.active_trades: List[Dict] = []  # List of currently active trades
         
         # Statistics - GLOBAL portfolio metrics
         self.total_trades = 0
@@ -164,9 +162,7 @@ class RiskManager:
             self.last_trade_time = None
             
             # CRITICAL: Reset global position lock
-            self.active_trade = None
-            self.has_active_trade = False
-            self.active_symbol = None
+            self.active_trades = []
             
             self.consecutive_losses = 0
             self.trades_cancelled = 0
@@ -181,8 +177,8 @@ class RiskManager:
         """
         Check if trading is allowed GLOBALLY
         
-        CRITICAL: This enforces the 1-trade limit across ALL assets
-        If R_25 has an active trade, R_50/R_75/etc are ALL blocked
+        CRITICAL: This enforces the MAX_CONCURRENT_TRADES limit across ALL assets
+        If limit is reached (e.g., 2/2), all other assets are blocked until a slot frees
         
         Args:
             symbol: Optional symbol to check (for logging context)
@@ -193,10 +189,11 @@ class RiskManager:
         """
         self.reset_daily_stats()
         
-        # CRITICAL: Global position check
-        if self.has_active_trade:
-            reason = f"GLOBAL LOCK: Active {self.active_symbol} trade in progress (1/{self.max_concurrent_trades} limit)"
-            if symbol and symbol != self.active_symbol:
+        # CRITICAL: Global concurrent trades check
+        if len(self.active_trades) >= self.max_concurrent_trades:
+            active_symbols = [t['symbol'] for t in self.active_trades]
+            reason = f"GLOBAL LIMIT: {len(self.active_trades)}/{self.max_concurrent_trades} active trades ({', '.join(active_symbols)})"
+            if symbol and symbol not in active_symbols:
                 logger.debug(f"⏸️ {symbol} blocked: {reason}")
             
             if verbose:
@@ -430,14 +427,20 @@ class RiskManager:
         # Update per-asset stats
         self.trades_by_symbol[symbol] = self.trades_by_symbol.get(symbol, 0) + 1
         
-        # CRITICAL: Lock global position
-        self.active_trade = trade_record
-        self.has_active_trade = True
-        self.active_symbol = symbol
+        # CRITICAL: Add to active trades list
+        self.active_trades.append(trade_record)
+        
+        active_count = len(self.active_trades)
+        active_symbols = [t['symbol'] for t in self.active_trades]
         
         logger.info(f"🔒 GLOBAL POSITION LOCKED BY {symbol}")
         logger.info(f"📝 Trade #{self.total_trades}: {trade_info.get('direction')} {symbol} @ {trade_info.get('entry_price'):.4f}")
-        logger.info(f"   Active: 1/1 | All other assets BLOCKED")
+        logger.info(f"   Active: {active_count}/{self.max_concurrent_trades} | Active symbols: {', '.join(active_symbols)}")
+        
+        if active_count >= self.max_concurrent_trades:
+            logger.info(f"   ⚠️ LIMIT REACHED: All slots filled, blocking other assets")
+        else:
+            logger.info(f"   ✅ {self.max_concurrent_trades - active_count} slot(s) available for other assets")
         
         # Top-Down trade logging
         tp = trade_info.get('take_profit')
@@ -470,14 +473,22 @@ class RiskManager:
                 
                 break
         
-        # CRITICAL: Unlock global position
-        if self.active_trade and self.active_trade.get('contract_id') == contract_id:
-            released_symbol = self.active_symbol
-            self.active_trade = None
-            self.has_active_trade = False
-            self.active_symbol = None
-            logger.info(f"🔓 GLOBAL POSITION UNLOCKED ({released_symbol} cancelled)")
-            logger.info(f"   All assets can now compete for next trade")
+        # CRITICAL: Remove from active trades list
+        released_symbol = None
+        for i, active in enumerate(self.active_trades):
+            if active.get('contract_id') == contract_id:
+                released_symbol = active.get('symbol')
+                self.active_trades.pop(i)
+                break
+        
+        if released_symbol:
+            remaining_count = len(self.active_trades)
+            logger.info(f"🔓 POSITION SLOT FREED ({released_symbol} cancelled)")
+            if remaining_count > 0:
+                remaining_symbols = [t['symbol'] for t in self.active_trades]
+                logger.info(f"   {remaining_count}/{self.max_concurrent_trades} slots still active: {', '.join(remaining_symbols)}")
+            else:
+                logger.info(f"   All slots now available for trading")
     
     def record_cancellation_expiry(self, contract_id: str):
         """Record when cancellation period expires (trade was profitable at 4-min)"""
@@ -550,17 +561,35 @@ class RiskManager:
             'tier_name': active_tier['name']
         }
 
-    def should_close_trade(self, current_pnl: float, current_price: float, 
-                          previous_price: float) -> Dict:
-        """Check if trade should be closed manually"""
-        if not self.active_trade:
-             return {'should_close': False, 'reason': 'No active trade'}
-
-        stake = self.active_trade.get('stake', 0.0)
+    def should_close_trade(self, contract_id: str, current_pnl: float, 
+                          current_price: float, previous_price: float) -> Dict:
+        """
+        Check if trade should be closed manually
+        
+        Args:
+            contract_id: Contract ID to identify which trade to check
+            current_pnl: Current profit/loss
+            current_price: Current spot price
+            previous_price: Previous spot price
+        
+        Returns:
+            Dict with should_close flag and reason
+        """
+        # Find the specific trade by contract_id
+        active_trade = None
+        for trade in self.active_trades:
+            if trade.get('contract_id') == contract_id:
+                active_trade = trade
+                break
+        
+        if not active_trade:
+            return {'should_close': False, 'reason': 'Trade not found in active trades'}
+        
+        stake = active_trade.get('stake', 0.0)
         if stake <= 0:
              return {'should_close': False, 'reason': 'Stake missing'}
 
-        elapsed_seconds = (datetime.now() - self.active_trade.get('timestamp', datetime.now())).total_seconds()
+        elapsed_seconds = (datetime.now() - active_trade.get('timestamp', datetime.now())).total_seconds()
 
         # 2. Stagnation Exit
         if getattr(config, 'ENABLE_STAGNATION_EXIT', False):
@@ -579,13 +608,13 @@ class RiskManager:
         
         # 3. Trailing Stop (Profit Percentage Based)
         # Update highest unrealized PnL for peak tracking
-        current_peak = self.active_trade.get('highest_unrealized_pnl', 0.0)
+        current_peak = active_trade.get('highest_unrealized_pnl', 0.0)
         if current_pnl > current_peak:
-            self.active_trade['highest_unrealized_pnl'] = current_pnl
+            active_trade['highest_unrealized_pnl'] = current_pnl
             current_peak = current_pnl
             
         # Use peak PnL to determine tier activation, but current PnL for trigger check
-        trailing = self.update_trailing_stop(self.active_trade, current_peak, stake)
+        trailing = self.update_trailing_stop(active_trade, current_peak, stake)
         if trailing:
              stop_profit_pct = trailing['stop_profit_pct']
              tier_name = trailing['tier_name']
@@ -615,14 +644,30 @@ class RiskManager:
 
         return {'should_close': False, 'reason': 'monitor_active'}
     
-    def get_exit_status(self, current_pnl: float) -> Dict:
-        """Get current exit status"""
-        if not self.active_trade:
+    def get_exit_status(self, contract_id: str, current_pnl: float) -> Dict:
+        """
+        Get current exit status for a specific trade
+        
+        Args:
+            contract_id: Contract ID to identify which trade
+            current_pnl: Current profit/loss
+        
+        Returns:
+            Dict with trade status information
+        """
+        # Find the specific trade by contract_id
+        active_trade = None
+        for trade in self.active_trades:
+            if trade.get('contract_id') == contract_id:
+                active_trade = trade
+                break
+        
+        if not active_trade:
             return {'active': False}
         
-        phase = self.active_trade.get('phase', 'unknown')
-        strategy = self.active_trade.get('strategy', 'unknown')
-        symbol = self.active_trade.get('symbol', 'UNKNOWN')
+        phase = active_trade.get('phase', 'unknown')
+        strategy = active_trade.get('strategy', 'unknown')
+        symbol = active_trade.get('symbol', 'UNKNOWN')
         
         status = {
             'active': True,
@@ -631,12 +676,14 @@ class RiskManager:
             'phase': phase,
             'strategy': strategy,
             'consecutive_losses': self.consecutive_losses,
-            'global_lock': True
+            'global_lock': len(self.active_trades) >= self.max_concurrent_trades,
+            'active_trades_count': len(self.active_trades),
+            'max_concurrent_trades': self.max_concurrent_trades
         }
         
         if strategy == 'topdown':
-            status['target_profit'] = self.active_trade.get('take_profit')
-            status['max_loss'] = self.active_trade.get('stop_loss')
+            status['target_profit'] = active_trade.get('take_profit')
+            status['max_loss'] = active_trade.get('stop_loss')
             status['dynamic_tp_sl'] = True
         elif phase == 'committed':
             status['target_profit'] = self.target_profit
@@ -697,14 +744,22 @@ class RiskManager:
             else:
                 trade['exit_type'] = 'early_close'
         
-        # CRITICAL: Unlock global position
-        if self.active_trade and self.active_trade.get('contract_id') == contract_id:
-            released_symbol = self.active_symbol
-            self.active_trade = None
-            self.has_active_trade = False
-            self.active_symbol = None
-            logger.info(f"🔓 GLOBAL POSITION UNLOCKED ({released_symbol} closed)")
-            logger.info(f"   All assets can now compete for next trade")
+        # CRITICAL: Remove from active trades list
+        released_symbol = None
+        for i, active in enumerate(self.active_trades):
+            if active.get('contract_id') == contract_id:
+                released_symbol = active.get('symbol')
+                self.active_trades.pop(i)
+                break
+        
+        if released_symbol:
+            remaining_count = len(self.active_trades)
+            logger.info(f"🔓 POSITION SLOT FREED ({released_symbol} closed)")
+            if remaining_count > 0:
+                remaining_symbols = [t['symbol'] for t in self.active_trades]
+                logger.info(f"   {remaining_count}/{self.max_concurrent_trades} slots still active: {', '.join(remaining_symbols)}")
+            else:
+                logger.info(f"   All slots now available for trading")
         
         # Update P&L - GLOBAL
         self.daily_pnl += pnl
@@ -787,8 +842,9 @@ class RiskManager:
             'circuit_breaker_active': self.consecutive_losses >= self.max_consecutive_losses,
             'strategy_mode': 'topdown' if self.use_topdown else ('wait_cancel' if self.cancellation_enabled else 'legacy'),
             'multi_asset_mode': True,
-            'active_symbol': self.active_symbol,
-            'has_active_trade': self.has_active_trade,
+            'active_trades_count': len(self.active_trades),
+            'max_concurrent_trades': self.max_concurrent_trades,
+            'active_symbols': [t['symbol'] for t in self.active_trades],
             'trades_by_symbol': self.trades_by_symbol,
             'pnl_by_symbol': self.pnl_by_symbol
         }
