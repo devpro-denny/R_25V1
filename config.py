@@ -97,7 +97,7 @@ USE_TOPDOWN_STRATEGY = True        # Active Strategy
 FIXED_STAKE = None               # NO DEFAULT - STRICTLY USER DEFINED
 
 # Maximum Risk (Percentage of Stake)
-MAX_RISK_PCT = 50.0                # Never risk more than 25% of stake
+MAX_RISK_PCT = 50.0                # Never risk more than 50% of stake
 
 # Maximum loss per trade (acts as emergency stop)
 MAX_LOSS_PER_TRADE = None           # DYNAMIC (1x User Stake)
