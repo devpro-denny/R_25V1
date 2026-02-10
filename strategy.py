@@ -40,9 +40,14 @@ class TradingStrategy:
 
     def analyze(self, data_1m: pd.DataFrame, data_5m: pd.DataFrame, 
                 data_1h: pd.DataFrame, data_4h: pd.DataFrame, 
-                data_1d: pd.DataFrame, data_1w: pd.DataFrame) -> Dict[str, Any]:
+                data_1d: pd.DataFrame, data_1w: pd.DataFrame,
+                symbol: str = None) -> Dict[str, Any]:
         """
         Main analysis method accepting all 6 timeframes.
+        
+        Args:
+            data_1m to data_1w: DataFrames for each timeframe
+            symbol: Asset symbol (e.g., 'R_75') for asset-specific filtering
         
         Returns:
             Dict containing signal, levels, and trade parameters.
@@ -109,6 +114,73 @@ class TradingStrategy:
             return response
         
         passed_checks.append(f"Trend Strength (ADX {adx_val:.1f} > {config.ADX_THRESHOLD})")
+
+        # ---------------------------------------------------------
+        # Phase 0.5: Entry Timing Validation (LATE ENTRY FILTER)
+        # ---------------------------------------------------------
+        from indicators import detect_price_movement, detect_consolidation, detect_exhaustion
+
+        # Filter 1: Check price movement over recent candles
+        movement_pct, movement_pips, is_parabolic = detect_price_movement(data_1m, lookback=20)
+        
+        # Reject parabolic spikes immediately (buying tops/selling bottoms)
+        if is_parabolic:
+            print(f"[STRATEGY] ❌ Parabolic Spike Detected - Late Entry Rejected")
+            response["details"]["reason"] = "Parabolic spike detected - entry too late"
+            response["details"]["movement_pct"] = round(movement_pct, 2)
+            response["details"]["is_parabolic"] = True
+            return response
+        
+        # Get asset-specific movement threshold (or global fallback)
+        max_movement = config.MAX_PRICE_MOVEMENT_PCT  # Default global threshold
+        
+        if symbol and hasattr(config, 'ASSET_CONFIG'):
+            asset_config = config.ASSET_CONFIG.get(symbol, {})
+            asset_threshold = asset_config.get('movement_threshold_pct')
+            if asset_threshold:
+                max_movement = asset_threshold
+                logger.debug(f"[STRATEGY] Using {symbol}-specific threshold: {max_movement}%")
+        
+        # Reject if price already moved significantly
+        if abs(movement_pct) > max_movement:
+            print(f"[STRATEGY] ❌ Price Moved {abs(movement_pct):.2f}% - Late Entry Rejected")
+            response["details"]["reason"] = f"Price already moved {abs(movement_pct):.2f}% - late entry rejected (max {max_movement}%)"
+            response["details"]["movement_pct"] = round(movement_pct, 2)
+            return response
+        
+        passed_checks.append(f"Price Movement Check ({abs(movement_pct):.2f}% < {max_movement}%)")
+        
+        # Filter 2: Check for consolidation (preferred entry structure)
+        is_consolidating, range_high, range_low = detect_consolidation(
+            data_5m, 
+            lookback=getattr(config, 'CONSOLIDATION_LOOKBACK', 20),
+            atr_threshold=getattr(config, 'CONSOLIDATION_ATR_MULTIPLIER', 0.6)
+        )
+        
+        # Store consolidation context for later (not a hard filter, but informational)
+        consolidation_context = {
+            'is_consolidating': is_consolidating,
+            'range_high': range_high,
+            'range_low': range_low
+        }
+        
+        if is_consolidating:
+            logger.debug(f"[STRATEGY] Consolidation detected: {range_low:.2f} - {range_high:.2f}")
+        
+        # Optional: Require consolidation base
+        require_base = getattr(config, 'REQUIRE_CONSOLIDATION_BASE', False)
+        warn_no_base = getattr(config, 'WARN_NO_CONSOLIDATION', True)
+        
+        if require_base and not is_consolidating:
+            # Strict mode: reject if no consolidation
+            response["details"]["reason"] = "No consolidation base - entry quality too low"
+            return response
+        elif warn_no_base and not is_consolidating:
+            # Warning mode: log but allow
+            logger.warning(f"⚠️ No consolidation base detected - entry quality may be lower")
+            passed_checks.append("No Consolidation Base (Warning)")
+        else:
+            passed_checks.append("Consolidation Check Passed")
 
         # ---------------------------------------------------------
         # Phase 1: Directional Bias (Weekly + Daily)
