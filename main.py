@@ -216,7 +216,8 @@ class TradingBot:
                     data_1h=all_timeframes.get('1h'),
                     data_4h=all_timeframes.get('4h'),
                     data_1d=all_timeframes.get('1d'),
-                    data_1w=all_timeframes.get('1w')
+                    data_1w=all_timeframes.get('1w'),
+                    symbol=symbol  # Pass symbol for asset-specific filtering
                 )
             else:
                 # Legacy: Use 1m+5m only
@@ -226,7 +227,16 @@ class TradingBot:
                     logger.warning(f"⚠️ Failed to fetch complete data for {symbol}")
                     return None
                 
-                signal = self.strategy.analyze(market_data['1m'], market_data['5m'])
+                # Legacy mode: analyze with 1m+5m (pass None for missing timeframes)
+                signal = self.strategy.analyze(
+                    data_1m=market_data['1m'],
+                    data_5m=market_data['5m'],
+                    data_1h=None,
+                    data_4h=None,
+                    data_1d=None,
+                    data_1w=None,
+                    symbol=symbol
+                )
             
             # Add symbol to signal
             if signal:

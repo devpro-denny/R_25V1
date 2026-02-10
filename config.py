@@ -41,42 +41,50 @@ ASSET_CONFIG = {
     "R_25": {
         "multiplier": 160,
         "description": "Volatility 25 Index",
-        "tick_size": 0.01
+        "tick_size": 0.01,
+        "movement_threshold_pct": 0.3  # Lower volatility = stricter threshold
     },
     "R_50": {
         "multiplier": 80,
         "description": "Volatility 50 Index",
-        "tick_size": 0.01
+        "tick_size": 0.01,
+        "movement_threshold_pct": 0.4
     },
     "R_75": {
         "multiplier": 50,
         "description": "Volatility 75 Index",
-        "tick_size": 0.01
+        "tick_size": 0.01,
+        "movement_threshold_pct": 0.5  # Baseline
     },
     "R_100": {
         "multiplier": 40,
         "description": "Volatility 100 Index",
-        "tick_size": 0.01
+        "tick_size": 0.01,
+        "movement_threshold_pct": 0.7  # Higher volatility = looser threshold
     },
     "1HZ100V": {
         "multiplier": 40,
         "description": "Volatility 100 (1s) Index",
-        "tick_size": 0.01
+        "tick_size": 0.01,
+        "movement_threshold_pct": 0.8  # Very high frequency = looser threshold
     },
     "RB200": {
         "multiplier": 40,
         "description": "Range Break 200 Index",
-        "tick_size": 0.01
+        "tick_size": 0.01,
+        "movement_threshold_pct": 0.6
     },
     "stpRNG5": {
         "multiplier": 100,
         "description": "Step Index 500",
-        "tick_size": 0.1
+        "tick_size": 0.1,
+        "movement_threshold_pct": 0.5
     },
     "stpRNG4": {
         "multiplier": 200,
         "description": "Step Index 400",
-        "tick_size": 0.1
+        "tick_size": 0.1,
+        "movement_threshold_pct": 0.4
     }
 }
 
@@ -224,6 +232,24 @@ MIN_TP_DISTANCE_PCT = 0.2          # Minimum TP distance from entry
 # ==================== ENTRY PROXIMITY SETTINGS ====================
 MAX_ENTRY_DISTANCE_PCT = 0.5       # Max distance from level to entry (prevents chasing)
 ALLOW_MIDDLE_ZONE_WITH_BREAKOUT = True  # Allow middle zone entry IF strong momentum breakout
+
+# ==================== LATE ENTRY PREVENTION ====================
+# Maximum price movement before entry (percentage)
+MAX_PRICE_MOVEMENT_PCT = 0.5       # Reject if price moved > 0.5% already (~150 pips on R_75)
+MAX_PRICE_MOVEMENT_PIPS = 150      # Alternative: Reject if moved > 150 pips (not currently used)
+
+# Parabolic spike detection
+PARABOLIC_CANDLE_COUNT = 3         # N consecutive large candles = parabolic
+PARABOLIC_CANDLE_SIZE = 2.0        # Each candle > 2.0x ATR
+
+# Consolidation detection
+CONSOLIDATION_ATR_MULTIPLIER = 0.6 # ATR < 60% of average = consolidating
+CONSOLIDATION_LOOKBACK = 20        # Candles to check for consolidation
+
+# Exhaustion detection
+REQUIRE_CONSOLIDATION_BASE = False # If True, MUST have consolidation before breakout
+WARN_NO_CONSOLIDATION = True       # Log warning if no base (doesn't reject)
+
 
 # ==================== TRAILING STOP SETTINGS ====================
 
