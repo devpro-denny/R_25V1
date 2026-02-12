@@ -78,13 +78,13 @@ ASSET_CONFIG = {
         "multiplier": 100,
         "description": "Step Index 500",
         "tick_size": 0.1,
-        "movement_threshold_pct": 0.5
+        "movement_threshold_pct": 0.8  # Aligned with R_75 volatility
     },
     "stpRNG4": {
         "multiplier": 200,
         "description": "Step Index 400",
         "tick_size": 0.1,
-        "movement_threshold_pct": 0.4
+        "movement_threshold_pct": 0.7  # Aligned with R_50 volatility
     }
 }
 
