@@ -313,7 +313,7 @@ class TradingStrategy:
         # 2.5. Validate Entry Distance to Level (NEW)
         # Prevent entries too close to swing points (quick reversals)
         proximity_valid, proximity_reason, distance_pct = self._validate_level_proximity(
-            current_price, nearest_exec_level, signal_direction
+            current_price, nearest_exec_level, signal_direction, symbol
         )
         
         if not proximity_valid:
@@ -701,7 +701,7 @@ class TradingStrategy:
         return sorted_levels[0]['price']
 
     def _validate_level_proximity(self, current_price: float, level_price: Optional[float], 
-                                  direction: str) -> Tuple[bool, str, float]:
+                                  direction: str, symbol: str = None) -> Tuple[bool, str, float]:
         """
         Ensure entry is at reasonable distance from level.
         Prevents entries too close to support/resistance (quick reversals).
@@ -712,7 +712,18 @@ class TradingStrategy:
             return False, "No level price provided", 0.0
         
         distance_pct = abs(current_price - level_price) / current_price * 100
-        max_distance = getattr(config, 'MAX_ENTRY_DISTANCE_PCT', 0.5)
+        
+        # Get asset-specific threshold (or global fallback)
+        max_distance = config.MAX_ENTRY_DISTANCE_PCT  # Default global threshold
+        
+        if symbol and hasattr(config, 'ASSET_CONFIG'):
+            asset_config = config.ASSET_CONFIG.get(symbol, {})
+            asset_threshold = asset_config.get('entry_distance_pct')
+            if asset_threshold:
+                max_distance = asset_threshold
+                logger.debug(f"[STRATEGY] Using {symbol}-specific entry distance: {max_distance}%")
+            else:
+                logger.debug(f"[STRATEGY] No entry_distance_pct for {symbol}, using global {max_distance}%")
         
         if direction == "UP":
             # For UP: Entry should be above level
