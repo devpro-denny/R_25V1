@@ -42,37 +42,37 @@ ASSET_CONFIG = {
         "multiplier": 160,
         "description": "Volatility 25 Index",
         "tick_size": 0.01,
-        "movement_threshold_pct": 0.3  # Lower volatility = stricter threshold
+        "movement_threshold_pct": 0.5  # Adjusted based on production data
     },
     "R_50": {
         "multiplier": 80,
         "description": "Volatility 50 Index",
         "tick_size": 0.01,
-        "movement_threshold_pct": 0.4
+        "movement_threshold_pct": 0.7  # Observed rejections at 0.59-0.67%
     },
     "R_75": {
         "multiplier": 50,
         "description": "Volatility 75 Index",
         "tick_size": 0.01,
-        "movement_threshold_pct": 0.5  # Baseline
+        "movement_threshold_pct": 0.8  # Increased to allow more entries (still rejects >0.8%)
     },
     "R_100": {
         "multiplier": 40,
         "description": "Volatility 100 Index",
         "tick_size": 0.01,
-        "movement_threshold_pct": 0.7  # Higher volatility = looser threshold
+        "movement_threshold_pct": 1.0  # Observed rejections at 0.66-0.77%
     },
     "1HZ100V": {
         "multiplier": 40,
         "description": "Volatility 100 (1s) Index",
         "tick_size": 0.01,
-        "movement_threshold_pct": 0.8  # Very high frequency = looser threshold
+        "movement_threshold_pct": 1.5  # Observed rejections at 1.09-1.32%
     },
     "RB200": {
         "multiplier": 40,
         "description": "Range Break 200 Index",
         "tick_size": 0.01,
-        "movement_threshold_pct": 0.6
+        "movement_threshold_pct": 0.8  # Aligned with medium volatility assets
     },
     "stpRNG5": {
         "multiplier": 100,
