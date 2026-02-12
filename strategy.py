@@ -134,12 +134,21 @@ class TradingStrategy:
         # Get asset-specific movement threshold (or global fallback)
         max_movement = config.MAX_PRICE_MOVEMENT_PCT  # Default global threshold
         
+        # DEBUG: Print symbol parameter
+        print(f"[DEBUG] Symbol parameter received: '{symbol}'")
+        
         if symbol and hasattr(config, 'ASSET_CONFIG'):
             asset_config = config.ASSET_CONFIG.get(symbol, {})
             asset_threshold = asset_config.get('movement_threshold_pct')
+            print(f"[DEBUG] Asset config for {symbol}: {asset_config}")
+            print(f"[DEBUG] Extracted threshold: {asset_threshold}")
             if asset_threshold:
                 max_movement = asset_threshold
-                logger.debug(f"[STRATEGY] Using {symbol}-specific threshold: {max_movement}%")
+                print(f"[STRATEGY] ✓ Using {symbol}-specific threshold: {max_movement}%")
+            else:
+                print(f"[STRATEGY] ⚠️ No threshold found for {symbol}, using global {max_movement}%")
+        else:
+            print(f"[STRATEGY] ⚠️ Using global threshold (symbol={symbol}, hasattr={hasattr(config, 'ASSET_CONFIG')})")
         
         # Reject if price already moved significantly
         if abs(movement_pct) > max_movement:
