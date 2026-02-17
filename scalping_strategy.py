@@ -23,11 +23,7 @@ class ScalpingStrategy(BaseStrategy):
     
     def __init__(self):
         """Initialize scalping strategy"""
-        logger.info("✅ Scalping strategy initialized")
-        logger.info(f"📊 Timeframes: {scalping_config.SCALPING_TIMEFRAMES}")
-        logger.info(f"📈 ADX Threshold: {scalping_config.SCALPING_ADX_THRESHOLD}")
-        logger.info(f"📉 RSI Range UP: {scalping_config.SCALPING_RSI_UP_MIN}-{scalping_config.SCALPING_RSI_UP_MAX}")
-        logger.info(f"📊 RSI Range DOWN: {scalping_config.SCALPING_RSI_DOWN_MIN}-{scalping_config.SCALPING_RSI_DOWN_MAX}")
+        pass
     
     def analyze(self, **kwargs) -> Optional[Dict]:
         """
