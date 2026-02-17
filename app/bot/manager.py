@@ -27,7 +27,7 @@ class BotManager:
     def get_bot(self, user_id: str, strategy = None, risk_manager = None) -> BotRunner:
         """
         Get or create a bot instance for the user.
-        If strategy/risk_manager are provided, creates new bot with these instances.
+        If strategy/risk_manager are provided, updates existing bot or creates new one.
         """
         if user_id not in self._bots:
             logger.info(f"Initializing new bot instance for user {user_id}")
@@ -36,6 +36,14 @@ class BotManager:
                 strategy=strategy,
                 risk_manager=risk_manager
             )
+        else:
+            # Update strategy and risk_manager if provided (for strategy switching)
+            if strategy is not None:
+                logger.info(f"Updating strategy for existing bot instance: {user_id}")
+                self._bots[user_id].strategy = strategy
+            if risk_manager is not None:
+                logger.info(f"Updating risk manager for existing bot instance: {user_id}")
+                self._bots[user_id].risk_manager = risk_manager
             
         return self._bots[user_id]
 
