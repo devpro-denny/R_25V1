@@ -68,8 +68,7 @@ class ScalpingRiskManager(BaseRiskManager):
         # Load today's stats from database
         self._load_daily_stats_from_db()
         
-        logger.info(f"✅ Scalping Risk Manager initialized for user {user_id}")
-        logger.info(f"📊 Limits - Concurrent: {self.max_concurrent_trades}, Daily: {self.max_trades_per_day}, Cooldown: {self.cooldown_seconds}s")
+        pass # logger.info(f"📊 Limits - Concurrent: {self.max_concurrent_trades}, Daily: {self.max_trades_per_day}, Cooldown: {self.cooldown_seconds}s")
     
     def _load_daily_stats_from_db(self) -> None:
         """

@@ -27,7 +27,10 @@ class ConservativeRiskManager(BaseRiskManager):
         """
         self.risk_manager = RiskManager()
         self.user_id = user_id
-        logger.info(f"✅ Conservative risk manager wrapper initialized for user {user_id}")
+        if self.user_id:
+            pass # logger.info(f"✅ Conservative risk manager wrapper initialized for user {self.user_id}")
+        else:
+            pass # logger.info("✅ Conservative risk manager wrapper initialized (Global)")
     
     # Expose active_trades property from wrapped RiskManager
     @property
