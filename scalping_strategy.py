@@ -54,11 +54,11 @@ class ScalpingStrategy(BaseStrategy):
             logger.error("❌ Scalping: Insufficient data (need at least 50 candles per timeframe)")
             return None
         
-        logger.info(f"\n{'='*60}\n🎯 Scalping Analysis: {symbol}\n{'='*60}")
+        logger.info(f"\n{'='*60}\n[SCALPING] 🎯 Analysis: {symbol}\n{'='*60}")
         
         # Get current price
         current_price = data_1m['close'].iloc[-1]
-        logger.info(f"💰 Current Price: {current_price}")
+        logger.info(f"[SCALPING] 💰 Current Price: {current_price}")
         
         # =================================================================
         # CHECK 1: Trend Alignment (1h and 5m must agree)
@@ -67,15 +67,15 @@ class ScalpingStrategy(BaseStrategy):
         trend_5m = self._determine_trend(data_5m, '5m')
         
         if trend_1h is None or trend_5m is None:
-            logger.info("❌ CHECK 1 FAILED: Could not determine trend")
+            logger.info("[SCALPING] ❌ CHECK 1 FAILED: Could not determine trend")
             return None
         
         if trend_1h != trend_5m:
-            logger.info(f"❌ CHECK 1 FAILED: Trend mismatch - 1h: {trend_1h}, 5m: {trend_5m}")
+            logger.info(f"[SCALPING] ❌ CHECK 1 FAILED: Trend mismatch - 1h: {trend_1h}, 5m: {trend_5m}")
             return None
         
         direction = trend_1h
-        logger.info(f"✅ CHECK 1 PASSED: Trend aligned - {direction}")
+        logger.info(f"[SCALPING] ✅ CHECK 1 PASSED: Trend aligned - {direction}")
         
         # =================================================================
         # CHECK 2-4: RSI and ADX validation
@@ -93,25 +93,25 @@ class ScalpingStrategy(BaseStrategy):
             logger.warning("⚠️ ADX calculation failed, using fallback ADX=0")
             adx_1m = 0.0
         
-        logger.info(f"📊 Indicators - RSI: {rsi_1m:.2f}, ADX: {adx_1m:.2f}")
+        logger.info(f"[SCALPING] 📊 Indicators - RSI: {rsi_1m:.2f}, ADX: {adx_1m:.2f}")
         
         # CHECK 2: ADX Threshold
         if adx_1m < scalping_config.SCALPING_ADX_THRESHOLD:
-            logger.info(f"❌ CHECK 2 FAILED: ADX {adx_1m:.2f} < {scalping_config.SCALPING_ADX_THRESHOLD}")
+            logger.info(f"[SCALPING] ❌ CHECK 2 FAILED: ADX {adx_1m:.2f} < {scalping_config.SCALPING_ADX_THRESHOLD}")
             return None
-        logger.info(f"✅ CHECK 2 PASSED: ADX {adx_1m:.2f} >= {scalping_config.SCALPING_ADX_THRESHOLD}")
+        logger.info(f"[SCALPING] ✅ CHECK 2 PASSED: ADX {adx_1m:.2f} >= {scalping_config.SCALPING_ADX_THRESHOLD}")
         
         # CHECK 3 & 4: RSI Range validation
         if direction == "BULLISH":
             if not (scalping_config.SCALPING_RSI_UP_MIN <= rsi_1m <= scalping_config.SCALPING_RSI_UP_MAX):
-                logger.info(f"❌ CHECK 3 FAILED: RSI {rsi_1m:.2f} not in UP range [{scalping_config.SCALPING_RSI_UP_MIN}-{scalping_config.SCALPING_RSI_UP_MAX}]")
+                logger.info(f"[SCALPING] ❌ CHECK 3 FAILED: RSI {rsi_1m:.2f} not in UP range [{scalping_config.SCALPING_RSI_UP_MIN}-{scalping_config.SCALPING_RSI_UP_MAX}]")
                 return None
-            logger.info(f"✅ CHECK 3 PASSED: RSI {rsi_1m:.2f} in UP range")
+            logger.info(f"[SCALPING] ✅ CHECK 3 PASSED: RSI {rsi_1m:.2f} in UP range")
         else:  # BEARISH
             if not (scalping_config.SCALPING_RSI_DOWN_MIN <= rsi_1m <= scalping_config.SCALPING_RSI_DOWN_MAX):
-                logger.info(f"❌ CHECK 4 FAILED: RSI {rsi_1m:.2f} not in DOWN range [{scalping_config.SCALPING_RSI_DOWN_MIN}-{scalping_config.SCALPING_RSI_DOWN_MAX}]")
+                logger.info(f"[SCALPING] ❌ CHECK 4 FAILED: RSI {rsi_1m:.2f} not in DOWN range [{scalping_config.SCALPING_RSI_DOWN_MIN}-{scalping_config.SCALPING_RSI_DOWN_MAX}]")
                 return None
-            logger.info(f"✅ CHECK 4 PASSED: RSI {rsi_1m:.2f} in DOWN range")
+            logger.info(f"[SCALPING] ✅ CHECK 4 PASSED: RSI {rsi_1m:.2f} in DOWN range")
         
         # =================================================================
         # CHECK 5: Price Movement Filter
@@ -127,9 +127,9 @@ class ScalpingStrategy(BaseStrategy):
         price_change_pct = abs((current_price - price_5_candles_ago) / price_5_candles_ago * 100)
         
         if price_change_pct > movement_threshold:
-            logger.info(f"❌ CHECK 5 FAILED: Price moved {price_change_pct:.2f}% > threshold {movement_threshold:.2f}%")
+            logger.info(f"[SCALPING] ❌ CHECK 5 FAILED: Price moved {price_change_pct:.2f}% > threshold {movement_threshold:.2f}%")
             return None
-        logger.info(f"✅ CHECK 5 PASSED: Price movement {price_change_pct:.2f}% <= {movement_threshold:.2f}%")
+        logger.info(f"[SCALPING] ✅ CHECK 5 PASSED: Price movement {price_change_pct:.2f}% <= {movement_threshold:.2f}%")
         
         # =================================================================
         # CHECK 6: Momentum Breakout
@@ -138,17 +138,17 @@ class ScalpingStrategy(BaseStrategy):
         momentum_threshold = atr_1m * scalping_config.SCALPING_MOMENTUM_THRESHOLD
         
         if last_candle_size < momentum_threshold:
-            logger.info(f"❌ CHECK 6 FAILED: Candle size {last_candle_size:.5f} < {momentum_threshold:.5f} ({scalping_config.SCALPING_MOMENTUM_THRESHOLD}x ATR)")
+            logger.info(f"[SCALPING] ❌ CHECK 6 FAILED: Candle size {last_candle_size:.5f} < {momentum_threshold:.5f} ({scalping_config.SCALPING_MOMENTUM_THRESHOLD}x ATR)")
             return None
-        logger.info(f"✅ CHECK 6 PASSED: Momentum breakout confirmed")
+        logger.info(f"[SCALPING] ✅ CHECK 6 PASSED: Momentum breakout confirmed")
         
         # =================================================================
         # CHECK 7: Parabolic Spike Detection
         # =================================================================
         if self._is_parabolic_spike(data_1m, atr_1m):
-            logger.info("❌ CHECK 7 FAILED: Parabolic spike detected (3+ large candles)")
+            logger.info("[SCALPING] ❌ CHECK 7 FAILED: Parabolic spike detected (3+ large candles)")
             return None
-        logger.info("✅ CHECK 7 PASSED: No parabolic spike")
+        logger.info("[SCALPING] ✅ CHECK 7 PASSED: No parabolic spike")
         
         # =================================================================
         # CHECK 8: Calculate TP/SL (ATR-based with structure override)
@@ -163,7 +163,7 @@ class ScalpingStrategy(BaseStrategy):
             sl_price = current_price + sl_distance
             tp_price = current_price - tp_distance
         
-        logger.info(f"📍 TP/SL - Entry: {current_price:.5f}, TP: {tp_price:.5f}, SL: {sl_price:.5f}")
+        logger.info(f"[SCALPING] 📍 TP/SL - Entry: {current_price:.5f}, TP: {tp_price:.5f}, SL: {sl_price:.5f}")
         
         # =================================================================
         # CHECK 9: Minimum R:R Ratio
@@ -172,15 +172,15 @@ class ScalpingStrategy(BaseStrategy):
         reward = abs(tp_price - current_price)
         
         if risk == 0:
-            logger.info("❌ CHECK 9 FAILED: Risk is zero (invalid SL)")
+            logger.info("[SCALPING] ❌ CHECK 9 FAILED: Risk is zero (invalid SL)")
             return None
         
         rr_ratio = reward / risk
         
         if rr_ratio < scalping_config.SCALPING_MIN_RR_RATIO:
-            logger.info(f"❌ CHECK 9 FAILED: R:R {rr_ratio:.2f} < {scalping_config.SCALPING_MIN_RR_RATIO}")
+            logger.info(f"[SCALPING] ❌ CHECK 9 FAILED: R:R {rr_ratio:.2f} < {scalping_config.SCALPING_MIN_RR_RATIO}")
             return None
-        logger.info(f"✅ CHECK 9 PASSED: R:R ratio {rr_ratio:.2f} >= {scalping_config.SCALPING_MIN_RR_RATIO}")
+        logger.info(f"[SCALPING] ✅ CHECK 9 PASSED: R:R ratio {rr_ratio:.2f} >= {scalping_config.SCALPING_MIN_RR_RATIO}")
         
         # =================================================================
         # All checks passed - return signal
@@ -199,8 +199,8 @@ class ScalpingStrategy(BaseStrategy):
         }
         
         logger.info(f"\n{'='*60}")
-        logger.info(f"✅ SCALPING SIGNAL GENERATED: {signal_direction} on {symbol}")
-        logger.info(f"📊 R:R: {rr_ratio:.2f}, Confidence: {signal['confidence']}")
+        logger.info(f"[SCALPING] ✅ SIGNAL GENERATED: {signal_direction} on {symbol}")
+        logger.info(f"[SCALPING] 📊 R:R: {rr_ratio:.2f}, Confidence: {signal['confidence']}")
         logger.info(f"{'='*60}\n")
         
         return signal

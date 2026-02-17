@@ -21,7 +21,7 @@ class ConservativeStrategy(BaseStrategy):
     def __init__(self):
         """Initialize the conservative strategy wrapper"""
         self.strategy = TradingStrategy()
-        logger.info("✅ Conservative strategy wrapper initialized")
+        logger.info("[CONSERVATIVE] ✅ Conservative strategy wrapper initialized")
     
     def analyze(self, **kwargs) -> Optional[Dict]:
         """
@@ -45,7 +45,7 @@ class ConservativeStrategy(BaseStrategy):
         # Validate required data
         if not all([data_1m is not None, data_5m is not None, data_1h is not None,
                    data_4h is not None, data_1d is not None, data_1w is not None]):
-            logger.error("❌ Missing required timeframe data for conservative strategy")
+            logger.error("[CONSERVATIVE] ❌ Missing required timeframe data for conservative strategy")
             return None
         
         # Delegate to existing strategy
