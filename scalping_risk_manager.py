@@ -232,9 +232,8 @@ class ScalpingRiskManager(BaseRiskManager):
             'recent_trade_count': len(self.recent_trade_timestamps),
         }
     
-
     def check_stagnation_exit(self, trade_info: Dict, current_pnl: float) -> Tuple[bool, str]:
-        `"`"`"
+        """
         Check if a trade should be closed due to stagnation.
         Scalping trades are closed if open for >2 minutes and losing >15% of stake.
         
@@ -244,7 +243,7 @@ class ScalpingRiskManager(BaseRiskManager):
             
         Returns:
             Tuple of (should_exit: bool, reason: str)
-        `"`"`"
+        """
         open_time = trade_info.get('open_time')
         stake = trade_info.get('stake', self.stake)
         symbol = trade_info.get('symbol', 'UNKNOWN')
@@ -285,5 +284,3 @@ class ScalpingRiskManager(BaseRiskManager):
         self.consecutive_losses = 0
         self.recent_trade_timestamps = []
         logger.info("✅ Daily stats reset complete")
-
-
