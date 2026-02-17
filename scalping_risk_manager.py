@@ -288,6 +288,23 @@ class ScalpingRiskManager(BaseRiskManager):
         logger.info(f"📊 Trade closed - P&L: ${profit:.2f}, Daily P&L: ${self.daily_pnl:.2f}")
         logger.info(f"📊 Active trades: {len(self.active_trades)}/{self.max_concurrent_trades}")
     
+    def record_trade_close(self, contract_id: str, pnl: float, status: str) -> None:
+        """
+        Wrapper method for compatibility with runner.py.
+        Converts individual parameters to a dict and calls record_trade_closed().
+        
+        Args:
+            contract_id: Contract ID
+            pnl: Profit/loss amount
+            status: Trade status ('win', 'loss', 'breakeven', etc.)
+        """
+        result = {
+            'contract_id': contract_id,
+            'profit': pnl,
+            'status': status
+        }
+        self.record_trade_closed(result)
+    
     def get_current_limits(self) -> Dict:
         """
         Get current risk parameters and limits.
