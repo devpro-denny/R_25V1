@@ -5,7 +5,7 @@ Wraps the existing risk_manager.py logic to implement the BaseRiskManager interf
 
 from base_risk_manager import BaseRiskManager
 from risk_manager import RiskManager
-from typing import Dict, Tuple
+from typing import Dict, Tuple, Optional
 import logging
 
 logger = logging.getLogger(__name__)
@@ -29,15 +29,43 @@ class ConservativeRiskManager(BaseRiskManager):
         self.user_id = user_id
         logger.info(f"✅ Conservative risk manager wrapper initialized for user {user_id}")
     
-    def can_trade(self) -> Tuple[bool, str]:
+    # Expose active_trades property from wrapped RiskManager
+    @property
+    def active_trades(self):
+        """Expose active_trades from the wrapped RiskManager"""
+        return self.risk_manager.active_trades
+    
+    def can_trade(self, symbol: str = None, verbose: bool = False) -> Tuple[bool, str]:
         """
         Check if trading is allowed.
+        
+        Args:
+            symbol: Optional symbol to check
+            verbose: If True, log every check
         
         Returns:
             Tuple of (can_trade: bool, reason: str)
         """
-        can_trade, reason = self.risk_manager.can_trade()
+        can_trade, reason = self.risk_manager.can_trade(symbol, verbose)
         return can_trade, reason
+    
+    def can_open_trade(self, symbol: str, stake: float, 
+                      take_profit: float = None, stop_loss: float = None,
+                      signal_dict: Dict = None) -> Tuple[bool, str]:
+        """
+        Complete validation before opening trade on specific symbol.
+        
+        Args:
+            symbol: Symbol to trade
+            stake: Trade stake amount
+            take_profit: Take profit level
+            stop_loss: Stop loss level
+            signal_dict: Full signal data
+            
+        Returns:
+            Tuple of (can_open: bool, reason: str)
+        """
+        return self.risk_manager.can_open_trade(symbol, stake, take_profit, stop_loss, signal_dict)
     
     def record_trade_opened(self, trade_info: Dict) -> None:
         """
@@ -48,9 +76,20 @@ class ConservativeRiskManager(BaseRiskManager):
         """
         self.risk_manager.record_trade_open(trade_info)
     
+    def record_trade_close(self, contract_id: str, pnl: float, status: str) -> None:
+        """
+        Record trade closure and update statistics.
+        
+        Args:
+            contract_id: Contract ID
+            pnl: Profit/loss amount
+            status: Trade status ('won', 'lost', etc.)
+        """
+        self.risk_manager.record_trade_close(contract_id, pnl, status)
+    
     def record_trade_closed(self, result: Dict) -> None:
         """
-        Record that a trade has been closed.
+        Record that a trade has been closed (alternative interface).
         
         Args:
             result: Dict containing trade result
@@ -64,6 +103,54 @@ class ConservativeRiskManager(BaseRiskManager):
             pnl=pnl,
             status=status
         )
+    
+    def get_cooldown_remaining(self) -> int:
+        """
+        Get remaining cooldown time in seconds.
+        
+        Returns:
+            Cooldown seconds remaining
+        """
+        return self.risk_manager.get_cooldown_remaining()
+    
+    async def check_for_existing_positions(self, trade_engine):
+        """
+        Check for existing positions on startup.
+        
+        Args:
+            trade_engine: TradeEngine instance
+            
+        Returns:
+            bool: True if existing positions found
+        """
+        return await self.risk_manager.check_for_existing_positions(trade_engine)
+    
+    def get_active_trade_info(self) -> Optional[Dict]:
+        """
+        Get information about active trade.
+        
+        Returns:
+            Dict with trade info or None
+        """
+        return self.risk_manager.get_active_trade_info()
+    
+    def set_bot_state(self, state) -> None:
+        """
+        Set BotState instance for real-time API updates.
+        
+        Args:
+            state: BotState instance
+        """
+        self.risk_manager.set_bot_state(state)
+    
+    def update_risk_settings(self, stake: float) -> None:
+        """
+        Update risk limits based on user's stake.
+        
+        Args:
+            stake: User's trade stake amount
+        """
+        self.risk_manager.update_risk_settings(stake)
     
     def get_current_limits(self) -> Dict:
         """
