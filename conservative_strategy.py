@@ -21,7 +21,6 @@ class ConservativeStrategy(BaseStrategy):
     def __init__(self):
         """Initialize the conservative strategy wrapper"""
         self.strategy = TradingStrategy()
-        logger.info("[CONSERVATIVE] ✅ Conservative strategy wrapper initialized")
     
     def analyze(self, **kwargs) -> Optional[Dict]:
         """
