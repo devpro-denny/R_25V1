@@ -2,6 +2,7 @@ from typing import Dict, Optional, List
 from app.bot.runner import BotRunner, BotStatus
 import logging
 import asyncio
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -19,6 +20,9 @@ class BotManager:
         self.max_concurrent_bots = max_concurrent_bots
         # Rise/Fall tasks: user_id -> asyncio.Task
         self._rf_tasks: Dict[str, asyncio.Task] = {}
+        # Rise/Fall metadata for status reporting
+        self._rf_start_times: Dict[str, datetime] = {}
+        self._rf_stakes: Dict[str, float] = {}
         
     def _get_user_lock(self, user_id: str) -> asyncio.Lock:
         """Get or create a lock for a specific user (for concurrent start protection)"""
@@ -149,12 +153,23 @@ class BotManager:
         if user_id in self._rf_tasks:
             task = self._rf_tasks[user_id]
             is_running = not task.done()
+            
+            # Compute uptime from tracked start time
+            uptime = None
+            start_time = self._rf_start_times.get(user_id)
+            if start_time and is_running:
+                uptime = int((datetime.now() - start_time).total_seconds())
+            
+            stake = self._rf_stakes.get(user_id, 0)
+            
             return {
                 "status": "running" if is_running else "stopped",
                 "is_running": is_running,
-                "uptime_seconds": None,
+                "uptime_seconds": uptime,
+                "active_strategy": "RiseFall",
+                "stake_amount": stake,
                 "message": "Rise/Fall bot running" if is_running else "Rise/Fall bot stopped",
-                "config": {"strategy": "RiseFall"}
+                "config": {"strategy": "RiseFall", "stake": stake}
             }
         
         if user_id in self._bots:
@@ -254,6 +269,8 @@ class BotManager:
 
         task = asyncio.create_task(rf_run(stake=stake, api_token=api_token, user_id=user_id))
         self._rf_tasks[user_id] = task
+        self._rf_start_times[user_id] = datetime.now()
+        self._rf_stakes[user_id] = stake or 0
 
         logger.info(f"✅ Rise/Fall bot started for user {user_id} | stake=${stake}")
 
@@ -261,6 +278,8 @@ class BotManager:
         await event_manager.broadcast({
             "type": "bot_status",
             "status": "running",
+            "active_strategy": "RiseFall",
+            "stake_amount": stake,
             "message": f"Rise/Fall bot started (stake=${stake})",
             "account_id": user_id,
         })
@@ -293,6 +312,8 @@ class BotManager:
             pass
 
         del self._rf_tasks[user_id]
+        self._rf_start_times.pop(user_id, None)
+        self._rf_stakes.pop(user_id, None)
         logger.info(f"🛑 Rise/Fall bot stopped for user {user_id}")
 
         # Broadcast stop event

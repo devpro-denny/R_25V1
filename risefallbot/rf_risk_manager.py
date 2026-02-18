@@ -70,12 +70,18 @@ class RiseFallRiskManager(BaseRiskManager):
 
         # Loss-streak cooldown timestamp
         self._loss_cooldown_until: datetime = datetime.min
+        
+        # Trade lock — enforces max 1 concurrent trade globally
+        self._trade_lock_active: bool = False
+        self._locked_trade_info: Dict = {}  # Info about currently locked trade
+        self._locked_symbol: str = None  # Which symbol has the active trade
 
         logger.info(
             f"[RF-Risk] Initialized | max_concurrent_total={self.max_concurrent_total} "
             f"max_concurrent/symbol={self.max_concurrent_per_symbol} "
             f"cooldown={self.cooldown_seconds}s daily_cap={self.max_trades_per_day} "
-            f"max_consec_loss={self.max_consecutive_losses}"
+            f"max_consec_loss={self.max_consecutive_losses} | "
+            f"⚠️ SINGLE TRADE ENFORCEMENT: Only 1 concurrent trade globally"
         )
 
     # ------------------------------------------------------------------ #
@@ -147,6 +153,7 @@ class RiseFallRiskManager(BaseRiskManager):
     def record_trade_open(self, trade_info: Dict) -> None:
         """
         Record a new trade opening.
+        ENFORCES: Only 1 concurrent trade globally.
         
         Args:
             trade_info: Dict with at least 'contract_id' and 'symbol'
@@ -154,20 +161,33 @@ class RiseFallRiskManager(BaseRiskManager):
         contract_id = trade_info.get("contract_id", "unknown")
         symbol = trade_info.get("symbol", "unknown")
 
+        # Enforce global trade lock — only 1 trade at a time
+        if len(self.active_trades) > 0:
+            logger.warning(
+                f"[RF-Risk] ⚠️ TRADE LOCK VIOLATION: Attempting to open trade {symbol}#{contract_id} "
+                f"but {len(self.active_trades)} trade(s) already active! Rejecting..."
+            )
+            return
+
         self.active_trades[contract_id] = {
             **trade_info,
             "open_time": datetime.now(),
         }
         self.daily_trade_count += 1
+        self._trade_lock_active = True
+        self._locked_symbol = symbol
+        self._locked_trade_info = {"contract_id": contract_id, "symbol": symbol}
 
         logger.info(
-            f"[RF-Risk] 📝 Trade opened: {symbol} #{contract_id} "
-            f"(active={len(self.active_trades)} daily={self.daily_trade_count})"
+            f"[RF-Risk] 🔒 TRADE LOCKED: {symbol} #{contract_id} "
+            f"(active={len(self.active_trades)} daily={self.daily_trade_count}) "
+            f"— No other trades allowed until this closes"
         )
 
     def record_trade_closed(self, result: Dict) -> None:
         """
         Record a trade closure.
+        RELEASES: Global trade lock once trade is fully settled.
         
         Args:
             result: Dict with 'contract_id', 'profit', 'status'
@@ -208,11 +228,30 @@ class RiseFallRiskManager(BaseRiskManager):
                 f"pausing for {self.loss_cooldown_seconds}s"
             )
 
+        # Release global trade lock
+        self._trade_lock_active = False
+        self._locked_symbol = None
+        self._locked_trade_info = {}
+
         logger.info(
-            f"[RF-Risk] 📝 Trade closed: {symbol} #{contract_id} "
+            f"[RF-Risk] 🔓 TRADE UNLOCKED: {symbol} #{contract_id} "
             f"status={status} pnl={profit:+.2f} "
-            f"(W={self.wins} L={self.losses} streak={self.consecutive_losses})"
+            f"(W={self.wins} L={self.losses} streak={self.consecutive_losses}) "
+            f"— System ready for next trade"
         )
+
+    def get_active_trade_info(self) -> Dict:
+        """
+        Get information about the currently active trade (if any).
+        
+        Returns:
+            Dict with contract_id, symbol if trade is active, else empty dict
+        """
+        return self._locked_trade_info.copy() if self._trade_lock_active else {}
+
+    def is_trade_active(self) -> bool:
+        """Return True if a trade is currently locked (being monitored)."""
+        return self._trade_lock_active or len(self.active_trades) > 0
 
     def get_current_limits(self) -> Dict:
         """Return current risk state snapshot."""

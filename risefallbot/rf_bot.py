@@ -201,17 +201,24 @@ async def run(stake: Optional[float] = None, api_token: Optional[str] = None,
     global _running
     _running = True
     cycle = 0
+    _start_time = datetime.now()
+    _current_balance = balance or 0.0
 
-    # Broadcast bot_status → running with account info
+    # Broadcast bot_status → running with all fields the frontend expects
     await event_manager.broadcast({
         "type": "bot_status",
         "status": "running",
+        "active_strategy": "RiseFall",
+        "stake_amount": stake,
+        "uptime_seconds": 0,
+        "balance": _current_balance,
+        "active_positions": 0,
+        "win_rate": 0,
+        "trades_today": 0,
+        "profit": 0,
         "message": f"Rise/Fall bot started – scanning {len(rf_config.RF_SYMBOLS)} symbols",
         "symbols": rf_config.RF_SYMBOLS,
         "account_id": user_id,
-        "balance": balance or 0.0,
-        "stake": stake,
-        "strategy": "RiseFall",
     })
 
     # Broadcast initial statistics
@@ -228,20 +235,42 @@ async def run(stake: Optional[float] = None, api_token: Optional[str] = None,
         while _running:
             cycle += 1
             logger.info(
-                f"\n{'='*50}\n"
+                f"\n{'='*60}\n"
                 f"[RF] CYCLE #{cycle} | {datetime.now().strftime('%H:%M:%S')}\n"
-                f"{'='*50}"
+                f"{'='*60}"
             )
 
-            for symbol in rf_config.RF_SYMBOLS:
-                try:
-                    await _process_symbol(
-                        symbol, strategy, risk_manager, data_fetcher,
-                        trade_engine, stake, user_id, event_manager,
-                        UserTradesService,
-                    )
-                except Exception as e:
-                    logger.error(f"[RF][{symbol}] ❌ Error: {e}")
+            # ⚠️ CHECK: Is a trade currently active?
+            if risk_manager.is_trade_active():
+                active_info = risk_manager.get_active_trade_info()
+                active_symbol = active_info.get("symbol", "unknown")
+                active_contract = active_info.get("contract_id", "unknown")
+                logger.warning(
+                    f"[RF] 🔒 TRADE LOCKED — {active_symbol}#{active_contract} is being monitored "
+                    f"| Skipping signal scan until trade closes | "
+                    f"Active trades: {len(risk_manager.active_trades)}"
+                )
+            else:
+                # No active trade — safe to scan for new signals
+                logger.info(f"[RF] ✅ No active trades | Scanning {len(rf_config.RF_SYMBOLS)} symbols for signals...")
+                
+                for symbol in rf_config.RF_SYMBOLS:
+                    # Double-check: if a trade became active during this loop, stop immediately
+                    if risk_manager.is_trade_active():
+                        active_info = risk_manager.get_active_trade_info()
+                        logger.info(
+                            f"[RF][{symbol}] Trade opened during symbol loop ({active_info.get('symbol')}#{active_info.get('contract_id')}) — stopping scan"
+                        )
+                        break
+
+                    try:
+                        await _process_symbol(
+                            symbol, strategy, risk_manager, data_fetcher,
+                            trade_engine, stake, user_id, event_manager,
+                            UserTradesService,
+                        )
+                    except Exception as e:
+                        logger.error(f"[RF][{symbol}] ❌ Error: {e}")
 
             # Log summary
             stats = risk_manager.get_statistics()
@@ -257,6 +286,30 @@ async def run(stake: Optional[float] = None, api_token: Optional[str] = None,
                 "type": "statistics",
                 "stats": stats,
                 "timestamp": datetime.now().isoformat(),
+                "account_id": user_id,
+            })
+
+            # Refresh balance periodically
+            try:
+                fresh_balance = await data_fetcher.get_balance()
+                if fresh_balance is not None:
+                    _current_balance = fresh_balance
+            except Exception:
+                pass  # Keep using last known balance
+
+            # Broadcast periodic bot_status so dashboard updates uptime/balance
+            uptime_secs = int((datetime.now() - _start_time).total_seconds())
+            await event_manager.broadcast({
+                "type": "bot_status",
+                "status": "running",
+                "active_strategy": "RiseFall",
+                "stake_amount": stake,
+                "uptime_seconds": uptime_secs,
+                "balance": _current_balance,
+                "active_positions": stats.get('active_positions', 0),
+                "win_rate": stats.get('win_rate', 0),
+                "trades_today": stats.get('trades_today', 0),
+                "profit": stats.get('total_pnl', 0),
                 "account_id": user_id,
             })
 
@@ -315,12 +368,25 @@ async def _process_symbol(
 ):
     """
     Process one symbol: fetch data → analyse → risk check → trade.
-    Now also broadcasts events and persists trades to DB.
+    
+    ENFORCES: Only 1 concurrent trade globally across all symbols.
+    Will not execute a trade if another symbol's trade is currently active.
     """
-    # 1. Risk gate (per-symbol)
+    # 1. Risk gate (per-symbol) — checks global concurrency + daily limits
     can_trade, reason = risk_manager.can_trade(symbol=symbol)
     if not can_trade:
-        logger.debug(f"[RF][{symbol}] ⏸️ {reason}")
+        logger.info(f"[RF][{symbol}] ⏸️ Cannot trade: {reason}")
+        return
+
+    # 1b. Additional enforcement: Check if ANY trade is currently active
+    if risk_manager.is_trade_active():
+        active_info = risk_manager.get_active_trade_info()
+        active_symbol = active_info.get("symbol", "unknown")
+        active_contract = active_info.get("contract_id", "unknown")
+        logger.warning(
+            f"[RF][{symbol}] 🔒 LOCKED — {active_symbol}#{active_contract} is currently active | "
+            f"Waiting for that trade to close before proceeding..."
+        )
         return
 
     # 2. Fetch 1-minute candle data (reuse DataFetcher)
@@ -384,12 +450,22 @@ async def _process_symbol(
 
     contract_id = result["contract_id"]
 
-    # 6. Record trade open
+    # 6. Record trade open (locks the system for other symbols)
     risk_manager.record_trade_open({
         "contract_id": contract_id,
         "symbol": symbol,
         "direction": direction,
         "stake": stake_val,
+    })
+
+    # 6b. Broadcast system-wide lock status
+    await event_manager.broadcast({
+        "type": "trade_lock_active",
+        "symbol": symbol,
+        "contract_id": contract_id,
+        "message": f"🔒 Trade LOCKED on {symbol} — system will monitor until close",
+        "timestamp": datetime.now().isoformat(),
+        "account_id": user_id,
     })
 
     # Broadcast trade_opened event
@@ -420,6 +496,10 @@ async def _process_symbol(
             logger.error(f"❌ Telegram notification failed: {e}")
 
     # 7. Wait for contract settlement (async — blocks only this symbol)
+    logger.info(
+        f"[RF][{symbol}] ⏳ Monitoring contract #{contract_id} until close... "
+        f"(system locked for other symbols)"
+    )
     settlement = await trade_engine.wait_for_result(contract_id, stake=stake_val)
 
     if settlement:
@@ -443,7 +523,19 @@ async def _process_symbol(
             "symbol": symbol,
         })
 
-    # 8. Broadcast trade_closed + notification events
+    # 8. Broadcast trade_closed + unlock notification
+    await event_manager.broadcast({
+        "type": "trade_lock_released",
+        "symbol": symbol,
+        "contract_id": contract_id,
+        "status": status,
+        "pnl": pnl,
+        "message": f"🔓 Trade UNLOCKED on {symbol} — system ready for next trade",
+        "timestamp": datetime.now().isoformat(),
+        "account_id": user_id,
+    })
+
+    # Broadcast trade_closed + notification events
     await event_manager.broadcast({
         "type": "trade_closed",
         "symbol": symbol,

@@ -86,9 +86,20 @@ async def get_recent_logs(
                     stripped = line.strip()
                     if not stripped:
                         continue
-                    # Tag RF lines for clarity if not already tagged
-                    if "[RF]" not in stripped:
-                        stripped = stripped.replace("| risefallbot", "| [RF] risefallbot", 1)
+                    # Normalize 4-field RF format to 3-field:
+                    # "ts | risefallbot | LEVEL | msg" → "ts | LEVEL | [RF] msg"
+                    import re
+                    rf_match = re.match(
+                        r'^(.+?)\s*\|\s*risefallbot(?:\.\S+)?\s*\|\s*([A-Z]+)\s*\|\s*(.+)$',
+                        stripped
+                    )
+                    if rf_match:
+                        ts, level, msg = rf_match.groups()
+                        # Filter by user_id if present in original message
+                        if f"[{user_id}]" in msg or "[None]" in msg or "[" not in msg:
+                            stripped = f"{ts} | {level} | [RF] {msg}"
+                        else:
+                            continue  # Skip logs for other users
                     filtered_logs.append(stripped)
 
         # --- 3. Sort merged logs by timestamp (best-effort) ---

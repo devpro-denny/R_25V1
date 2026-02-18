@@ -1,6 +1,21 @@
 """
 Rise/Fall Scalping Bot Configuration
 All Rise/Fall strategy-specific constants and thresholds
+
+⚠️ SINGLE CONCURRENT TRADE ENFORCEMENT:
+   The bot STRICTLY enforces only 1 concurrent trade across ALL symbols.
+   When a trade is OPEN on any symbol (R_10, R_25, R_50, R_100):
+      • The system enters LOCKED state (trade lock active)
+      • NO new signals will be processed on any other symbol
+      • The bot continuously MONITORS the locked trade until it closes (win/loss/timeout)
+      • Only after the locked trade closes can the next trade be executed
+   
+   This is controlled by:
+      • RF_MAX_CONCURRENT_TOTAL = 1 (global limit)
+      • RF_MAX_CONCURRENT_PER_SYMBOL = 1 (per-symbol limit)
+      • RiseFallRiskManager._trade_lock_active (state tracking)
+      • rf_bot.py cycle loop (enforces during signal scan)
+
 rf_config.py
 """
 
