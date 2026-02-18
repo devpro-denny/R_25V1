@@ -218,9 +218,10 @@ class ScalpingRiskManager(BaseRiskManager):
         return max(0, int(remaining))
 
     def get_statistics(self) -> Dict:
-        """Get current statistics dicitonary"""
+        """Get current statistics dictionary"""
         return {
             'total_trades': self.daily_trade_count,
+            'total_pnl': self.daily_pnl,
             'daily_pnl': self.daily_pnl,
             'win_rate': 0.0, # Not tracking wins separate from pnl yet in this simple view
             'consecutive_losses': self.consecutive_losses
