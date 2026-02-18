@@ -155,7 +155,19 @@ async def run(stake: Optional[float] = None, api_token: Optional[str] = None,
         logger.info(f"💰 Account Balance: ${balance:.2f}")
         if TELEGRAM_ENABLED:
             try:
-                await notifier.notify_bot_started(balance, stake, "Rise/Fall Scalping")
+                # Create Rise/Fall specific risk text
+                risk_text = (
+                    f"🛡️ <b>Risk Management</b>\n"
+                    f"   • TP: {rf_config.RF_TAKE_PROFIT_PCT*100:.0f}%\n"
+                    f"   • SL: {rf_config.RF_STOP_LOSS_PCT*100:.0f}%"
+                )
+                await notifier.notify_bot_started(
+                    balance, 
+                    stake, 
+                    "Rise/Fall Scalping",
+                    symbol_count=len(rf_config.RF_SYMBOLS),
+                    risk_text=risk_text
+                )
             except Exception as e:
                 logger.error(f"❌ Telegram notification failed: {e}")
 

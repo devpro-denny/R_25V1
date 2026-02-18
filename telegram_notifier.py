@@ -162,32 +162,47 @@ class TelegramNotifier:
         
         return False
     
-    async def notify_bot_started(self, balance: float, stake: float = None, strategy_name: str = None):
-        """Notify that bot has started"""
+    async def notify_bot_started(self, balance: float, stake: float = None, strategy_name: str = None, 
+                                 symbol_count: int = None, risk_text: str = None):
+        """Notify that bot has started
+        
+        Args:
+            balance: Account balance
+            stake: Stake amount
+            strategy_name: Strategy name for display (e.g., "Rise/Fall Scalping")
+            symbol_count: Number of symbols (if None, uses config.SYMBOLS length)
+            risk_text: Custom risk management text (if None, auto-generates from config)
+        """
         # Use provided strategy name or fallback to config detection
         if strategy_name:
             strategy_mode = f"📊 {strategy_name}"
         else:
             strategy_mode = "🛡️ Top-Down Structure" if config.USE_TOPDOWN_STRATEGY else "⚡ Classic Scalping"
         
-        if config.ENABLE_CANCELLATION and not config.USE_TOPDOWN_STRATEGY:
-            risk_text = (
-                f"🛡️ <b>Cancellation Protection</b>\n"
-                f"   • Duration: {config.CANCELLATION_DURATION}s\n"
-                f"   • Fee: {format_currency(config.CANCELLATION_FEE)}"
-            )
-        elif config.USE_TOPDOWN_STRATEGY:
-            risk_text = (
-                f"🛡️ <b>Risk Management</b>\n"
-                f"   • TP/SL: Dynamic (Structure)\n"
-                f"   • Min R:R: 1:{config.TOPDOWN_MIN_RR_RATIO}"
-            )
-        else:
-            risk_text = (
-                f"🛡️ <b>Risk Management</b>\n"
-                f"   • TP: {config.TAKE_PROFIT_PERCENT}%\n"
-                f"   • SL: {config.STOP_LOSS_PERCENT}%"
-            )
+        # Use provided symbol count or fallback to config
+        if symbol_count is None:
+            symbol_count = len(config.SYMBOLS)
+        
+        # Generate risk text if not provided
+        if risk_text is None:
+            if config.ENABLE_CANCELLATION and not config.USE_TOPDOWN_STRATEGY:
+                risk_text = (
+                    f"🛡️ <b>Cancellation Protection</b>\n"
+                    f"   • Duration: {config.CANCELLATION_DURATION}s\n"
+                    f"   • Fee: {format_currency(config.CANCELLATION_FEE)}"
+                )
+            elif config.USE_TOPDOWN_STRATEGY:
+                risk_text = (
+                    f"🛡️ <b>Risk Management</b>\n"
+                    f"   • TP/SL: Dynamic (Structure)\n"
+                    f"   • Min R:R: 1:{config.TOPDOWN_MIN_RR_RATIO}"
+                )
+            else:
+                risk_text = (
+                    f"🛡️ <b>Risk Management</b>\n"
+                    f"   • TP: {config.TAKE_PROFIT_PERCENT}%\n"
+                    f"   • SL: {config.STOP_LOSS_PERCENT}%"
+                )
 
         message = (
             "🚀 <b>BOT STARTED</b>\n"
@@ -196,7 +211,7 @@ class TelegramNotifier:
             f"💰 Balance: <b>{format_currency(balance)}</b>\n\n"
             f"⚙️ <b>Configuration</b>\n"
             f"   • Strategy: {strategy_mode}\n"
-            f"   • Symbols: {len(config.SYMBOLS)} Active\n"
+            f"   • Symbols: {symbol_count} Active\n"
             f"   • Stake: {format_currency(stake) if stake else 'USER_DEFINED'}\n\n"
             f"{risk_text}\n\n"
             f"⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
