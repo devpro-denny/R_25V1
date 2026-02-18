@@ -321,8 +321,11 @@ async def _process_symbol(
             signal_info = {
                 "signal": direction,
                 "symbol": symbol,
-                "score": signal.get("confidence", 0),
-                "details": {"rsi": 0, "adx": 0},  # RF strategy doesn't use these
+                "score": signal.get("confidence", 10),
+                "details": {
+                    "rsi": signal.get("rsi", 0),
+                    "adx": signal.get("stoch", 0),  # Use stochastic as momentum indicator
+                },
             }
             await notifier.notify_signal(signal_info)
         except Exception as e:

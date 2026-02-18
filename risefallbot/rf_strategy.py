@@ -119,6 +119,11 @@ class RiseFallStrategy(BaseStrategy):
             "stake": stake,
             "duration": self.duration,
             "duration_unit": self.duration_unit,
+            "ema_fast": ema_f,
+            "ema_slow": ema_s,
+            "rsi": rsi_val,
+            "stoch": stoch_val,
+            "confidence": 10,  # Max confidence (triple-confirmation passed)
         }
         logger.info(f"[RF][{symbol}] 🎯 Signal: {direction} | Stake: ${stake}")
         return signal
