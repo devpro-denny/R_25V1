@@ -46,6 +46,13 @@ def _setup_rf_logger():
 
     rf_root.setLevel(getattr(logging, rf_config.RF_LOG_LEVEL, logging.INFO))
     rf_root.propagate = False  # ← isolate from multiplier bot logs
+    
+    # Add context filter for user_id injection
+    try:
+        from app.core.logging import ContextInjectingFilter
+        rf_root.addFilter(ContextInjectingFilter())
+    except Exception:
+        pass
 
     formatter = logging.Formatter(
         "%(asctime)s | %(name)s | %(levelname)s | %(message)s",
@@ -61,6 +68,16 @@ def _setup_rf_logger():
     ch = logging.StreamHandler()
     ch.setFormatter(formatter)
     rf_root.addHandler(ch)
+    
+    # WebSocket handler (for live dashboard streaming) — added early
+    try:
+        from app.core.logging import WebSocketLoggingHandler
+        ws_handler = WebSocketLoggingHandler()
+        ws_handler.setFormatter(formatter)
+        rf_root.addHandler(ws_handler)
+    except Exception as e:
+        # If WebSocket handler is not available, continue without it
+        pass
 
 
 # Initialise logging on module load
@@ -115,6 +132,10 @@ async def run(stake: Optional[float] = None, api_token: Optional[str] = None,
     - Creates its own RFTradeEngine (independent WS connection)
     - Loops: fetch 1m candles → analyse → risk check → execute
     """
+    # Set user_id in context for logging handlers to access
+    from app.core.context import user_id_var
+    user_id_var.set(user_id)
+    
     # Lazy import to avoid circular imports at module level
     from app.bot.events import event_manager
     from app.services.trades_service import UserTradesService

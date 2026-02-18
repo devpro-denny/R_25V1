@@ -80,6 +80,9 @@ class EventManager:
             
             # Iterate over a copy to avoid "dictionary changed size during iteration"
             for connection, user_id in list(self.active_connections.items()):
+                # Only send to authenticated users
+                if user_id is None:
+                    continue
                 # Filter: If message has account_id, only send to matching user
                 if target_account and user_id != target_account:
                     continue

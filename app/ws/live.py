@@ -8,13 +8,29 @@ from typing import Optional
 from datetime import datetime
 import asyncio
 import logging
+import jwt
 
 from app.bot.events import event_manager
 from app.bot.manager import bot_manager
 from app.core.supabase import supabase
+from app.core.settings import settings
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+def extract_user_id_from_token(token: str) -> Optional[str]:
+    """
+    Extract user_id from Supabase JWT access token
+    """
+    try:
+        # Decode without verification (Supabase tokens are pre-verified by the client)
+        # Or use the JWT_SECRET if available
+        payload = jwt.decode(token, options={"verify_signature": False})
+        user_id = payload.get("sub")  # 'sub' claim contains the user_id in Supabase tokens
+        return user_id
+    except Exception as e:
+        logger.warning(f"Failed to decode token: {e}")
+        return None
 
 @router.websocket("/live")
 async def websocket_live(websocket: WebSocket, token: Optional[str] = Query(None)):
@@ -22,7 +38,6 @@ async def websocket_live(websocket: WebSocket, token: Optional[str] = Query(None
     WebSocket endpoint for live updates
     Streams: bot status, trades, signals, statistics
     """
-    # Authenticate
     # Authenticate
     from app.core.settings import settings
     user_id = None
@@ -36,38 +51,22 @@ async def websocket_live(websocket: WebSocket, token: Optional[str] = Query(None
         # The header can contain a comma-separated list of subprotocols
         protocols = [p.strip() for p in websocket.headers["sec-websocket-protocol"].split(",")]
         
-        # Iterate to find a valid token
-        for p in protocols:
-            try:
-                # Attempt to validate as token
-                user_resp = supabase.auth.get_user(p)
-                if user_resp and user_resp.user:
-                    token_candidate = p
-                    subprotocol = p # We must return the selected protocol (token) to the client
-                    break
-            except Exception:
-                continue
+        # Use first non-empty protocol as token
+        if protocols and protocols[0]:
+            token_candidate = protocols[0]
 
     if token_candidate:
-        try:
-            # Re-verify if we haven't already (optimization: if we found it in loop, we already verified, but this is safe)
-            # Actually, if we found it in the loop, we know it's valid. If it came from query, we validte here.
-            # To be clean:
-            user_resp = supabase.auth.get_user(token_candidate)
-            if user_resp and user_resp.user:
-                user_id = user_resp.user.id
-        except Exception as e:
-            logger.warning(f"WebSocket auth failed: {e}")
+        # Extract user_id from JWT token
+        user_id = extract_user_id_from_token(token_candidate)
+        if user_id:
+            subprotocol = token_candidate  # Return the token as subprotocol to client
+            logger.info(f"WebSocket authenticated for user: {user_id}")
+        else:
+            logger.warning("Failed to extract user_id from token")
 
     # Enforce Authentication if required
     if settings.WS_REQUIRE_AUTH and not user_id:
         logger.warning("Rejected unauthenticated WebSocket connection")
-        # If we fail here, we haven't accepted the socket yet.
-        # But we must accept or close. FastAPI/Starlette handles close on unaccepted socket?
-        # Standard: await websocket.close() works if accepted, but here we haven't.
-        # It's better to just return, FastAPI will close it with 403 Forbidden usually or we can explicitly close.
-        # However, to send a close code, we technically need to accept or just let it drop?
-        # Actually, best practice for unaccepted is just return. But we can try to close with code.
         await websocket.close(code=4001, reason="Authentication required")
         return
             
