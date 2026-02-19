@@ -32,9 +32,9 @@ except ImportError:
 # Dedicated logger for Rise/Fall bot orchestration — writes to its own file
 logger = logging.getLogger("risefallbot")
 
-# Module-level sentinel for clean stop
+# Module-level sentinel for clean stop and duplicate prevention
 _running = False
-_current_task: Optional[asyncio.Task] = None
+_bot_task: Optional[asyncio.Task] = None
 
 
 def _setup_rf_logger():
@@ -137,7 +137,28 @@ async def run(stake: Optional[float] = None, api_token: Optional[str] = None,
     - Creates its own DataFetcher (reuses the class, own WS connection)
     - Creates its own RFTradeEngine (independent WS connection)
     - Loops: fetch 1m candles → analyse → risk check → execute (strict 6-step lifecycle)
+    
+    CRITICAL: Prevents duplicate instances via module-level task guard.
+    If a bot is already running, returns immediately without starting a second instance.
     """
+    # ───────────────────────────────────────────────────────────────────────
+    # DUPLICATE INSTANCE PREVENTION (PRIORITY 1)
+    # asyncio.Lock is per-instance. Two separate run() calls would have two
+    # separate RiseFallRiskManager instances with independent mutexes.
+    # This guard ensures only ONE global instance runs at a time.
+    # ───────────────────────────────────────────────────────────────────────
+    global _bot_task
+    
+    if _bot_task and not _bot_task.done():
+        logger.warning(
+            f"[RF] ⚠️ Duplicate start ignored — bot already running. "
+            f"Task: {_bot_task} | Current: {asyncio.current_task()}"
+        )
+        return
+    
+    _bot_task = asyncio.current_task()
+    logger.info(f"[RF] ✅ Registered bot task as singleton: {_bot_task}")
+    
     # Set user_id in context for logging handlers to access
     from app.core.context import user_id_var
     user_id_var.set(user_id)
@@ -206,10 +227,50 @@ async def run(stake: Optional[float] = None, api_token: Optional[str] = None,
     logger.info("=" * 60)
 
     global _running
-    _running = True
+    # ────────────────────────────────────────────────────────────────────────
+    # FIX 4: Reset _running flag on entry
+    # Root cause: _running is module-level. If a previous run exited and
+    # set it to False, a new run() call must explicitly reset it before the
+    # loop begins — otherwise a stale False value could cause the loop to
+    # exit immediately on the first iteration (especially after hard cancel).
+    # ────────────────────────────────────────────────────────────────────────
+    _running = True  # Explicit reset — clear stale state from any previous run
     cycle = 0
     _start_time = datetime.now()
     _current_balance = balance or 0.0
+
+    # ───────────────────────────────────────────────────────────────────
+    # STARTUP CLEANUP: Detect and recover from ghost entries
+    # If a 'pending' entry exists at startup with no real active trade,
+    # force-release the lock and clear any associated halt.
+    # ───────────────────────────────────────────────────────────────────
+    if risk_manager.trade_mutex.locked():
+        logger.warning(
+            "[RF] 🔍 STARTUP LOCK DETECTED: Performing ghost entry cleanup..."
+        )
+        # Check if there's a real active trade
+        if len(risk_manager.active_trades) == 0:
+            logger.warning(
+                "[RF] ⚠️ GHOST ENTRY FOUND: Mutex held but no active trades! "
+                "Force-releasing lock and clearing halt (if set)"
+            )
+            # Force-release the lock
+            if risk_manager.trade_mutex.locked():
+                risk_manager._trade_mutex.release()
+                risk_manager._trade_lock_active = False
+                risk_manager._locked_symbol = None
+                risk_manager._locked_trade_info = {}
+            # Clear any associated halt
+            if risk_manager.is_halted():
+                risk_manager.clear_halt()
+            logger.info(
+                "[RF] ✅ STARTUP CLEANUP COMPLETE: System ready to resume trading"
+            )
+        else:
+            logger.warning(
+                f"[RF] ⚠️ STARTUP LOCK is valid: {len(risk_manager.active_trades)} "
+                f"active trade(s) found. System will resume with ongoing lifecycle."
+            )
 
     # Broadcast bot_status → running with all fields the frontend expects
     await event_manager.broadcast({
@@ -247,6 +308,51 @@ async def run(stake: Optional[float] = None, api_token: Optional[str] = None,
                 f"{'='*60}"
             )
 
+            # ─────────────────────────────────────────────────────────────────────
+            # WATCHDOG: Detect ghost mutex — held with no real active trades
+            # Runs every cycle so it fires even when no new trade is being acquired
+            # PRIORITY 4 FIX: Guard with datetime.min check to prevent false trigger on startup
+            # ─────────────────────────────────────────────────────────────────────
+            if risk_manager.trade_mutex.locked() and len(risk_manager.active_trades) == 0:
+                # _pending_entry_timestamp initializes to datetime.min, which would cause
+                # elapsed time to be astronomically large and trigger false watchdog on startup
+                if risk_manager._pending_entry_timestamp != datetime.min:
+                    elapsed = (datetime.now() - risk_manager._pending_entry_timestamp).total_seconds()
+                else:
+                    elapsed = 0.0
+                
+                if elapsed > rf_config.RF_PENDING_TIMEOUT_SECONDS:
+                    logger.warning(
+                        f"[RF] ⚠️ WATCHDOG: Mutex held for {elapsed:.0f}s with no active trades — "
+                        f"force-releasing ghost lock (timeout={rf_config.RF_PENDING_TIMEOUT_SECONDS}s)"
+                    )
+                    risk_manager._trade_mutex.release()
+                    risk_manager._trade_lock_active = False
+                    risk_manager._locked_symbol = None
+                    risk_manager._locked_trade_info = {}
+                    if risk_manager.is_halted():
+                        risk_manager.clear_halt()
+                    logger.info("[RF] ✅ WATCHDOG RECOVERY COMPLETE: Ghost lock released — resuming scan")
+
+            # ─────────────────────────────────────────────────────────────
+            # AUTO-RECOVERY: If halted and no active trades, auto-clear halt
+            # This allows the bot to self-recover after a transient error if
+            # the triggering condition (DB write, trade execution) has resolved.
+            # ─────────────────────────────────────────────────────────────
+            if risk_manager.is_halted() and len(risk_manager.active_trades) == 0:
+                logger.warning(
+                    f"[RF] 🔄 AUTO-RECOVERY: System was halted but no active trades. "
+                    f"Clearing halt and resuming. Reason was: {risk_manager._halt_reason}"
+                )
+                risk_manager.clear_halt()
+                await event_manager.broadcast({
+                    "type": "bot_status",
+                    "status": "running",
+                    "message": "🔄 System recovered from halt — resuming normal operation",
+                    "timestamp": datetime.now().isoformat(),
+                    "account_id": user_id,
+                })
+
             # ═══════════════════════════════════════════════════════════
             # MUTEX-LEVEL CHECK: If the trade lock is held, the scan
             # loop is blocked. This is NOT a conditional skip — the
@@ -262,9 +368,11 @@ async def run(stake: Optional[float] = None, api_token: Optional[str] = None,
                     f"Skipping scan until lifecycle completes"
                 )
             elif risk_manager.is_halted():
+                elapsed = (datetime.now() - risk_manager._halt_timestamp).total_seconds()
                 logger.error(
                     f"[RF] 🚨 SYSTEM HALTED — no scanning until halt is cleared | "
-                    f"Reason: {risk_manager._halt_reason}"
+                    f"Reason: {risk_manager._halt_reason} | "
+                    f"Duration: {elapsed:.0f}s"
                 )
             else:
                 # No active trade, system not halted — safe to scan
@@ -561,7 +669,8 @@ async def _process_symbol(
         if settlement:
             pnl = settlement["profit"]
             status = settlement["status"]
-            closure_reason = _determine_closure_reason(settlement, result)
+            # Use explicit closure_type if returned, fall back to inference
+            closure_reason = settlement.get("closure_type") or _determine_closure_reason(settlement, result)
             risk_manager.record_trade_closed({
                 "contract_id": contract_id,
                 "profit": pnl,
@@ -612,6 +721,20 @@ async def _process_symbol(
                 }, strategy_type="RiseFall")
             except Exception as e:
                 logger.error(f"❌ Telegram notification failed: {e}")
+
+        # Broadcast manual close alert so dashboard surfaces it clearly
+        if closure_reason == "manual":
+            await event_manager.broadcast({
+                "type": "notification",
+                "level": "warning",
+                "title": "Manual Trade Close Detected",
+                "message": (
+                    f"⚠️ {symbol} contract #{contract_id} was manually closed on Deriv. "
+                    f"Trade has been recorded in DB. P&L: ${pnl:.2f}"
+                ),
+                "timestamp": datetime.now().isoformat(),
+                "account_id": user_id,
+            })
 
         notification_type = "success" if pnl > 0 else "error" if pnl < 0 else "info"
         await event_manager.broadcast({
@@ -684,10 +807,33 @@ async def _process_symbol(
     finally:
         # ── STEP 6: Release lock (only if not halted) ──
         if risk_manager.is_halted():
-            logger.warning(
-                f"[RF] ⚠️ System halted — trade lock NOT released. "
-                f"Manual clear_halt() + release_trade_lock() required."
-            )
+            # Check if this is a transient error that might recover
+            halt_reason_lower = risk_manager._halt_reason.lower()
+            is_transient = any(x in halt_reason_lower for x in [
+                "trade execution failed",
+                "lifecycle error",
+                "duplicate trade"  # Should never happen with new fixes, but be safe
+            ])
+            
+            if is_transient:
+                # Transient errors: release lock so next cycle can retry
+                logger.warning(
+                    f"[RF] ⚠️ System halted due to transient error. "
+                    f"Releasing lock to allow recovery on next cycle. "
+                    f"Reason: {risk_manager._halt_reason}"
+                )
+                risk_manager.release_trade_lock(
+                    reason=f"transient error recovery — {halt_reason_lower}"
+                )
+                # Auto-clear halt so next cycle can proceed
+                risk_manager.clear_halt()
+            else:
+                # Permanent errors (DB write failure, critical violations): hold lock
+                logger.error(
+                    f"[RF] 🚨 System halted due to critical error. "
+                    f"Trade lock HELD — manual intervention may be required. "
+                    f"Reason: {risk_manager._halt_reason}"
+                )
         else:
             # Broadcast lock released
             await event_manager.broadcast({
@@ -774,7 +920,7 @@ async def _write_trade_to_db_with_retry(
             ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             logger.info(
                 f"[RF] STEP 5/6 | {ts} | DB write attempt {attempt}/{max_retries} "
-                f"for contract {contract_id}"
+                f"for contract {contract_id} | closure={closure_reason}"
             )
             saved = UserTradesService.save_trade(user_id, trade_record)
             if saved:

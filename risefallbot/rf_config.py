@@ -57,6 +57,10 @@ RF_COOLDOWN_SECONDS = 30           # Seconds between trades per symbol
 RF_MAX_TRADES_PER_DAY = 30         # Daily trade cap across all symbols
 RF_MIN_BARS = 30                   # Minimum bars before trading (warm-up)
 
+# Watchdog timeout for stale pending entries
+# If a 'pending' entry is older than this with no matching contract, auto-release lock
+RF_PENDING_TIMEOUT_SECONDS = 60    # 60 seconds — detect hung state and recover
+
 # Consecutive loss protection
 RF_MAX_CONSECUTIVE_LOSSES = 3      # Pause after N consecutive losses
 RF_LOSS_COOLDOWN_SECONDS = 21600     # Cooldown after hitting loss streak (6 hours)
@@ -66,6 +70,10 @@ RF_TAKE_PROFIT_PCT = 0.50          # 50% — e.g. $1 stake → sell at $0.50 pro
 
 # Stop-loss: sell contract early when loss reaches this % of stake
 RF_STOP_LOSS_PCT = 0.40            # 40% — e.g. $1 stake → sell at -$0.40 loss
+
+# TP/SL execution retry parameters (aggressive — price moves fast)
+RF_TP_SL_MAX_RETRIES = 10           # Retry attempts for TP/SL sell execution
+RF_TP_SL_RETRY_DELAY = 0.5         # Seconds between TP/SL retry attempts (fast)
 
 # ==================== LOGGING ====================
 RF_LOG_FILE = "risefall_bot.log"

@@ -102,13 +102,22 @@ class RiseFallRiskManager(BaseRiskManager):
         # Error halt flag — set when a critical step fails
         self._halted: bool = False
         self._halt_reason: str = ""
+        self._halt_timestamp: datetime = datetime.min
+
+        # Watchdog state for pending entries
+        self._pending_entry_timestamp: datetime = datetime.min
+        
+        # Watchdog timeout (seconds) — if a 'pending' entry is older than this
+        # with no matching live contract, forcibly release the lock
+        self._pending_timeout_seconds = rf_config.RF_PENDING_TIMEOUT_SECONDS
 
         logger.info(
             f"[RF-Risk] Initialized | max_concurrent_total={self.max_concurrent_total} "
             f"max_concurrent/symbol={self.max_concurrent_per_symbol} "
             f"cooldown={self.cooldown_seconds}s daily_cap={self.max_trades_per_day} "
             f"max_consec_loss={self.max_consecutive_losses} | "
-            f"⚠️ STRICT ENFORCEMENT: asyncio.Lock mutex + 6-step lifecycle"
+            f"pending_timeout={self._pending_timeout_seconds}s | "
+            f"⚠️ STRICT ENFORCEMENT: asyncio.Lock mutex + 6-step lifecycle + watchdog"
         )
 
     # ------------------------------------------------------------------ #
@@ -134,6 +143,36 @@ class RiseFallRiskManager(BaseRiskManager):
         Returns:
             True if acquired, False if system is halted
         """
+        # ─────────────────────────────────────────────────────────────────
+        # WATCHDOG: Detect stale pending entries and auto-recover
+        # PRIORITY 4 FIX: Guard with datetime.min check to prevent false trigger on startup
+        # ─────────────────────────────────────────────────────────────────
+        if self._trade_mutex.locked() and contract_id == "pending":
+            # _pending_entry_timestamp initializes to datetime.min, which would cause
+            # elapsed time to be astronomically large and trigger false watchdog on startup
+            if self._pending_entry_timestamp != datetime.min:
+                elapsed = (datetime.now() - self._pending_entry_timestamp).total_seconds()
+            else:
+                elapsed = 0.0
+            
+            if elapsed > self._pending_timeout_seconds:
+                logger.warning(
+                    f"[RF-Risk] ⚠️ WATCHDOG TRIGGERED: pending entry stuck for "
+                    f"{elapsed:.0f}s (timeout={self._pending_timeout_seconds}s) | "
+                    f"Forcibly releasing stale lock and clearing halt"
+                )
+                # Force-release the stale lock
+                if self._trade_mutex.locked():
+                    self._trade_mutex.release()
+                self._trade_lock_active = False
+                self._locked_symbol = None
+                self._locked_trade_info = {}
+                # Clear any associated halt since the stale entry is being purged
+                if self._halted:
+                    self._halted = False
+                    self._halt_reason = ""
+                    logger.info("[RF-Risk] 🔄 Halt auto-cleared by watchdog")
+
         if self._halted:
             logger.error(
                 f"[RF-Risk] ❌ HALTED — cannot acquire lock. Reason: {self._halt_reason}"
@@ -147,6 +186,10 @@ class RiseFallRiskManager(BaseRiskManager):
 
         await self._trade_mutex.acquire()
 
+        # Record timestamp if this is a "pending" entry
+        if contract_id == "pending":
+            self._pending_entry_timestamp = datetime.now()
+
         # ── DOUBLE-CHECK: Re-validate ALL risk rules after acquiring mutex ──
         # Between the pre-check can_trade() and now, conditions may have changed
         # (e.g., daily cap hit, loss-streak cooldown triggered by another path).
@@ -156,6 +199,24 @@ class RiseFallRiskManager(BaseRiskManager):
         if not can and "mutex" not in reason.lower():
             logger.warning(
                 f"[RF-Risk] ❌ Post-acquire risk check FAILED: {reason} | "
+                f"Releasing mutex immediately — trade will NOT execute"
+            )
+            self._trade_mutex.release()
+            return False
+        
+        # ───────────────────────────────────────────────────────────────────────
+        # RACE WINDOW HARDENING (PRIORITY 3)
+        # Explicitly check active_trades independently of can_trade() logic.
+        # This catches the race case where another symbol acquired the lock
+        # between this symbol's pre-check and lock acquisition.
+        # ───────────────────────────────────────────────────────────────────────
+        if len(self.active_trades) > 0:
+            existing = list(self.active_trades.values())
+            existing_contract = existing[0].get("contract_id", "unknown")
+            existing_symbol = existing[0].get("symbol", "unknown")
+            logger.error(
+                f"[RF-Risk] ❌ RACE WINDOW CAUGHT: Post-acquire check found active trade! "
+                f"New: {symbol}#{contract_id} | Existing: {existing_symbol}#{existing_contract} | "
                 f"Releasing mutex immediately — trade will NOT execute"
             )
             self._trade_mutex.release()
@@ -200,6 +261,7 @@ class RiseFallRiskManager(BaseRiskManager):
         """
         self._halted = True
         self._halt_reason = reason
+        self._halt_timestamp = datetime.now()
         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         logger.critical(
             f"[RF-Risk] 🚨 SYSTEM HALTED | {ts} | Reason: {reason} | "
@@ -210,6 +272,7 @@ class RiseFallRiskManager(BaseRiskManager):
         """Clear the halt flag after manual intervention."""
         self._halted = False
         self._halt_reason = ""
+        self._halt_timestamp = datetime.min
         logger.info("[RF-Risk] ✅ Halt cleared — system can resume trading")
 
     # ------------------------------------------------------------------ #
@@ -297,6 +360,7 @@ class RiseFallRiskManager(BaseRiskManager):
         Record a new trade opening.
         ENFORCES: Only 1 concurrent trade globally.
         REQUIRES: Trade mutex must be held by caller.
+        REJECTS: Any attempt to open a duplicate trade (race condition).
         
         Args:
             trade_info: Dict with at least 'contract_id' and 'symbol'
@@ -312,12 +376,25 @@ class RiseFallRiskManager(BaseRiskManager):
             )
             return
 
-        # Enforce global trade lock — only 1 trade at a time
+        # ENFORCE: No concurrent trades allowed — if any trade is active, REJECT
         if len(self.active_trades) > 0:
-            logger.warning(
-                f"[RF-Risk] ⚠️ TRADE LOCK VIOLATION: Attempting to open trade {symbol}#{contract_id} "
-                f"but {len(self.active_trades)} trade(s) already active! Rejecting..."
+            existing = list(self.active_trades.values())
+            existing_contract = existing[0].get("contract_id", "unknown")
+            existing_symbol = existing[0].get("symbol", "unknown")
+            logger.critical(
+                f"[RF-Risk] 🚨 CRITICAL VIOLATION: Attempting to open duplicate trade! "
+                f"New: {symbol}#{contract_id} | Existing: {existing_symbol}#{existing_contract} | "
+                f"HALTING SYSTEM to prevent further corruption"
             )
+            # Automatically halt to prevent further damage
+            self.halt(f"Duplicate trade prevention: {symbol}#{contract_id} rejected")
+            # Release mutex immediately — the finally block in _process_symbol
+            # may not be reached on all rejection paths
+            if self._trade_mutex.locked():
+                self._trade_mutex.release()
+                self._trade_lock_active = False
+                self._locked_symbol = None
+                self._locked_trade_info = {}
             return
 
         self.active_trades[contract_id] = {

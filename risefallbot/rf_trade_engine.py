@@ -307,12 +307,29 @@ class RFTradeEngine:
                     profit = sell_price - buy_price
                     status = "win" if profit > 0 else "loss"
 
+                    # Determine closure tag and type
                     if sell_reason == "tp":
                         tag = "🎯 TP-SOLD"
+                        closure_type = "take_profit"
                     elif sell_reason == "sl":
                         tag = "🛑 SL-SOLD"
+                        closure_type = "stop_loss"
+                    elif is_expired:
+                        tag = "🏁 EXPIRED"
+                        closure_type = "expiry"
+                    elif is_sold and not already_sold:
+                        # Sold externally — manual close on Deriv platform
+                        tag = "🖐️ MANUAL-CLOSE"
+                        closure_type = "manual"
+                        logger.warning(
+                            f"[RF-Engine] 🖐️ MANUAL CLOSE DETECTED for #{contract_id} — "
+                            f"trade was closed outside the bot. pnl={profit:+.2f} | "
+                            f"Lifecycle will complete and trade will be recorded in DB."
+                        )
                     else:
                         tag = "🏁 SETTLED"
+                        closure_type = "expiry"
+
                     logger.info(
                         f"[RF-Engine] {tag} Contract #{contract_id}: "
                         f"{status.upper()} pnl={profit:+.2f}"
@@ -333,6 +350,7 @@ class RFTradeEngine:
                         "profit": profit,
                         "status": status,
                         "sell_price": sell_price,
+                        "closure_type": closure_type,
                     }
 
                 # --- Still open: check for take-profit / stop-loss ---
@@ -347,10 +365,19 @@ class RFTradeEngine:
                             f"[RF-Engine] 💰 TP hit! Unrealised +${unrealised_pnl:.2f} "
                             f">= threshold ${tp_threshold:.2f} — selling early"
                         )
-                        sold = await self._sell_with_retry(contract_id, bid_price, "TP")
+                        sold = await self._sell_with_retry(
+                            contract_id, bid_price, "TP",
+                            max_attempts=rf_config.RF_TP_SL_MAX_RETRIES,
+                            retry_delay=rf_config.RF_TP_SL_RETRY_DELAY,
+                        )
                         if sold:
                             already_sold = True
                             sell_reason = "tp"
+                        else:
+                            logger.warning(
+                                f"[RF-Engine] ⚠️ TP sell failed all retries for #{contract_id} — "
+                                f"continuing to monitor. Will retry on next tick."
+                            )
 
                     # Stop-loss check
                     elif sl_threshold > 0 and unrealised_pnl <= -sl_threshold:
@@ -358,51 +385,82 @@ class RFTradeEngine:
                             f"[RF-Engine] 🛑 SL hit! Unrealised ${unrealised_pnl:.2f} "
                             f"<= threshold -${sl_threshold:.2f} — cutting loss"
                         )
-                        sold = await self._sell_with_retry(contract_id, bid_price, "SL")
+                        sold = await self._sell_with_retry(
+                            contract_id, bid_price, "SL",
+                            max_attempts=rf_config.RF_TP_SL_MAX_RETRIES,
+                            retry_delay=rf_config.RF_TP_SL_RETRY_DELAY,
+                        )
                         if sold:
                             already_sold = True
                             sell_reason = "sl"
+                        else:
+                            logger.warning(
+                                f"[RF-Engine] ⚠️ SL sell failed all retries for #{contract_id} — "
+                                f"continuing to monitor. Will retry on next tick."
+                            )
 
         except asyncio.TimeoutError:
-            logger.error(f"[RF-Engine] ⏱️ Contract #{contract_id} watch timed out")
+            logger.critical(
+                f"[RF-Engine] 🚨 Contract #{contract_id} watch TIMED OUT after 600s — "
+                f"returning None. Bot will record as settlement_unknown and release lock."
+            )
             return None
         except Exception as e:
             logger.error(f"[RF-Engine] ❌ Contract watch error: {e}")
             return None
 
     async def _sell_with_retry(
-        self, contract_id: str, min_price: float, reason: str, max_attempts: int = 3
+        self,
+        contract_id: str,
+        min_price: float,
+        reason: str,
+        max_attempts: int = 3,
+        retry_delay: float = 1.0,
     ) -> bool:
         """
         Attempt to sell a contract with retries.
         
         TP/SL enforcement MUST NOT be silently skipped. If the first sell
         attempt fails, retry up to max_attempts times before giving up.
+        On retries, uses market price (0) instead of the original bid to
+        avoid stale-price rejections from Deriv.
 
         Args:
             contract_id: Contract to sell
-            min_price: Minimum acceptable sell price
+            min_price: Minimum acceptable sell price (used on first attempt)
             reason: 'TP' or 'SL' (for logging)
             max_attempts: Number of sell attempts
+            retry_delay: Seconds between retry attempts
 
         Returns:
             True if sold successfully, False if all attempts failed
         """
         for attempt in range(1, max_attempts + 1):
-            sold = await self._sell_contract(contract_id, min_price)
+            # First attempt: use exact bid price
+            # Subsequent attempts: accept market price (0) to avoid stale price rejection
+            price_to_use = min_price if attempt == 1 else 0.0
+            if attempt > 1:
+                logger.info(
+                    f"[RF-Engine] 🔄 {reason} retry {attempt}/{max_attempts} — "
+                    f"using market price (original bid ${min_price:.2f} may be stale)"
+                )
+            sold = await self._sell_contract(contract_id, price_to_use)
             if sold:
+                logger.info(
+                    f"[RF-Engine] ✅ {reason} sell confirmed for #{contract_id} "
+                    f"(attempt {attempt}/{max_attempts})"
+                )
                 return True
             if attempt < max_attempts:
                 logger.warning(
                     f"[RF-Engine] ⚠️ {reason} sell attempt {attempt}/{max_attempts} failed "
-                    f"for #{contract_id} — retrying in 1s..."
+                    f"for #{contract_id} — retrying in {retry_delay}s..."
                 )
-                await asyncio.sleep(1)
+                await asyncio.sleep(retry_delay)
         
         logger.critical(
             f"[RF-Engine] 🚨 {reason} SELL FAILED after {max_attempts} attempts "
-            f"for #{contract_id} — contract remains open! "
-            f"Will retry on next tick update."
+            f"for #{contract_id} — contract remains open!"
         )
         return False
 

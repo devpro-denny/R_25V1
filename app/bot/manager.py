@@ -72,6 +72,28 @@ class BotManager:
                     logger.info(f"Stopping old bot to restart with new strategy...")
                     await self._bots[user_id].stop_bot()
                     del self._bots[user_id]
+                    
+                    # ─────────────────────────────────────────────────────────────────────
+                    # FIX 2: Clean up RF tasks during strategy switch
+                    # Root cause: During strategy switch, _bots is cleaned up but _rf_tasks
+                    # is never touched, orphaning the old RF task entirely. Next start request
+                    # then either sees stale entry or no entry, and launches second rf_run()
+                    # while first is still alive and trading.
+                    # ─────────────────────────────────────────────────────────────────────
+                    if user_id in self._rf_tasks and not self._rf_tasks[user_id].done():
+                        logger.warning(
+                            f"[BotManager] Cancelling orphaned RF task during strategy switch for {user_id}"
+                        )
+                        from risefallbot import rf_bot
+                        rf_bot.stop()
+                        self._rf_tasks[user_id].cancel()
+                        try:
+                            await self._rf_tasks[user_id]
+                        except asyncio.CancelledError:
+                            pass
+                    self._rf_tasks.pop(user_id, None)
+                    self._rf_start_times.pop(user_id, None)
+                    self._rf_stakes.pop(user_id, None)
                 else:
                     return {
                         "success": False,
@@ -220,6 +242,19 @@ class BotManager:
                 for user_id in to_remove:
                     if user_id in self._user_locks:
                         del self._user_locks[user_id]
+        
+        # ─────────────────────────────────────────────────────────────────────
+        # FIX 3: Clean up completed RF tasks
+        # Root cause: cleanup_inactive_bots() never removes done RF tasks,
+        # causing _rf_tasks to grow indefinitely. Stale entries interfere with
+        # the guard check in _start_risefall_bot().
+        # ─────────────────────────────────────────────────────────────────────
+        rf_to_remove = [uid for uid, task in self._rf_tasks.items() if task.done()]
+        for user_id in rf_to_remove:
+            del self._rf_tasks[user_id]
+            self._rf_start_times.pop(user_id, None)
+            self._rf_stakes.pop(user_id, None)
+            logger.info(f"[BotManager] Cleaned up completed RF task for {user_id}")
     
     async def _get_user_strategy(self, user_id: str) -> str:
         """
@@ -256,14 +291,30 @@ class BotManager:
 
     async def _start_risefall_bot(self, user_id: str, api_token: str, stake: float) -> dict:
         """Launch rf_bot.run() as a managed asyncio task for this user."""
-        # Already running?
-        if user_id in self._rf_tasks and not self._rf_tasks[user_id].done():
-            return {
-                "success": False,
-                "message": "Rise/Fall bot is already running",
-                "status": "running"
-            }
+        # ─────────────────────────────────────────────────────────────────────
+        # FIX 1: Hard-cancel any existing RF task before launching a new one
+        # Root cause: rf_bot.stop() only sets _running=False; loop exits AFTER
+        # asyncio.sleep(RF_SCAN_INTERVAL)—up to 10 seconds. If a new start request
+        # arrives within that window, the old task is still not done().
+        # ─────────────────────────────────────────────────────────────────────
+        if user_id in self._rf_tasks:
+            existing_task = self._rf_tasks[user_id]
+            if not existing_task.done():
+                logger.warning(
+                    f"[BotManager] ⚠️ RF task already exists for {user_id} — "
+                    f"cancelling before starting new instance"
+                )
+                from risefallbot import rf_bot
+                rf_bot.stop()
+                existing_task.cancel()
+                try:
+                    await existing_task
+                except asyncio.CancelledError:
+                    pass
+                logger.info(f"[BotManager] ✅ Old RF task fully cancelled for {user_id}")
+            del self._rf_tasks[user_id]
 
+        # Safe to start fresh instance
         from risefallbot.rf_bot import run as rf_run
         from app.bot.events import event_manager
 
