@@ -672,14 +672,43 @@ class TradeEngine:
                 
                 # Check if risk manager wants to close
                 if risk_manager:
-                    exit_check = risk_manager.should_close_trade(
-                        contract_id,  # Pass contract_id to identify which trade
-                        status['profit'],
-                        status['current_spot'],
-                        previous_spot
-                    )
+                    # Scalping: Apply trail and stagnation rules (handled in trade loop)
+                    from scalping_risk_manager import ScalpingRiskManager
+                    if isinstance(risk_manager, ScalpingRiskManager):
+                        trade_info = risk_manager.get_active_trade_info()
+                        if trade_info and trade_info.get('contract_id') == contract_id:
+                            current_pnl = status['profit']
+                            # CHECK 1: Trailing profit exit
+                            should_trail_exit, trail_reason, just_activated = risk_manager.check_trailing_profit(trade_info, current_pnl)
+                            if just_activated:
+                                try:
+                                    await self.remove_take_profit(contract_id)
+                                except Exception as e:
+                                    logger.error(f"❌ Failed to remove server-side TP for trailing: {e}")
+                            if should_trail_exit:
+                                exit_check = {'should_close': True, 'reason': trail_reason, 'message': f'Trailing profit exit: {trail_reason}'}
+                            else:
+                                # CHECK 2: Stagnation exit
+                                should_exit, exit_reason = risk_manager.check_stagnation_exit(trade_info, current_pnl)
+                                if should_exit:
+                                    exit_check = {'should_close': True, 'reason': exit_reason, 'message': f'Stagnation exit: {exit_reason}'}
+                                else:
+                                    exit_check = risk_manager.should_close_trade(
+                                        contract_id, status['profit'], status['current_spot'], previous_spot
+                                    )
+                        else:
+                            exit_check = risk_manager.should_close_trade(
+                                contract_id, status['profit'], status['current_spot'], previous_spot
+                            )
+                    else:
+                        exit_check = risk_manager.should_close_trade(
+                            contract_id,  # Pass contract_id to identify which trade
+                            status['profit'],
+                            status['current_spot'],
+                            previous_spot
+                        )
                     
-                    if exit_check['should_close']:
+                    if exit_check.get('should_close'):
                         logger.info(f"🎯 Risk Manager: {exit_check['message']}")
                         await self.close_trade(contract_id)
                         await asyncio.sleep(2)
