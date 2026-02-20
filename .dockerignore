@@ -1,0 +1,13 @@
+# Exclude tests from production builds
+tests/
+.pytest_cache/
+*.pytest_cache/
+# Development artifacts
+venv/
+.venv/
+__pycache__/
+*.pyc
+.git/
+.gitignore
+*.md
+.env.example

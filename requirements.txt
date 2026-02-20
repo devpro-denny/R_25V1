@@ -22,7 +22,7 @@ git+https://github.com/deriv-com/python-deriv-api.git@7e8dd0f0920d4eac0fb904891e
 
 # Data Processing
 pandas==2.3.3
-numpy==2.2.6
+numpy==2.2.1
 
 # Technical Indicators
 ta==0.11.0
@@ -47,3 +47,7 @@ aiofiles==25.1.0
 # Supabase
 supabase==2.6.0
 redis>=4.0.0
+
+# Testing
+pytest==8.3.3
+pytest-asyncio==0.23.8

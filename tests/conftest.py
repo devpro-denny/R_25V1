@@ -1,3 +1,7 @@
+"""
+Pytest configuration - DO NOT import this from production code.
+Tests run only when explicitly invoked via: pytest tests/
+"""
 import os
 import sys
 
