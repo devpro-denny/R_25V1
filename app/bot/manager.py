@@ -291,28 +291,69 @@ class BotManager:
 
     async def _start_risefall_bot(self, user_id: str, api_token: str, stake: float) -> dict:
         """Launch rf_bot.run() as a managed asyncio task for this user."""
+        import os
+        logger.info(
+            f"[BotManager] _start_risefall_bot called | "
+            f"pid={os.getpid()} manager_id={id(self)} user={user_id}"
+        )
+
         # ─────────────────────────────────────────────────────────────────────
-        # FIX 1: Hard-cancel any existing RF task before launching a new one
-        # Root cause: rf_bot.stop() only sets _running=False; loop exits AFTER
-        # asyncio.sleep(RF_SCAN_INTERVAL)—up to 10 seconds. If a new start request
-        # arrives within that window, the old task is still not done().
+        # GRACEFUL SHUTDOWN: If an RF task is already running, signal it to
+        # stop and wait up to RF_GRACEFUL_SHUTDOWN_TIMEOUT seconds for the
+        # in-progress lifecycle (buy → monitor → DB write) to complete.
+        # Only hard-cancel if it hasn't exited within that window.
+        # This prevents cancelling mid-lifecycle which was the root cause
+        # of unrecorded trades.
         # ─────────────────────────────────────────────────────────────────────
         if user_id in self._rf_tasks:
             existing_task = self._rf_tasks[user_id]
             if not existing_task.done():
+                from risefallbot import rf_bot, rf_config
+                timeout = getattr(rf_config, "RF_GRACEFUL_SHUTDOWN_TIMEOUT", 15)
                 logger.warning(
                     f"[BotManager] ⚠️ RF task already exists for {user_id} — "
-                    f"cancelling before starting new instance"
+                    f"requesting graceful stop (timeout={timeout}s)"
                 )
-                from risefallbot import rf_bot
-                rf_bot.stop()
-                existing_task.cancel()
+                rf_bot.stop()  # signal _running = False
+
+                # Wait for the task to finish naturally
                 try:
-                    await existing_task
-                except asyncio.CancelledError:
-                    pass
-                logger.info(f"[BotManager] ✅ Old RF task fully cancelled for {user_id}")
+                    await asyncio.wait_for(asyncio.shield(existing_task), timeout=timeout)
+                    logger.info(
+                        f"[BotManager] ✅ Old RF task exited gracefully for {user_id}"
+                    )
+                except asyncio.TimeoutError:
+                    # Lifecycle didn't finish in time — hard-cancel
+                    logger.warning(
+                        f"[BotManager] ⏱️ Graceful wait timed out for {user_id} — "
+                        f"hard-cancelling (in-flight trade will get emergency DB record)"
+                    )
+                    existing_task.cancel()
+                    try:
+                        await existing_task
+                    except asyncio.CancelledError:
+                        pass
+                    logger.info(
+                        f"[BotManager] ✅ Old RF task hard-cancelled for {user_id}"
+                    )
             del self._rf_tasks[user_id]
+
+        # ─────────────────────────────────────────────────────────────────────
+        # CROSS-PROCESS LOCK: Attempt to reserve a session in Supabase
+        # before creating the asyncio task.  A second worker that tries
+        # to INSERT will fail, preventing duplicate instances.
+        # ─────────────────────────────────────────────────────────────────────
+        from risefallbot.rf_bot import _acquire_session_lock
+        if not await _acquire_session_lock(user_id):
+            logger.error(
+                f"[BotManager] ⛔ Cannot start RF bot for {user_id} — "
+                f"DB session lock denied (another process holds it)"
+            )
+            return {
+                "success": False,
+                "message": "Rise/Fall bot is already running in another process",
+                "status": "error"
+            }
 
         # Safe to start fresh instance
         from risefallbot.rf_bot import run as rf_run
@@ -323,7 +364,10 @@ class BotManager:
         self._rf_start_times[user_id] = datetime.now()
         self._rf_stakes[user_id] = stake or 0
 
-        logger.info(f"✅ Rise/Fall bot started for user {user_id} | stake=${stake}")
+        logger.info(
+            f"✅ Rise/Fall bot started for user {user_id} | "
+            f"stake=${stake} pid={os.getpid()} manager_id={id(self)}"
+        )
 
         # Broadcast start event
         await event_manager.broadcast({
@@ -352,19 +396,34 @@ class BotManager:
                 "status": "stopped"
             }
 
-        from risefallbot import rf_bot
+        from risefallbot import rf_bot, rf_config
         from app.bot.events import event_manager
 
+        # Graceful stop: signal loop to exit, then wait before hard-cancel
+        timeout = getattr(rf_config, "RF_GRACEFUL_SHUTDOWN_TIMEOUT", 15)
         rf_bot.stop()       # signal the while-loop to exit
-        task.cancel()        # cancel the asyncio task
+
         try:
-            await task
-        except asyncio.CancelledError:
-            pass
+            await asyncio.wait_for(asyncio.shield(task), timeout=timeout)
+            logger.info(f"[BotManager] ✅ RF task exited gracefully for {user_id}")
+        except asyncio.TimeoutError:
+            logger.warning(
+                f"[BotManager] ⏱️ Graceful stop timed out for {user_id} — hard-cancelling"
+            )
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
 
         del self._rf_tasks[user_id]
         self._rf_start_times.pop(user_id, None)
         self._rf_stakes.pop(user_id, None)
+
+        # Release cross-process session lock (in case finally block didn't run)
+        from risefallbot.rf_bot import _release_session_lock
+        await _release_session_lock(user_id)
+
         logger.info(f"🛑 Rise/Fall bot stopped for user {user_id}")
 
         # Broadcast stop event

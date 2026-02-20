@@ -7,9 +7,8 @@ TRADING SYSTEM RULES (must be enforced):
 ══════════════════════════════════════════════════════════════════════════════
 1. Only one open trade at a time across all assets.
 2. Once a trade is opened, no other trade until the current trade is fully closed.
-3. Automatically track the active trade and apply predefined TP and SL rules.
-4. A new trade can only be opened after the current trade has hit TP or SL
-   and is completely closed.
+3. Let contracts expire naturally without early exit.
+4. A new trade can only be opened after the current trade is completely closed.
 5. Prevent three consecutive losing trades: after two consecutive losses, block
    the next trade until the loss-streak cooldown expires.
 ══════════════════════════════════════════════════════════════════════════════
@@ -73,16 +72,6 @@ RF_GLOBAL_COOLDOWN_SECONDS = 30   # After any trade closes, wait before next tra
 # Max stake cap (safety limit)
 RF_MAX_STAKE = 100.0   # Maximum stake per trade (USD)
 
-# Take-profit: sell contract early when profit reaches this % of stake
-RF_TAKE_PROFIT_PCT = 0.50          # 50% — e.g. $1 stake → sell at $0.50 profit
-
-# Stop-loss: sell contract early when loss reaches this % of stake
-RF_STOP_LOSS_PCT = 0.40            # 40% — e.g. $1 stake → sell at -$0.40 loss
-
-# TP/SL execution retry parameters (aggressive — price moves fast)
-RF_TP_SL_MAX_RETRIES = 10           # Retry attempts for TP/SL sell execution
-RF_TP_SL_RETRY_DELAY = 0.5         # Seconds between TP/SL retry attempts (fast)
-
 # ==================== LOGGING ====================
 RF_LOG_FILE = "risefall_bot.log"
 RF_LOG_LEVEL = "INFO"
@@ -98,3 +87,13 @@ RF_APP_ID = os.getenv("DERIV_APP_ID", "1089")
 
 # ==================== BOT LOOP ====================
 RF_SCAN_INTERVAL = 10  # Seconds between scan cycles
+
+# ==================== CROSS-PROCESS LOCK ====================
+# When True, _start_risefall_bot inserts a row into rf_bot_sessions
+# (Supabase) before launching the task. A second worker that tries to
+# insert will fail, preventing duplicate instances across processes.
+RF_ENFORCE_DB_LOCK = True
+
+# Graceful shutdown: seconds to wait for an in-progress lifecycle to
+# finish before hard-cancelling the asyncio task on restart.
+RF_GRACEFUL_SHUTDOWN_TIMEOUT = 15

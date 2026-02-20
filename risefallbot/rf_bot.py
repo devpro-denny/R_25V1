@@ -124,6 +124,73 @@ async def _fetch_user_config() -> dict:
     return result_config
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# Cross-process session lock (Supabase rf_bot_sessions table)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+async def _acquire_session_lock(user_id: str) -> bool:
+    """
+    Attempt to INSERT a row into rf_bot_sessions.
+    The table has user_id as PRIMARY KEY, so a second insert for the same
+    user will raise a unique-violation and we return False.
+
+    Returns True if the lock was acquired, False otherwise.
+    Guarded by RF_ENFORCE_DB_LOCK — returns True immediately when disabled.
+    """
+    if not rf_config.RF_ENFORCE_DB_LOCK:
+        logger.info("[RF] DB session lock disabled (RF_ENFORCE_DB_LOCK=False) — skipping")
+        return True
+
+    if not user_id:
+        logger.error("[RF] _acquire_session_lock called with no user_id — aborting")
+        return False
+
+    try:
+        from app.core.supabase import supabase
+        supabase.table("rf_bot_sessions").insert({
+            "user_id": user_id,
+            "started_at": datetime.now().isoformat(),
+            "process_id": os.getpid(),
+        }).execute()
+        logger.info(
+            f"[RF] ✅ DB session lock acquired for user={user_id} pid={os.getpid()}"
+        )
+        return True
+    except Exception as e:
+        err_str = str(e).lower()
+        if any(x in err_str for x in [
+            "duplicate", "unique", "conflict", "23505",  # duplicate key
+            "invalid input syntax", "uuid",               # malformed UUID
+        ]):
+            logger.warning(
+                f"[RF] ⛔ DB session lock DENIED for user={user_id} — "
+                f"another instance is already running or invalid user_id: {e}"
+            )
+        else:
+            logger.error(
+                f"[RF] ❌ DB session lock error for user={user_id}: {e}"
+            )
+        return False
+
+
+async def _release_session_lock(user_id: str) -> None:
+    """
+    Delete the rf_bot_sessions row for this user.
+    Safe to call even if no row exists.  Never raises.
+    """
+    if not rf_config.RF_ENFORCE_DB_LOCK:
+        return
+
+    try:
+        from app.core.supabase import supabase
+        supabase.table("rf_bot_sessions").delete().eq(
+            "user_id", user_id
+        ).execute()
+        logger.info(f"[RF] 🔓 DB session lock released for user={user_id}")
+    except Exception as e:
+        logger.error(f"[RF] ❌ Failed to release DB session lock for user={user_id}: {e}")
+
+
 async def run(stake: Optional[float] = None, api_token: Optional[str] = None,
               user_id: Optional[str] = None):
     """
@@ -204,18 +271,11 @@ async def run(stake: Optional[float] = None, api_token: Optional[str] = None,
         logger.info(f"💰 Account Balance: ${balance:.2f}")
         if TELEGRAM_ENABLED:
             try:
-                # Create Rise/Fall specific risk text
-                risk_text = (
-                    f"🛡️ <b>Risk Management</b>\n"
-                    f"   • TP: {rf_config.RF_TAKE_PROFIT_PCT*100:.0f}%\n"
-                    f"   • SL: {rf_config.RF_STOP_LOSS_PCT*100:.0f}%"
-                )
                 await notifier.notify_bot_started(
                     balance, 
                     stake, 
                     "Rise/Fall Scalping",
                     symbol_count=len(rf_config.RF_SYMBOLS),
-                    risk_text=risk_text
                 )
             except Exception as e:
                 logger.error(f"❌ Telegram notification failed: {e}")
@@ -461,11 +521,58 @@ async def run(stake: Optional[float] = None, api_token: Optional[str] = None,
         })
     finally:
         _running = False
+
+        # ─────────────────────────────────────────────────────────────────
+        # EMERGENCY RECORD: If the bot was cancelled while a trade
+        # lifecycle was in progress (mutex held + active trades), the
+        # buy already executed on Deriv but the DB write never happened.
+        # Write a safety record so the trade is never silently lost.
+        # ─────────────────────────────────────────────────────────────────
+        if risk_manager.trade_mutex.locked() and len(risk_manager.active_trades) > 0:
+            # Pull from active_trades (richer: has direction, stake, etc.)
+            first_trade = list(risk_manager.active_trades.values())[0]
+            emergency_cid = first_trade.get("contract_id", "unknown")
+            emergency_sym = first_trade.get("symbol", "unknown")
+            logger.critical(
+                f"[RF] 🚨 BOT CANCELLED MID-LIFECYCLE — in-flight trade detected! "
+                f"contract={emergency_cid} symbol={emergency_sym} | "
+                f"Writing emergency DB record to prevent silent loss"
+            )
+            # Attempt emergency DB write
+            if user_id:
+                try:
+                    from app.services.trades_service import UserTradesService
+                    emergency_record = {
+                        "contract_id": emergency_cid,
+                        "symbol": emergency_sym,
+                        "signal": first_trade.get("direction", "unknown"),
+                        "stake": first_trade.get("stake", 0),
+                        "profit": 0,
+                        "status": "unknown",
+                        "duration": 0,
+                        "strategy_type": "RiseFall",
+                        "closure_reason": "bot_cancelled",
+                        "timestamp": datetime.now().isoformat(),
+                    }
+                    UserTradesService.save_trade(user_id, emergency_record)
+                    logger.info(
+                        f"[RF] ✅ Emergency DB record written for {emergency_cid}"
+                    )
+                except Exception as db_err:
+                    logger.error(
+                        f"[RF] ❌ Emergency DB write FAILED for {emergency_cid}: {db_err}"
+                    )
+
         # Release mutex if still held (cleanup on shutdown)
         if risk_manager.trade_mutex.locked():
             risk_manager.release_trade_lock(reason="bot shutdown — forced cleanup")
+
         await data_fetcher.disconnect()
         await trade_engine.disconnect()
+
+        # Release cross-process session lock
+        await _release_session_lock(user_id)
+
         logger.info("🛑 Rise/Fall bot stopped")
 
         # Send final statistics via Telegram
@@ -510,7 +617,7 @@ async def _process_symbol(
         Step 1 — Acquire trade lock (asyncio.Lock mutex)
         Step 2 — Execute trade (buy Rise/Fall contract)
         Step 3 — Track trade (record open, begin monitoring)
-        Step 4 — Risk management enforcement (TP/SL/expiry in wait_for_result)
+        Step 4 — Contract monitoring until maturity (expiry or manual close)
         Step 5 — DB write with retry (halt on failure)
         Step 6 — Release lock, resume scanning
     
@@ -672,11 +779,10 @@ async def _process_symbol(
             except Exception as e:
                 logger.error(f"❌ Telegram notification failed: {e}")
 
-        # ── STEP 4: Risk management enforcement (TP/SL/expiry monitoring) ──
+        # ── STEP 4: Contract monitoring until maturity ──
         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         logger.info(
-            f"[RF] STEP 4/6 | {ts} | MONITORING contract #{contract_id} with risk rules "
-            f"(TP={rf_config.RF_TAKE_PROFIT_PCT*100:.0f}% SL={rf_config.RF_STOP_LOSS_PCT*100:.0f}%) "
+            f"[RF] STEP 4/6 | {ts} | MONITORING contract #{contract_id} "
             f"— system LOCKED for other trades"
         )
 
@@ -686,8 +792,8 @@ async def _process_symbol(
         if settlement:
             pnl = settlement["profit"]
             status = settlement["status"]
-            # Use explicit closure_type if returned, fall back to inference
-            closure_reason = settlement.get("closure_type") or _determine_closure_reason(settlement, result)
+            # Closure type is always returned from wait_for_result
+            closure_reason = settlement.get("closure_type", "unknown")
             risk_manager.record_trade_closed({
                 "contract_id": contract_id,
                 "profit": pnl,
@@ -866,25 +972,10 @@ async def _process_symbol(
             )
 
 
-def _determine_closure_reason(settlement: dict, buy_result: dict) -> str:
-    """Determine why a trade was closed based on settlement data."""
-    if not settlement:
-        return "settlement_unknown"
-    
-    sell_price = settlement.get("sell_price", 0)
-    buy_price = buy_result.get("buy_price", 0)
-    profit = settlement.get("profit", 0)
-    
-    # If profit is positive and near TP threshold, it was likely TP
-    # The trade engine logs the actual reason, but we infer from P&L
-    if profit > 0:
-        return "take_profit_or_expiry"
-    elif profit < 0:
-        return "stop_loss_or_expiry"
-    else:
-        return "breakeven_or_expiry"
 
-
+# ═══════════════════════════════════════════════════════════════════════════════
+# Database write retry (Step 5 of 6-step lifecycle)
+# ═══════════════════════════════════════════════════════════════════════════════
 async def _write_trade_to_db_with_retry(
     user_id: str,
     contract_id: str,
