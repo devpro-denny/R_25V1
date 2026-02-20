@@ -48,6 +48,5 @@ aiofiles==25.1.0
 supabase==2.6.0
 redis>=4.0.0
 
-# Testing
-pytest==8.3.3
-pytest-asyncio==0.23.8
+email-validator>=2.2.0
+

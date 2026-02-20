@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.13"
+  # You asked for failure when coverage drops below 83%.
+  COVERAGE_FAIL_UNDER: "83"
+  # Set to "false" if you want to skip linting temporarily.
+  RUN_LINT: "true"
+
+jobs:
+  test-and-quality:
+    name: Tests, Coverage, and Lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Lint (Black + Flake8)
+        if: ${{ env.RUN_LINT == 'true' }}
+        run: |
+          black --check .
+          flake8 .
+
+      - name: Run tests with coverage
+        run: |
+          pytest --cov=. --cov-report=term-missing --cov-report=xml --cov-fail-under=${{ env.COVERAGE_FAIL_UNDER }}
+
+      - name: Upload coverage XML artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-xml
+          path: coverage.xml

@@ -1,0 +1,10 @@
+-r requirements.txt
+
+# Test and coverage
+pytest==8.3.3
+pytest-asyncio==0.23.8
+pytest-cov==7.0.0
+
+# Linting/format checks (optional in CI)
+black==24.10.0
+flake8==7.1.1
