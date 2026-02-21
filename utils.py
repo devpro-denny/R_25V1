@@ -132,6 +132,20 @@ def setup_logger(
         logger.addHandler(file_handler)
 
     logger._r50_configured = True
+
+    # Attach websocket streaming directly for strategy loggers that do not
+    # propagate to root, so frontend log stream still receives records.
+    try:
+        from app.core.logging import WebSocketLoggingHandler
+
+        if not any(isinstance(h, WebSocketLoggingHandler) for h in logger.handlers):
+            ws_handler = WebSocketLoggingHandler()
+            ws_handler.setLevel(logging.INFO)
+            ws_handler.setFormatter(detailed_formatter)
+            logger.addHandler(ws_handler)
+    except Exception:
+        # WebSocket logging is optional in non-API contexts.
+        pass
     
     return logger
 

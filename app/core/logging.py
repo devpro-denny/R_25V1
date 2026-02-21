@@ -56,6 +56,9 @@ class WebSocketLoggingHandler(logging.Handler):
             status = bot_manager.get_status(user_id)
             if status.get("is_running"):
                 active_strategy = status.get("active_strategy")
+                if not active_strategy:
+                    cfg = status.get("config") if isinstance(status.get("config"), dict) else {}
+                    active_strategy = cfg.get("strategy")
                 if active_strategy == "RiseFall":
                     bot_type = "risefall"
                 elif active_strategy == "Scalping":
