@@ -201,6 +201,12 @@ class _FakeRFManager:
 
 @pytest.mark.asyncio
 async def test_rf_bot_run_additional_state_machine_paths(monkeypatch):
+    rf_bot._running = False
+    if hasattr(rf_bot, "_running_by_user"):
+        rf_bot._running_by_user.clear()
+    if hasattr(rf_bot, "_bot_task_by_user"):
+        rf_bot._bot_task_by_user.clear()
+
     # shared fake infra
     em = SimpleNamespace(broadcast=AsyncMock())
     monkeypatch.setattr("app.bot.events.event_manager", em)
@@ -222,7 +228,7 @@ async def test_rf_bot_run_additional_state_machine_paths(monkeypatch):
     monkeypatch.setattr(rf_bot, "RiseFallRiskManager", lambda: rm1)
 
     async def _proc(*_a, **_k):
-        rf_bot._running = False
+        rf_bot.stop("u1")
 
     monkeypatch.setattr(rf_bot, "_process_symbol", _proc)
     rf_bot._bot_task = None
