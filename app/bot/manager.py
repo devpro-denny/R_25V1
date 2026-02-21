@@ -65,7 +65,10 @@ class BotManager:
             # Check if already running with a different strategy
             if user_id in self._bots and self._bots[user_id].is_running:
                 current_strategy = self._bots[user_id].strategy.get_strategy_name()
-                requested_strategy = strategy_name or await self._get_user_strategy(user_id)
+                from strategy_registry import normalize_strategy_name
+                requested_strategy = normalize_strategy_name(
+                    strategy_name or await self._get_user_strategy(user_id)
+                )
                 
                 if current_strategy != requested_strategy:
                     logger.info(f"Strategy switch detected for {user_id}: {current_strategy} -> {requested_strategy}")
@@ -113,7 +116,10 @@ class BotManager:
                     }
             
             # Load strategy from user profile or use provided
-            active_strategy = strategy_name or await self._get_user_strategy(user_id)
+            from strategy_registry import normalize_strategy_name
+            active_strategy = normalize_strategy_name(
+                strategy_name or await self._get_user_strategy(user_id)
+            )
             
             # --- Rise/Fall: independent task (not BotRunner) ---
             if active_strategy == "RiseFall":
@@ -276,7 +282,10 @@ class BotManager:
                 .execute()
             
             if result.data:
-                return result.data.get('active_strategy', 'Conservative')
+                from strategy_registry import normalize_strategy_name
+                return normalize_strategy_name(
+                    result.data.get('active_strategy', 'Conservative')
+                )
             
             return 'Conservative'
         

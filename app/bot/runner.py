@@ -1,11 +1,11 @@
 """
 Bot Runner - Multi-Asset Sequential Scanner
 Manages the lifecycle of the trading bot with multi-asset support
-? Scans: R_25, R_50, R_501s, R_75, R_751s
-? Sequential Top-Down analysis per symbol
-? Global 1-trade limit enforcement
-? First-Come-First-Served execution
-? Continuous monitoring of active trades
+- Scans strategy symbol universe
+- Sequential top-down analysis per symbol
+- Global 1-trade limit enforcement
+- First-come-first-served execution
+- Continuous monitoring of active trades
 """
 
 import asyncio
@@ -23,7 +23,7 @@ from app.bot.state import BotState
 from app.bot.events import event_manager
 from app.bot.telegram_bridge import telegram_bridge
 from app.core.context import user_id_var, bot_type_var
-from app.services.trades_service import UserTradesService  # ? NEW IMPORT
+from app.services.trades_service import UserTradesService
 from functools import wraps
 
 
@@ -180,6 +180,21 @@ class BotRunner:
         self.signals_by_symbol = {symbol: self.signals_by_symbol.get(symbol, 0) for symbol in self.symbols}
         self.errors_by_symbol = {symbol: self.errors_by_symbol.get(symbol, 0) for symbol in self.symbols}
 
+    def _cycle_step(
+        self,
+        symbol: str,
+        step: int,
+        total_steps: int,
+        message: str,
+        emoji: str = "\u2139\ufe0f",
+        level: str = "info",
+    ) -> None:
+        """Rise/Fall-style lifecycle log line for multiplier strategies."""
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        strategy = self._get_strategy_name()
+        line = f"[{strategy}][{symbol}] STEP {step}/{total_steps} | {ts} | {emoji} {message}"
+        getattr(logger, level)(line)
+
     def _should_emit_decision(
         self, key: str, fingerprint: str, min_interval_seconds: int = 20
     ) -> bool:
@@ -274,7 +289,7 @@ class BotRunner:
         if self.user_stake is None:
             return {
                 "success": False,
-                "message": "? Start Failed: Stake amount not configured. Please set your stake in Settings.",
+                "message": "Start failed: Stake amount not configured. Please set your stake in Settings.",
                 "status": self.status.value
             }
             
@@ -284,9 +299,15 @@ class BotRunner:
         # (self.risk_manager is None here until _run_bot starts)
             
         try:
-            logger.info(f"?? Starting bot for {self.account_id or 'default user'}...")
-            logger.info(f"?? Scanning symbols: {', '.join(self.symbols)}")
-            logger.info(f"?? Strategy: {self.active_strategy} | Stake: ${current_stake}")
+            self._cycle_step(
+                "SYSTEM",
+                1,
+                6,
+                f"Startup requested for {self.account_id or 'default user'}",
+                emoji="\U0001F680",
+            )
+            logger.info(f"[{self.active_strategy}][SYSTEM] \U0001F4DA Symbols: {', '.join(self.symbols)}")
+            logger.info(f"[{self.active_strategy}][SYSTEM] \U0001F4B5 Stake: ${current_stake}")
             self.status = BotStatus.STARTING
             self.error_message = None
             self.state.update_status("starting")
@@ -299,9 +320,9 @@ class BotRunner:
                     # Note: We need to adapt the format slightly if needed, but BotState expects dicts
                     # We might want to populate stats based on this history too
                     self.state.trade_history = history
-                    logger.info(f"?? Loaded {len(history)} historical trades from DB")
+                    logger.info(f"[{self.active_strategy}][SYSTEM] \U0001F5C2\ufe0f Loaded {len(history)} historical trades")
             except Exception as e:
-                logger.warning(f"?? Failed to load trade history: {e}")
+                logger.warning(f"[{self.active_strategy}][SYSTEM] \u26A0\ufe0f Failed to load history: {e}")
 
             # Create bot task
             self.task = asyncio.create_task(self._run_bot())
@@ -312,7 +333,7 @@ class BotRunner:
                 await asyncio.sleep(1)
                 
                 if self.is_running:
-                    logger.info("? Multi-asset bot started successfully")
+                    self._cycle_step("SYSTEM", 6, 6, "Bot started successfully", emoji="\u2705")
                     await event_manager.broadcast({
                         "type": "bot_status",
                         "status": "running",
@@ -335,7 +356,7 @@ class BotRunner:
             raise Exception("Bot startup timeout")
                 
         except Exception as e:
-            logger.error(f"? Failed to start bot: {e}")
+            self._cycle_step("SYSTEM", 6, 6, f"Startup failed: {e}", emoji="\u274C", level="error")
             self.status = BotStatus.ERROR
             self.error_message = str(e)
             self.state.update_status("error", error=str(e))
@@ -367,7 +388,7 @@ class BotRunner:
             }
         
         try:
-            logger.info("?? Stopping multi-asset trading bot...")
+            self._cycle_step("SYSTEM", 1, 3, "Stop requested", emoji="\U0001F6D1")
             self.status = BotStatus.STOPPING
             self.state.update_status("stopping")
             
@@ -394,7 +415,7 @@ class BotRunner:
             self.start_time = None
             
             self.state.update_status("stopped")
-            logger.info("? Bot stopped successfully")
+            self._cycle_step("SYSTEM", 3, 3, "Bot stopped successfully", emoji="\u2705")
             
             # Notify Telegram with stats
             try:
@@ -421,7 +442,7 @@ class BotRunner:
             }
             
         except Exception as e:
-            logger.error(f"? Error stopping bot: {e}")
+            self._cycle_step("SYSTEM", 3, 3, f"Stop failed: {e}", emoji="\u274C", level="error")
             return {
                 "success": False,
                 "message": f"Error stopping bot: {e}",
@@ -433,7 +454,7 @@ class BotRunner:
         Restart the trading bot
         Returns status dict
         """
-        logger.info("?? Restarting multi-asset trading bot...")
+        logger.info(f"[{self._get_strategy_name()}][SYSTEM] \u267B\ufe0f Restart requested")
         
         if self.is_running:
             stop_result = await self.stop_bot()
@@ -493,13 +514,13 @@ class BotRunner:
         Continuously scans all symbols looking for first qualifying signal
         """
         try:
-            logger.info("?? Multi-asset bot main loop starting...")
+            self._cycle_step("SYSTEM", 1, 6, "Main loop starting", emoji="\U0001F504")
             
             # Initialize components with dynamic token
             token_to_use = self.api_token
             
             if not token_to_use:
-                 error_msg = f"? User {self.account_id} has no API Token! Cannot start bot."
+                 error_msg = f"User {self.account_id} has no API token configured"
                  logger.error(error_msg)
                  raise ValueError(error_msg)
             
@@ -530,51 +551,51 @@ class BotRunner:
                         self.risk_manager.update_risk_settings(self.user_stake)
                     if hasattr(self.risk_manager, 'stake'):
                         self.risk_manager.stake = self.user_stake
-                    logger.info(f"? Risk limits updated for stake: ${self.user_stake}")
+                    logger.info(f"[{self._get_strategy_name()}][SYSTEM] \U0001F6E1\ufe0f Risk limits updated for stake: ${self.user_stake}")
                 
-                logger.info("? Components initialized for multi-asset mode")
+                self._cycle_step("SYSTEM", 2, 6, "Components initialized", emoji="\U0001F9E9")
             except Exception as e:
                 self.status = BotStatus.ERROR
                 self.error_message = f"Component initialization failed: {e}"
-                logger.error(f"? {self.error_message}")
+                self._cycle_step("SYSTEM", 2, 6, self.error_message, emoji="\u274C", level="error")
                 return
             
             # Connect to Deriv API
             try:
-                logger.info("?? Connecting DataFetcher...")
+                self._cycle_step("SYSTEM", 3, 6, "Connecting DataFetcher", emoji="\U0001F50C")
                 data_connected = await self.data_fetcher.connect()
                 if not data_connected:
                     reason = self.data_fetcher.last_error or "Unknown connection error"
                     raise Exception(f"DataFetcher failed to connect: {reason}")
                 
-                logger.info("?? Connecting TradeEngine...")
+                self._cycle_step("SYSTEM", 4, 6, "Connecting TradeEngine", emoji="\U0001F50C")
                 trade_connected = await self.trade_engine.connect()
                 if not trade_connected:
                     raise Exception("TradeEngine failed to connect (check logs for details)")
                 
-                logger.info("? Connected to Deriv API")
+                self._cycle_step("SYSTEM", 4, 6, "Connected to Deriv API", emoji="\u2705")
             except Exception as e:
                 self.status = BotStatus.ERROR
                 self.error_message = f"Deriv API connection failed: {e}"
-                logger.error(f"? {self.error_message}")
+                self._cycle_step("SYSTEM", 4, 6, self.error_message, emoji="\u274C", level="error")
                 return
             
             # Check for existing positions on startup
             try:
                 has_existing = await self.risk_manager.check_for_existing_positions(self.trade_engine)
                 if has_existing:
-                    logger.warning("?? Existing position detected - system locked on startup")
+                    logger.warning(f"[{self._get_strategy_name()}][SYSTEM] \U0001F512 Existing position detected on startup")
             except Exception as e:
-                logger.warning(f"?? Could not check existing positions: {e}")
+                logger.warning(f"[{self._get_strategy_name()}][SYSTEM] \u26A0\ufe0f Existing-position check failed: {e}")
             
             # Get initial balance
             try:
                 balance = await self.data_fetcher.get_balance()
                 if balance:
                     self.state.update_balance(balance)
-                    logger.info(f"?? Initial balance: ${balance:.2f}")
+                    logger.info(f"[{self._get_strategy_name()}][SYSTEM] \U0001F4B0 Initial balance: ${balance:.2f}")
             except Exception as e:
-                logger.warning(f"?? Could not fetch balance: {e}")
+                logger.warning(f"[{self._get_strategy_name()}][SYSTEM] \u26A0\ufe0f Initial balance fetch failed: {e}")
                 balance = 0.0
             
             # Mark as running
@@ -584,14 +605,14 @@ class BotRunner:
             self.error_message = None
             self.state.update_status("running")
             
-            logger.info("? Multi-asset bot is now running")
-            logger.info(f"?? Scanning {len(self.symbols)} symbols per cycle")
+            self._cycle_step("SYSTEM", 5, 6, "Bot is now running", emoji="\u2705")
+            logger.info(f"[{self._get_strategy_name()}][SYSTEM] \U0001F50E Scanning {len(self.symbols)} symbols per cycle")
             
             # Notify Telegram
             try:
                 await self.telegram_bridge.notify_bot_started(balance or 0.0, self.user_stake, self.active_strategy)
             except Exception as e:
-                logger.warning(f"?? Telegram notification failed: {e}")
+                logger.warning(f"[{self._get_strategy_name()}][SYSTEM] \u26A0\ufe0f Telegram notification failed: {e}")
             
             # Broadcast to WebSockets
             await event_manager.broadcast({
@@ -617,7 +638,10 @@ class BotRunner:
             while self.is_running:
                 try:
                     self.scan_count += 1
-                    logger.info(f"?? Scan cycle #{self.scan_count} - Checking {len(self.symbols)} symbols")
+                    logger.info(
+                        f"[{self._get_strategy_name()}][SYSTEM] \U0001F50E CYCLE #{self.scan_count} | "
+                        f"Checking {len(self.symbols)} symbols"
+                    )
                     
                     # Execute multi-asset scan cycle
                     await self._multi_asset_scan_cycle()
@@ -628,10 +652,10 @@ class BotRunner:
                     # If actively monitoring a trade, check more frequently
                     if self.risk_manager.active_trades:
                         wait_time = max(cooldown, 10)  # Check every 10s when trade active
-                        logger.debug(f"?? Active trade ({len(self.risk_manager.active_trades)}) - next check in {wait_time}s")
+                        logger.debug(f"[{self._get_strategy_name()}][SYSTEM] \u23F1\ufe0f Active trade monitor in {wait_time}s")
                     else:
                         wait_time = max(cooldown, 30)  # Standard 30s cycle when scanning
-                        logger.debug(f"?? No active trade - next scan in {wait_time}s")
+                        logger.debug(f"[{self._get_strategy_name()}][SYSTEM] \u23F1\ufe0f Next scan in {wait_time}s")
                     
                     # Sleep with cancellation check
                     for _ in range(int(wait_time)):
@@ -640,10 +664,10 @@ class BotRunner:
                         await asyncio.sleep(1)
                     
                 except asyncio.CancelledError:
-                    logger.info("Bot loop cancelled")
+                    logger.info(f"[{self._get_strategy_name()}][SYSTEM] \U0001F6D1 Bot loop cancelled")
                     break
                 except Exception as e:
-                    logger.error(f"Error in scan cycle: {e}")
+                    logger.error(f"[{self._get_strategy_name()}][SYSTEM] \u274C Scan cycle error: {e}")
                     
                     try:
                         await self.telegram_bridge.notify_error(str(e))
@@ -659,7 +683,7 @@ class BotRunner:
                     await asyncio.sleep(30)
             
         except asyncio.CancelledError:
-            logger.info("Bot task cancelled")
+            logger.info(f"[{self._get_strategy_name()}][SYSTEM] \U0001F6D1 Bot task cancelled")
         except Exception as e:
             logger.error(f"Fatal error in bot: {e}")
             self.status = BotStatus.ERROR
@@ -679,7 +703,7 @@ class BotRunner:
             })
         finally:
             self.is_running = False
-            logger.info("Multi-asset bot main loop exited")
+            self._cycle_step("SYSTEM", 6, 6, "Main loop exited", emoji="\U0001F3C1")
     
     async def _multi_asset_scan_cycle(self):
         """
@@ -687,9 +711,9 @@ class BotRunner:
         
         Process:
         1. Check global trade permission (1-trade limit)
-        2. If position active ? Monitor only (skip scanning)
-        3. If no position ? Scan all symbols sequentially
-        4. First qualifying signal ? Execute and lock system
+        2. If position active -> monitor only (skip scanning)
+        3. If no position -> scan all symbols sequentially
+        4. First qualifying signal -> execute and lock system
         5. All other symbols blocked until trade closes
         """
         
@@ -698,7 +722,7 @@ class BotRunner:
         
         # If we have an active trade, monitor it instead of scanning
         if self.risk_manager.active_trades:
-            logger.debug(f"?? Monitoring {len(self.risk_manager.active_trades)} active trades")
+            logger.debug(f"[{self._get_strategy_name()}][SYSTEM] \U0001F440 Monitoring {len(self.risk_manager.active_trades)} active trade(s)")
             await self._broadcast_decision(
                 symbol="SYSTEM",
                 phase="scan",
@@ -711,7 +735,7 @@ class BotRunner:
             return
         
         if not can_trade_global:
-            logger.debug(f"?? Global trading paused: {reason}")
+            logger.info(f"[{self._get_strategy_name()}][SYSTEM] \u23F8\ufe0f Global trading paused: {reason}")
             await self._broadcast_decision(
                 symbol="SYSTEM",
                 phase="risk",
@@ -724,13 +748,13 @@ class BotRunner:
             return
         
         # Step 2: Sequential symbol scanning (First-Come-First-Served)
-        logger.info(f"?? Scanning all {len(self.symbols)} symbols for entry signals...")
+        logger.info(f"[{self._get_strategy_name()}][SYSTEM] \U0001F50D Scanning symbols for entry signals")
         
         for symbol in self.symbols:
             # Check if we can still trade (might have changed during loop)
             can_trade_now, _ = self.risk_manager.can_trade(symbol)
             if not can_trade_now:
-                logger.debug(f"?? {symbol} - Global state changed, stopping scan")
+                logger.debug(f"[{self._get_strategy_name()}][{symbol}] \u26D4 Global state changed, stopping scan")
                 break
             
             try:
@@ -739,13 +763,13 @@ class BotRunner:
                 
                 if signal_found:
                     # CRITICAL: First qualifying signal locks the system
-                    logger.info(f"?? {symbol} won the race - executing trade")
-                    logger.info(f"?? All other symbols now BLOCKED")
+                    logger.info(f"[{self._get_strategy_name()}][{symbol}] \U0001F3C1 First qualifying signal won this cycle")
+                    logger.info(f"[{self._get_strategy_name()}][SYSTEM] \U0001F512 Other symbols blocked until closure")
                     break  # Exit loop - system is now locked
                 
             except Exception as e:
                 # Log error but continue to next symbol
-                logger.error(f"? SYMBOL_ANALYSIS_FAILED | Symbol: {symbol} | Error: {type(e).__name__}: {e}", exc_info=True)
+                logger.error(f"[{self._get_strategy_name()}][{symbol}] \u274C Symbol analysis failed: {type(e).__name__}: {e}", exc_info=True)
                 self.errors_by_symbol[symbol] = self.errors_by_symbol.get(symbol, 0) + 1
                 
                 # If too many errors for this symbol, notify
@@ -759,7 +783,7 @@ class BotRunner:
                 
                 continue  # Move to next symbol
         
-        logger.debug(f"? Scan cycle complete - checked {len(self.symbols)} symbols")
+        logger.debug(f"[{self._get_strategy_name()}][SYSTEM] \u2705 Scan cycle complete")
     
     async def _analyze_symbol(self, symbol: str) -> bool:
         """
@@ -772,7 +796,7 @@ class BotRunner:
         Returns:
             True if trade executed, False if no signal
         """
-        logger.debug(f"?? Analyzing {symbol}...")
+        self._cycle_step(symbol, 1, 6, "Fetching multi-timeframe data", emoji="\U0001F4E5")
         
         # Fetch multi-timeframe data for this symbol
         # Fetch multi-timeframe data for this symbol
@@ -783,7 +807,14 @@ class BotRunner:
             required_timeframes = ['1m', '5m', '1h', '4h', '1d', '1w']  # Full Top-Down requirement
             if not all(tf in market_data for tf in required_timeframes):
                 missing_tfs = [tf for tf in required_timeframes if tf not in market_data]
-                logger.warning(f"?? {symbol} - Missing required timeframes")
+                self._cycle_step(
+                    symbol,
+                    1,
+                    6,
+                    f"Missing required timeframes: {', '.join(missing_tfs)}",
+                    emoji="\u26A0\ufe0f",
+                    level="warning",
+                )
                 await self._broadcast_decision(
                     symbol=symbol,
                     phase="data",
@@ -796,7 +827,7 @@ class BotRunner:
                 return False
             
         except Exception as e:
-            logger.error(f"? {symbol} - Data fetch failed: {e}")
+            self._cycle_step(symbol, 1, 6, f"Data fetch failed: {e}", emoji="\u274C", level="error")
             raise  # Re-raise to be caught by caller
         
         # Extract timeframe data
@@ -809,6 +840,7 @@ class BotRunner:
         
         # Execute strategy analysis using injected strategy
         try:
+            self._cycle_step(symbol, 2, 6, "Running strategy analysis", emoji="\U0001F9E0")
             # Get required timeframes for this strategy
             required_tfs = self.strategy.get_required_timeframes()
             
@@ -822,7 +854,7 @@ class BotRunner:
             signal = self.strategy.analyze(**strategy_kwargs)
 
         except Exception as e:
-            logger.error(f"? {symbol} - Strategy analysis failed: {e}")
+            self._cycle_step(symbol, 2, 6, f"Strategy analysis failed: {e}", emoji="\u274C", level="error")
             raise
         
         if not signal.get('can_trade'):
@@ -848,7 +880,7 @@ class BotRunner:
                 should_log = True
                 
             if should_log:
-                logger.info(f"? {symbol} - Skipped: {full_reason}")
+                self._cycle_step(symbol, 3, 6, f"No trade setup: {full_reason}", emoji="\u23ED\ufe0f")
                 self.last_status_log[symbol] = {'msg': full_reason, 'time': now}
                 await self._broadcast_decision(
                     symbol=symbol,
@@ -860,13 +892,20 @@ class BotRunner:
                 )
             else:
                 # Debug only for spammy updates
-                logger.debug(f"?? {symbol} - No signal: {full_reason}")
+                logger.debug(f"[{self._get_strategy_name()}][{symbol}] \u23ED\ufe0f No signal: {full_reason}")
                 
             return False
         
         # We have a signal! Log it
         checks_passed = ", ".join(signal.get('details', {}).get('passed_checks', []))
-        logger.info(f"?? {symbol} - SIGNAL: {signal['signal']} | Score: {signal.get('score', 0):.2f} | Conf: {signal.get('confidence', 0):.0f}%")
+        direction_emoji = "\U0001F7E2" if str(signal.get("signal", "")).upper() in {"BUY", "UP"} else "\U0001F534"
+        self._cycle_step(
+            symbol,
+            3,
+            6,
+            f"Signal {signal['signal']} {direction_emoji} | Score {signal.get('score', 0):.2f} | Conf {signal.get('confidence', 0):.0f}%",
+            emoji="\U0001F3AF",
+        )
         logger.debug(f"   Checks: {checks_passed}")
         await self._broadcast_decision(
             symbol=symbol,
@@ -908,7 +947,7 @@ class BotRunner:
         multiplier = self.asset_config.get(symbol, {}).get('multiplier')
         
         if not multiplier:
-            logger.error(f"? {symbol} - Critical: Missing multiplier in asset_config")
+            self._cycle_step(symbol, 4, 6, "Missing multiplier in asset config", emoji="\u274C", level="error")
             await self._broadcast_decision(
                 symbol=symbol,
                 phase="risk",
@@ -923,7 +962,7 @@ class BotRunner:
         base_stake = self.user_stake
         if base_stake is None:
              # Should not happen due to start_bot check, but safety first
-             logger.error(f"? {symbol} - Critical: User stake is None during analysis")
+             self._cycle_step(symbol, 4, 6, "Stake not configured", emoji="\u274C", level="error")
              await self._broadcast_decision(
                  symbol=symbol,
                  phase="risk",
@@ -956,7 +995,7 @@ class BotRunner:
         )
         
         if not can_open:
-            logger.warning(f"? {symbol} - Trade blocked: {validation_msg}")
+            self._cycle_step(symbol, 4, 6, f"Risk gate blocked trade: {validation_msg}", emoji="\U0001F6D1", level="warning")
             await self._broadcast_decision(
                 symbol=symbol,
                 phase="risk",
@@ -977,8 +1016,13 @@ class BotRunner:
             pass
         
         # Execute trade!
-        logger.info(f"?? {symbol} - Executing {signal['signal']} trade...")
-        logger.info(f"   Stake: ${stake:.2f} (multiplier: {multiplier}x)")
+        self._cycle_step(
+            symbol,
+            5,
+            6,
+            f"Executing {signal['signal']} | Stake ${stake:.2f} | Multiplier {multiplier}x",
+            emoji="\U0001F680",
+        )
         await self._broadcast_decision(
             symbol=symbol,
             phase="execution",
@@ -1010,8 +1054,14 @@ class BotRunner:
                 status = result.get('status', 'unknown')
                 contract_id = result.get('contract_id')
                 
-                logger.info(f"? {symbol} - Trade completed: {status}")
-                logger.info(f"?? P&L: ${pnl:.2f}")
+                result_emoji = "\u2705" if pnl > 0 else ("\u274C" if pnl < 0 else "\u2696\ufe0f")
+                self._cycle_step(
+                    symbol,
+                    6,
+                    6,
+                    f"Trade completed: {status} | P&L: ${pnl:.2f} | Contract: {contract_id}",
+                    emoji=result_emoji,
+                )
 
                 # CRITICAL FIX: Add signal to result for DB persistence
                 if 'signal' not in result:
@@ -1029,24 +1079,26 @@ class BotRunner:
                 try:
                     saved = UserTradesService.save_trade(self.account_id, result)
                     if saved:
-                        logger.info(f"? Trade persisted to database: {contract_id}")
+                        logger.info(f"[{self._get_strategy_name()}][{symbol}] \U0001F9FE Trade persisted to DB: {contract_id}")
                     else:
-                        logger.error(f"? DB persistence failed for contract {contract_id} (no data returned)")
+                        logger.error(
+                            f"[{self._get_strategy_name()}][{symbol}] \u274C DB persistence failed for contract {contract_id} (no data returned)"
+                        )
                         # Notify via Telegram
                         try:
                             await self.telegram_bridge.notify_error(
-                                f"?? Trade executed but DB save failed: {symbol} {status}"
+                                f"Trade executed but DB save failed: {symbol} {status}"
                             )
                         except:
                             pass
                 except Exception as e:
-                    logger.error(f"? DB save exception for contract {contract_id}: {e}")
+                    logger.error(f"[{self._get_strategy_name()}][{symbol}] \u274C DB save exception for contract {contract_id}: {e}")
                     import traceback
                     logger.error(traceback.format_exc())
                     # Notify via Telegram
                     try:
                         await self.telegram_bridge.notify_error(
-                            f"?? Trade executed but DB error: {symbol} - {str(e)}"
+                            f"Trade executed but DB error: {symbol} - {str(e)}"
                         )
                     except:
                         pass
@@ -1114,7 +1166,7 @@ class BotRunner:
                 
                 return True  # Trade executed
             else:
-                logger.error(f"? {symbol} - Trade execution failed")
+                self._cycle_step(symbol, 6, 6, "Trade execution failed (no result)", emoji="\u274C", level="error")
                 await self._broadcast_decision(
                     symbol=symbol,
                     phase="execution",
@@ -1126,7 +1178,11 @@ class BotRunner:
                 return False
                 
         except Exception as e:
-            logger.error(f"? TRADE_EXECUTION_FAILED | Symbol: {symbol} | Error: {type(e).__name__}: {e}", exc_info=True)
+            self._cycle_step(symbol, 6, 6, f"Trade execution failed: {type(e).__name__}: {e}", emoji="\u274C", level="error")
+            logger.error(
+                f"[{self._get_strategy_name()}][{symbol}] TRADE_EXECUTION_FAILED traceback",
+                exc_info=True,
+            )
             await self._broadcast_decision(
                 symbol=symbol,
                 phase="execution",
@@ -1187,10 +1243,24 @@ class BotRunner:
                         try:
                             await self.trade_engine.remove_take_profit(contract_id)
                         except Exception as e:
-                            logger.error(f"❌ Failed to remove server-side TP: {e}")
+                            self._cycle_step(
+                                symbol,
+                                4,
+                                6,
+                                f"Failed to remove server-side TP: {e}",
+                                emoji="\u274C",
+                                level="error",
+                            )
                     
                     if should_trail_exit:
-                        logger.warning(f"📈 {symbol} trailing profit exit triggered - locking gains")
+                        self._cycle_step(
+                            symbol,
+                            4,
+                            6,
+                            "Trailing profit exit triggered - locking gains",
+                            emoji="\U0001F4C8",
+                            level="warning",
+                        )
                         
                         try:
                             sell_result = await self.trade_engine.close_trade(contract_id)
@@ -1203,8 +1273,14 @@ class BotRunner:
                                 self.risk_manager.record_trade_close(contract_id, pnl, status)
                                 self.state.update_trade(contract_id, sell_result)
                                 
-                                logger.info(f"🔒 {symbol} trade closed (trailing profit) - system unlocked")
-                                logger.info(f"💰 P&L: ${pnl:.2f}")
+                                self._cycle_step(
+                                    symbol,
+                                    6,
+                                    6,
+                                    "Trade closed (trailing profit) - system unlocked",
+                                    emoji="\U0001F512",
+                                )
+                                logger.info(f"[{self._get_strategy_name()}][{symbol}] \U0001F4B0 P&L: ${pnl:.2f}")
                                 
                                 # Persist to DB
                                 try:
@@ -1214,9 +1290,15 @@ class BotRunner:
                                     result_for_db['exit_reason'] = trail_reason
                                     saved = UserTradesService.save_trade(self.account_id, result_for_db)
                                     if saved:
-                                        logger.info(f"✅ Trailing profit trade persisted to DB: {contract_id}")
+                                        logger.info(
+                                            f"[{self._get_strategy_name()}][{symbol}] "
+                                            f"\u2705 Trailing profit trade persisted to DB: {contract_id}"
+                                        )
                                 except Exception as e:
-                                    logger.error(f"❌ DB save failed for trailing profit trade: {e}")
+                                    logger.error(
+                                        f"[{self._get_strategy_name()}][{symbol}] "
+                                        f"\u274C DB save failed for trailing profit trade: {e}"
+                                    )
                                 
                                 # Notify Telegram
                                 try:
@@ -1233,13 +1315,27 @@ class BotRunner:
                                 
                                 return  # Exit monitoring after closing
                         except Exception as e:
-                            logger.error(f"❌ Failed to close trailing profit trade: {e}")
+                            self._cycle_step(
+                                symbol,
+                                6,
+                                6,
+                                f"Failed to close trailing profit trade: {e}",
+                                emoji="\u274C",
+                                level="error",
+                            )
                     
                     # CHECK 2: Stagnation exit (when trade is open too long and losing)
                     should_exit, exit_reason = self.risk_manager.check_stagnation_exit(trade_info, current_pnl)
                     
                     if should_exit:
-                        logger.warning(f"⏰ {symbol} stagnation exit triggered - closing trade")
+                        self._cycle_step(
+                            symbol,
+                            4,
+                            6,
+                            "Stagnation exit triggered - closing trade",
+                            emoji="\u23F0",
+                            level="warning",
+                        )
                         
                         # Close the trade immediately
                         try:
@@ -1253,8 +1349,14 @@ class BotRunner:
                                 self.risk_manager.record_trade_close(contract_id, pnl, status)
                                 self.state.update_trade(contract_id, sell_result)
                                 
-                                logger.info(f"🔓 {symbol} trade closed (stagnation) - system unlocked")
-                                logger.info(f"💰 P&L: ${pnl:.2f}")
+                                self._cycle_step(
+                                    symbol,
+                                    6,
+                                    6,
+                                    "Trade closed (stagnation) - system unlocked",
+                                    emoji="\U0001F513",
+                                )
+                                logger.info(f"[{self._get_strategy_name()}][{symbol}] \U0001F4B0 P&L: ${pnl:.2f}")
                                 
                                 # Notify Telegram with stagnation exit reason
                                 try:
@@ -1271,11 +1373,18 @@ class BotRunner:
                                 
                                 return  # Exit monitoring after closing
                         except Exception as e:
-                            logger.error(f"❌ Failed to close stagnant trade: {e}")
+                            self._cycle_step(
+                                symbol,
+                                6,
+                                6,
+                                f"Failed to close stagnant trade: {e}",
+                                emoji="\u274C",
+                                level="error",
+                            )
             
             if trade_status and trade_status.get('is_sold'):
                 # Trade closed externally or by TP/SL
-                logger.info(f"?? {symbol} trade detected as closed")
+                logger.info(f"[{self._get_strategy_name()}][{symbol}] \U0001F4E1 Trade detected as closed")
                 
                 pnl = trade_status.get('profit', 0.0)
                 status = trade_status.get('status', 'sold')
@@ -1284,8 +1393,8 @@ class BotRunner:
                 self.risk_manager.record_trade_close(contract_id, pnl, status)
                 self.state.update_trade(contract_id, trade_status)
                 
-                logger.info(f"?? {symbol} trade closed - system unlocked")
-                logger.info(f"?? P&L: ${pnl:.2f}")
+                logger.info(f"[{self._get_strategy_name()}][{symbol}] \U0001F513 Trade closed - system unlocked")
+                logger.info(f"[{self._get_strategy_name()}][{symbol}] \U0001F4B0 P&L: ${pnl:.2f}")
                 
                 # Notify Telegram
                 try:
@@ -1298,7 +1407,7 @@ class BotRunner:
                     pass
             
         except Exception as e:
-            logger.warning(f"?? Could not monitor {symbol} trade: {e}")
+            logger.warning(f"[{self._get_strategy_name()}][{symbol}] \u26A0\ufe0f Could not monitor trade: {e}")
 
 # Global bot runner instance - DEPRECATED / DEFAULT
 # We keep this for backward compatibility if needed, using env vars

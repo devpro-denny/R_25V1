@@ -28,13 +28,34 @@ class WebSocketLoggingHandler(logging.Handler):
     @staticmethod
     def _classify_bot_from_logger(logger_name: str) -> str:
         """Map logger namespace to bot type."""
-        if str(logger_name).startswith("risefallbot"):
+        name = str(logger_name).lower()
+        if name.startswith("risefallbot") or "risefall" in name:
             return "risefall"
-        if str(logger_name).startswith("conservative"):
+        if name.startswith("conservative") or "conservative" in name:
             return "conservative"
-        if str(logger_name).startswith("scalping"):
+        if name.startswith("scalping") or "scalping" in name:
             return "scalping"
         return "system"
+
+    @staticmethod
+    def _normalize_strategy_to_bot_type(strategy_name: Optional[str]) -> Optional[str]:
+        """
+        Normalize strategy labels from DB/status to internal bot types.
+        Accepts variants like: scalping, rise_fall, Rise/Fall.
+        """
+        if not strategy_name:
+            return None
+
+        key = re.sub(r"[^a-z0-9]+", "", str(strategy_name).strip().lower())
+        if key in {"risefall", "rf"}:
+            return "risefall"
+        if key in {"scalping", "scalp"}:
+            return "scalping"
+        if key in {"conservative", "multiplier"}:
+            return "conservative"
+        if key == "system":
+            return "system"
+        return None
 
     def _get_running_bot_type(self, user_id: str) -> Optional[str]:
         """
@@ -59,14 +80,7 @@ class WebSocketLoggingHandler(logging.Handler):
                 if not active_strategy:
                     cfg = status.get("config") if isinstance(status.get("config"), dict) else {}
                     active_strategy = cfg.get("strategy")
-                if active_strategy == "RiseFall":
-                    bot_type = "risefall"
-                elif active_strategy == "Scalping":
-                    bot_type = "scalping"
-                elif active_strategy == "Conservative":
-                    bot_type = "conservative"
-                else:
-                    bot_type = "system"
+                bot_type = self._normalize_strategy_to_bot_type(active_strategy) or "system"
         except Exception:
             bot_type = None
 
@@ -91,11 +105,21 @@ class WebSocketLoggingHandler(logging.Handler):
             if not user_id:
                 return
 
-            context_bot = getattr(record, "bot_type", None)
-            if context_bot in {"conservative", "scalping", "risefall"}:
+            msg = record.getMessage()
+
+            context_bot = self._normalize_strategy_to_bot_type(getattr(record, "bot_type", None))
+            if context_bot in {"conservative", "scalping", "risefall", "system"}:
                 record_bot = context_bot
             else:
                 record_bot = self._classify_bot_from_logger(record.name)
+                if record_bot == "system":
+                    upper_msg = str(msg).upper()
+                    if "[SCALPING]" in upper_msg:
+                        record_bot = "scalping"
+                    elif "[CONSERVATIVE]" in upper_msg:
+                        record_bot = "conservative"
+                    elif "[RF]" in upper_msg or "[RISEFALL]" in upper_msg or "[RISE/FALL]" in upper_msg:
+                        record_bot = "risefall"
             running_bot = self._get_running_bot_type(user_id)
 
             # Strict isolation: only stream logs that belong to the bot
@@ -105,7 +129,6 @@ class WebSocketLoggingHandler(logging.Handler):
 
             # Use raw message (without duplicated timestamp/name prefixes)
             # because frontend already renders its own timestamp/level columns.
-            msg = record.getMessage()
             if self._is_decorative_log_line(msg):
                 return
             

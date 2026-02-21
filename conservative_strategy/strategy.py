@@ -12,6 +12,7 @@ strategy.py - REFACTORED FOR MULTI-ASSET TOP-DOWN ANALYSIS
 import pandas as pd
 import numpy as np
 import logging
+from datetime import datetime
 from typing import Dict, List, Optional, Tuple, Any
 
 from . import config
@@ -67,10 +68,13 @@ class TradingStrategy:
             }
         }
 
-        # DEBUG: Log strategy execution (helps identify unexpected calls)
-        import logging
-        logger = logging.getLogger(__name__)
-        logger.info(f"[CONSERVATIVE] 🔍 TradingStrategy.analyze() called for symbol: {symbol}")
+        # Use shared app logger so logs are routed to websocket/file handlers consistently.
+        def _step_log(step: int, message: str, emoji: str = "ℹ️", level: str = "info") -> None:
+            ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            line = f"[CONSERVATIVE][{symbol}] STEP {step}/6 | {ts} | {emoji} {message}"
+            getattr(logger, level)(line)
+
+        _step_log(1, "Starting analysis", emoji="🔎")
  
         # ---------------------------------------------------------
         # MANDATORY LOGGING HEADER (Simplified)
@@ -89,7 +93,7 @@ class TradingStrategy:
         if data_1w is None or data_1w.empty: missing_dfs.append("1w")
         
         if missing_dfs:
-            print(f"[CONSERVATIVE] ❌ Data Missing: {', '.join(missing_dfs)}")
+            _step_log(1, f"Missing required data: {', '.join(missing_dfs)}", emoji="❌", level="warning")
             response["details"]["reason"] = "Insufficient data across timeframes"
             return response
             
@@ -106,13 +110,13 @@ class TradingStrategy:
             if pd.isna(adx_val): adx_val = 0
             passed_checks.append("Indicators Calculated")
         except Exception as e:
-            logger.error(f"Indicator calculation failed: {e}")
+            logger.error(f"[CONSERVATIVE][{symbol}] ❌ Indicator calculation failed: {e}")
             rsi_val = 50
             adx_val = 0
 
         # ADX Filter (Trend Strength)
         if adx_val < config.ADX_THRESHOLD:
-            print(f"[CONSERVATIVE] ⚠️ Trend Weak: ADX {adx_val:.1f} < {config.ADX_THRESHOLD}")
+            _step_log(2, f"Trend weak: ADX {adx_val:.1f} < {config.ADX_THRESHOLD}", emoji="⚠️")
             response["details"]["reason"] = f"Trend too weak (ADX {adx_val:.1f} < {config.ADX_THRESHOLD})"
             response["details"]["adx"] = round(adx_val, 2)
             response["details"]["rsi"] = round(rsi_val, 2)
@@ -130,7 +134,7 @@ class TradingStrategy:
         
         # Reject parabolic spikes immediately (buying tops/selling bottoms)
         if is_parabolic:
-            print(f"[CONSERVATIVE] ❌ Parabolic Spike Detected - Late Entry Rejected")
+            _step_log(2, "Parabolic spike detected - late entry rejected", emoji="❌")
             response["details"]["reason"] = "Parabolic spike detected - entry too late"
             response["details"]["movement_pct"] = round(movement_pct, 2)
             response["details"]["is_parabolic"] = True
@@ -139,25 +143,18 @@ class TradingStrategy:
         # Get asset-specific movement threshold (or global fallback)
         max_movement = config.MAX_PRICE_MOVEMENT_PCT  # Default global threshold
         
-        # DEBUG: Print symbol parameter
-        print(f"[DEBUG] Symbol parameter received: '{symbol}'")
-        
         if symbol and hasattr(config, 'ASSET_CONFIG'):
             asset_config = config.ASSET_CONFIG.get(symbol, {})
             asset_threshold = asset_config.get('movement_threshold_pct')
-            print(f"[DEBUG] Asset config for {symbol}: {asset_config}")
-            print(f"[DEBUG] Extracted threshold: {asset_threshold}")
             if asset_threshold:
                 max_movement = asset_threshold
-                print(f"[CONSERVATIVE] ✓ Using {symbol}-specific threshold: {max_movement}%")
-            else:
-                print(f"[CONSERVATIVE] ⚠️ No threshold found for {symbol}, using global {max_movement}%")
-        else:
-            print(f"[CONSERVATIVE] ⚠️ Using global threshold (symbol={symbol}, hasattr={hasattr(config, 'ASSET_CONFIG')})")
+                logger.debug(
+                    f"[CONSERVATIVE][{symbol}] 📏 Using symbol threshold: {max_movement}%"
+                )
         
         # Reject if price already moved significantly
         if abs(movement_pct) > max_movement:
-            print(f"[CONSERVATIVE] ❌ Price Moved {abs(movement_pct):.2f}% - Late Entry Rejected")
+            _step_log(2, f"Price moved {abs(movement_pct):.2f}% - late entry rejected", emoji="❌")
             response["details"]["reason"] = f"Price already moved {abs(movement_pct):.2f}% - late entry rejected (max {max_movement}%)"
             response["details"]["movement_pct"] = round(movement_pct, 2)
             return response
@@ -179,7 +176,9 @@ class TradingStrategy:
         }
         
         if is_consolidating:
-            logger.debug(f"[STRATEGY] Consolidation detected: {range_low:.2f} - {range_high:.2f}")
+            logger.debug(
+                f"[CONSERVATIVE][{symbol}] 📦 Consolidation detected: {range_low:.2f} - {range_high:.2f}"
+            )
         
         # Optional: Require consolidation base
         require_base = getattr(config, 'REQUIRE_CONSOLIDATION_BASE', False)
@@ -191,7 +190,7 @@ class TradingStrategy:
             return response
         elif warn_no_base and not is_consolidating:
             # Warning mode: log but allow
-            logger.warning(f"⚠️ No consolidation base detected - entry quality may be lower")
+            logger.warning(f"[CONSERVATIVE][{symbol}] ⚠️ No consolidation base detected - entry quality may be lower")
             passed_checks.append("No Consolidation Base (Warning)")
         else:
             passed_checks.append("Consolidation Check Passed")
@@ -214,12 +213,12 @@ class TradingStrategy:
             # RSI Momentum Check (UP): RSI within valid range for momentum
             rsi_max_threshold = getattr(config, 'RSI_MAX_THRESHOLD', 75)
             if rsi_val < config.RSI_BUY_THRESHOLD:
-                 print(f"[STRATEGY] ⚠️ RSI Weak (UP): {rsi_val:.1f} < {config.RSI_BUY_THRESHOLD}")
+                 _step_log(3, f"RSI weak for UP: {rsi_val:.1f} < {config.RSI_BUY_THRESHOLD}", emoji="⚠️")
                  response["details"]["reason"] = f"RSI too weak for UP ({rsi_val:.1f} < {config.RSI_BUY_THRESHOLD})"
                  response["details"]["rsi"] = round(rsi_val, 2)
                  return response
             if rsi_val > rsi_max_threshold:
-                 print(f"[STRATEGY] ⚠️ RSI Overbought: {rsi_val:.1f} > {rsi_max_threshold}")
+                 _step_log(3, f"RSI overbought: {rsi_val:.1f} > {rsi_max_threshold}", emoji="⚠️")
                  response["details"]["reason"] = f"RSI Overbought ({rsi_val:.1f} > {rsi_max_threshold})"
                  return response
             
@@ -233,19 +232,19 @@ class TradingStrategy:
             # RSI Momentum Check (DOWN): RSI within valid range for momentum
             rsi_min_threshold = getattr(config, 'RSI_MIN_THRESHOLD', 25)
             if rsi_val > config.RSI_SELL_THRESHOLD:
-                 print(f"[STRATEGY] ⚠️ RSI Weak (DOWN): {rsi_val:.1f} > {config.RSI_SELL_THRESHOLD}")
+                 _step_log(3, f"RSI weak for DOWN: {rsi_val:.1f} > {config.RSI_SELL_THRESHOLD}", emoji="⚠️")
                  response["details"]["reason"] = f"RSI too weak for DOWN ({rsi_val:.1f} > {config.RSI_SELL_THRESHOLD})"
                  response["details"]["rsi"] = round(rsi_val, 2)
                  return response
             if rsi_val < rsi_min_threshold:
-                 print(f"[STRATEGY] ⚠️ RSI Oversold: {rsi_val:.1f} < {rsi_min_threshold}")
+                 _step_log(3, f"RSI oversold: {rsi_val:.1f} < {rsi_min_threshold}", emoji="⚠️")
                  response["details"]["reason"] = f"RSI Oversold ({rsi_val:.1f} < {rsi_min_threshold})"
                  return response
             
             passed_checks.append("RSI Momentum (DOWN)")
             
         else:
-            print(f"[CONSERVATIVE] ⚠️ Trend Conflict: W:{weekly_trend} | D:{daily_trend}")
+            _step_log(3, f"Trend conflict: W={weekly_trend} | D={daily_trend}", emoji="⚠️")
             response["details"]["reason"] = f"Trend Conflict - Weekly: {weekly_trend}, Daily: {daily_trend}"
             return response
         
@@ -266,7 +265,7 @@ class TradingStrategy:
         )
 
         if not target_level:
-            print("[CONSERVATIVE] ⚠️ No Target Found")
+            _step_log(4, "No target found", emoji="⚠️")
             # response["details"]["reason"] = "No clear Structure Level found for Target"
             # return response
             # Note: Previously this returned early. 
@@ -275,7 +274,7 @@ class TradingStrategy:
             return response
             
         if not sl_level:
-            print("[CONSERVATIVE] ⚠️ No Stop Loss Found")
+            _step_log(4, "No stop-loss found", emoji="⚠️")
             response["details"]["reason"] = "No clear Structure Swing Point found for Stop Loss"
             return response
 
@@ -295,7 +294,9 @@ class TradingStrategy:
             # Only skip if we are NOT in a breakout scenario
             # Breakout logic below might override this if we are crossing a level
             is_mid_zone = True
-            logger.debug(f"[STRATEGY] Price in middle zone - momentum breakout required for entry")
+            logger.debug(
+                f"[CONSERVATIVE][{symbol}] ⏸️ Price in middle zone - momentum breakout required for entry"
+            )
         else:
             is_mid_zone = False
             # Don't add to passed_checks yet - validate entry trigger first
@@ -341,12 +342,12 @@ class TradingStrategy:
                 response["details"]["reason"] = entry_reason
             return response
             
-        print("[CONSERVATIVE] ✅ Momentum Breakout Confirmed")
+        _step_log(4, "Momentum breakout confirmed", emoji="✅")
         passed_checks.append("Momentum Breakout Confirmed")
         
         # Document middle zone override if applicable
         if is_mid_zone:
-            logger.debug(f"⚠️ Entry in middle zone but breakout validated - entry quality: CAUTION")
+            logger.debug(f"[CONSERVATIVE][{symbol}] ⚠️ Middle-zone breakout validated - entry quality: caution")
             passed_checks.append("Momentum Override Middle Zone")
         else:
             passed_checks.append("Entry at Structure Boundary")
@@ -365,7 +366,7 @@ class TradingStrategy:
             rr_ratio = distance_to_tp / distance_to_sl
 
         if rr_ratio < self.min_rr_ratio:
-            print(f"[STRATEGY] ⚠️ R:R Too Low: 1:{rr_ratio:.2f} < 1:{self.min_rr_ratio}")
+            _step_log(5, f"R:R too low: 1:{rr_ratio:.2f} < 1:{self.min_rr_ratio}", emoji="⚠️")
             response["details"]["reason"] = f"Poor R:R Ratio ({rr_ratio:.2f} < {self.min_rr_ratio})"
             response["take_profit"] = target_level
             response["stop_loss"] = sl_level
@@ -414,6 +415,12 @@ class TradingStrategy:
             "rsi": round(rsi_val, 2),
             "adx": round(adx_val, 2)
         }
+
+        _step_log(
+            6,
+            f"Signal generated ({signal_direction}) | R:R {rr_ratio:.2f} | Confidence {response['confidence']:.0f}%",
+            emoji="🎯",
+        )
 
         return response
 
@@ -648,7 +655,10 @@ class TradingStrategy:
             dist_pct = abs(current_price - stop) / current_price * 100
             
             if dist_pct > self.max_sl_distance_pct:
-                logger.warning(f"⚠️ Structural SL too wide ({dist_pct:.2f}%). Clamping to {self.max_sl_distance_pct}% to secure entry.")
+                logger.warning(
+                    f"[CONSERVATIVE][{symbol}] ⚠️ Structural SL too wide ({dist_pct:.2f}%). "
+                    f"Clamping to {self.max_sl_distance_pct}%"
+                )
                 
                 # Clamp SL to the max allowed distance
                 if current_price > stop: # UP Trade: SL is below
@@ -726,9 +736,13 @@ class TradingStrategy:
             asset_threshold = asset_config.get('entry_distance_pct')
             if asset_threshold:
                 max_distance = asset_threshold
-                logger.debug(f"[STRATEGY] Using {symbol}-specific entry distance: {max_distance}%")
+                logger.debug(
+                    f"[CONSERVATIVE][{symbol}] 📏 Using {symbol}-specific entry distance: {max_distance}%"
+                )
             else:
-                logger.debug(f"[STRATEGY] No entry_distance_pct for {symbol}, using global {max_distance}%")
+                logger.debug(
+                    f"[CONSERVATIVE][{symbol}] 📏 No entry_distance_pct configured; using global {max_distance}%"
+                )
         
         if direction == "UP":
             # For UP: Entry should be above level

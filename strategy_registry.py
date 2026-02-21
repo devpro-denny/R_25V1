@@ -5,6 +5,7 @@ Central registry mapping strategy names to implementation classes
 
 import logging
 import os
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +23,25 @@ STRATEGY_REGISTRY = {
 }
 
 
+def normalize_strategy_name(strategy_name: str = "Conservative") -> str:
+    """
+    Normalize strategy aliases/casing to canonical registry keys.
+    """
+    if not strategy_name:
+        return "Conservative"
+
+    raw = str(strategy_name).strip()
+    key = re.sub(r"[^a-z0-9]+", "", raw.lower())
+    aliases = {
+        "conservative": "Conservative",
+        "scalping": "Scalping",
+        "scalp": "Scalping",
+        "risefall": "RiseFall",
+        "rf": "RiseFall",
+    }
+    return aliases.get(key, raw)
+
+
 def get_strategy(strategy_name: str = "Conservative"):
     """
     Get strategy and risk manager classes for a given strategy name.
@@ -33,8 +53,7 @@ def get_strategy(strategy_name: str = "Conservative"):
         Tuple of (Strategy class, RiskManager class)
         Returns Conservative as safe default if unknown strategy
     """
-    if not strategy_name:
-        strategy_name = "Conservative"
+    strategy_name = normalize_strategy_name(strategy_name)
     
     # Check if scalping is enabled
     if strategy_name == "Scalping":

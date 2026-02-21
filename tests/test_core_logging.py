@@ -7,7 +7,7 @@ import pytest
 from app.core.logging import WebSocketLoggingHandler
 
 
-def _record(name: str, user_id: str, msg: str = "hello"):
+def _record(name: str, user_id: str, msg: str = "hello", bot_type: str | None = None):
     rec = logging.LogRecord(
         name=name,
         level=logging.INFO,
@@ -18,6 +18,8 @@ def _record(name: str, user_id: str, msg: str = "hello"):
         exc_info=None,
     )
     rec.user_id = user_id
+    if bot_type is not None:
+        rec.bot_type = bot_type
     return rec
 
 
@@ -67,3 +69,18 @@ async def test_ws_logging_handler_drops_decorative_divider_logs():
         handler.emit(_record("risefallbot", "u1", "============================================================"))
         await asyncio.sleep(0)
         assert mock_broadcast.await_count == 0
+
+
+@pytest.mark.asyncio
+async def test_ws_logging_handler_accepts_lowercase_scalping_status_strategy():
+    handler = WebSocketLoggingHandler(status_cache_ttl_seconds=0)
+    handler.setFormatter(logging.Formatter("%(message)s"))
+
+    with patch("app.bot.manager.bot_manager.get_status", return_value={"is_running": True, "active_strategy": "scalping"}), \
+         patch("app.core.logging.event_manager.broadcast", new=AsyncMock()) as mock_broadcast:
+        handler.emit(_record("TradingBot", "u1", "[SCALPING] line", bot_type="scalping"))
+        await asyncio.sleep(0)
+
+        assert mock_broadcast.await_count == 1
+        payload = mock_broadcast.await_args.args[0]
+        assert payload["bot"] == "scalping"

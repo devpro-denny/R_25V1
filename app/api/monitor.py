@@ -18,6 +18,22 @@ from app.schemas.common import PerformanceResponse
 router = APIRouter()
 
 
+def _normalize_strategy_name(strategy_name: str | None) -> str | None:
+    """Normalize strategy names from profile/status payloads."""
+    if not strategy_name:
+        return None
+
+    key = re.sub(r"[^a-z0-9]+", "", str(strategy_name).strip().lower())
+    aliases = {
+        "conservative": "Conservative",
+        "scalping": "Scalping",
+        "scalp": "Scalping",
+        "risefall": "RiseFall",
+        "rf": "RiseFall",
+    }
+    return aliases.get(key, str(strategy_name).strip())
+
+
 def _safe_user_component(user_id: str) -> str:
     text = str(user_id) if user_id is not None else "anonymous"
     cleaned = re.sub(r"[^A-Za-z0-9._-]", "_", text).strip("._")
@@ -28,15 +44,16 @@ def _resolve_active_strategy(status: dict) -> str | None:
     """Resolve active strategy from bot status payload."""
     active = status.get("active_strategy")
     if active:
-        return active
+        return _normalize_strategy_name(active)
     cfg = status.get("config")
     if isinstance(cfg, dict):
-        return cfg.get("strategy")
+        return _normalize_strategy_name(cfg.get("strategy"))
     return None
 
 
 def _resolve_log_files(active_strategy: str, user_id: str) -> list[str]:
     """Return candidate log files for a strategy (new path first, legacy fallback last)."""
+    active_strategy = _normalize_strategy_name(active_strategy)
     user_key = _safe_user_component(user_id)
     if active_strategy == "Conservative":
         return [
@@ -79,7 +96,7 @@ def _should_include_log_line(line: str, user_id: str, active_strategy: str) -> b
     """
     if f"[{user_id}]" in line or "[None]" in line:
         return True
-    if active_strategy == "RiseFall":
+    if _normalize_strategy_name(active_strategy) == "RiseFall":
         # Legacy RF log format may omit user_id context in message prefix.
         return True
     # Backward compatibility for older multiplier lines with no metadata tags.

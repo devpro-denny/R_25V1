@@ -283,3 +283,29 @@ def test_monitor_logs_uses_user_specific_file_first(mock_auth):
         assert response.status_code == 200
         mock_open.assert_called_once_with(expected_path, "r", encoding="utf-8")
         assert len(response.json()["logs"]) == 1
+
+
+def test_monitor_logs_normalizes_lowercase_scalping_strategy(mock_auth):
+    expected_path = "logs/scalping/u123.log"
+
+    def _exists(path):
+        normalized = str(path).replace("\\", "/")
+        return normalized == expected_path
+
+    with patch("app.api.monitor.os.path.exists", side_effect=_exists), \
+         patch("builtins.open") as mock_open, \
+         patch("app.api.monitor.bot_manager") as mock_manager:
+        mock_file = MagicMock()
+        mock_file.__enter__.return_value.readlines.return_value = [
+            "2026-02-21 13:10:36 | INFO | [scalping] [u123] User file line\n",
+        ]
+        mock_open.return_value = mock_file
+        mock_manager.get_status.return_value = {
+            "is_running": True,
+            "active_strategy": "scalping",
+        }
+
+        response = client.get("/api/v1/monitor/logs?lines=10")
+        assert response.status_code == 200
+        mock_open.assert_called_once_with(expected_path, "r", encoding="utf-8")
+        assert len(response.json()["logs"]) == 1
