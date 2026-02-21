@@ -44,7 +44,7 @@ RF_STOCH_OVERBOUGHT = 80  # Above this → PUT confirmation
 
 # ==================== CONTRACT PARAMETERS ====================
 RF_DEFAULT_STAKE = 1.00      # Default stake in USD
-RF_CONTRACT_DURATION = 5     # Contract duration
+RF_CONTRACT_DURATION = 2     # Contract duration
 RF_DURATION_UNIT = "m"       # Duration unit: minutes
 
 # ==================== RISK MANAGEMENT ====================

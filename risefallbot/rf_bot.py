@@ -303,6 +303,19 @@ async def run(stake: Optional[float] = None, api_token: Optional[str] = None,
 
     if not api_token:
         logger.error("❌ No API token found (profile or DERIV_API_TOKEN env) — cannot start Rise/Fall bot")
+        await event_manager.broadcast({
+            "type": "error",
+            "message": "Rise/Fall startup failed: missing API token",
+            "timestamp": datetime.now().isoformat(),
+            "account_id": user_id,
+        })
+        await event_manager.broadcast({
+            "type": "bot_status",
+            "status": "stopped",
+            "message": "Rise/Fall bot not started: missing API token",
+            "timestamp": datetime.now().isoformat(),
+            "account_id": user_id,
+        })
         return
 
     # --- Instantiate components ---
@@ -314,10 +327,36 @@ async def run(stake: Optional[float] = None, api_token: Optional[str] = None,
     # --- Connect ---
     if not await data_fetcher.connect():
         logger.error("❌ DataFetcher connection failed — aborting")
+        await event_manager.broadcast({
+            "type": "error",
+            "message": "Rise/Fall startup failed: market data connection failed",
+            "timestamp": datetime.now().isoformat(),
+            "account_id": user_id,
+        })
+        await event_manager.broadcast({
+            "type": "bot_status",
+            "status": "stopped",
+            "message": "Rise/Fall bot not started: data connection failed",
+            "timestamp": datetime.now().isoformat(),
+            "account_id": user_id,
+        })
         return
     if not await trade_engine.connect():
         logger.error("❌ RFTradeEngine connection failed — aborting")
         await data_fetcher.disconnect()
+        await event_manager.broadcast({
+            "type": "error",
+            "message": "Rise/Fall startup failed: trade engine connection failed",
+            "timestamp": datetime.now().isoformat(),
+            "account_id": user_id,
+        })
+        await event_manager.broadcast({
+            "type": "bot_status",
+            "status": "stopped",
+            "message": "Rise/Fall bot not started: trade engine connection failed",
+            "timestamp": datetime.now().isoformat(),
+            "account_id": user_id,
+        })
         return
 
     # Get account balance for notification
@@ -473,7 +512,35 @@ async def run(stake: Optional[float] = None, api_token: Optional[str] = None,
             # loop is blocked. This is NOT a conditional skip — the
             # asyncio.Lock prevents any race condition.
             # ═══════════════════════════════════════════════════════════
-            if risk_manager.is_trade_active():
+            if risk_manager.is_halted():
+                elapsed = (datetime.now() - risk_manager._halt_timestamp).total_seconds()
+                logger.error(
+                    f"[RF] 🚨 SYSTEM HALTED — no scanning until halt is cleared | "
+                    f"Reason: {risk_manager._halt_reason} | "
+                    f"Duration: {elapsed:.0f}s"
+                )
+                await _broadcast_rf_decision(
+                    event_manager=event_manager,
+                    user_id=user_id,
+                    symbol="SYSTEM",
+                    phase="risk",
+                    decision="system_locked",
+                    reason=f"System locked by risk rules: {risk_manager._halt_reason}",
+                    details={"duration_seconds": int(elapsed)},
+                    severity="error",
+                    min_interval_seconds=10,
+                )
+                await event_manager.broadcast({
+                    "type": "bot_status",
+                    "status": "running",
+                    "message": (
+                        f"🚨 SYSTEM LOCKED: {risk_manager._halt_reason}. "
+                        "Scanning paused until lock clears."
+                    ),
+                    "timestamp": datetime.now().isoformat(),
+                    "account_id": user_id,
+                })
+            elif risk_manager.is_trade_active():
                 active_info = risk_manager.get_active_trade_info()
                 active_symbol = active_info.get("symbol", "unknown")
                 active_contract = active_info.get("contract_id", "unknown")
@@ -482,16 +549,36 @@ async def run(stake: Optional[float] = None, api_token: Optional[str] = None,
                     f"Mutex held: {risk_manager.trade_mutex.locked()} | "
                     f"Skipping scan until lifecycle completes"
                 )
-            elif risk_manager.is_halted():
-                elapsed = (datetime.now() - risk_manager._halt_timestamp).total_seconds()
-                logger.error(
-                    f"[RF] 🚨 SYSTEM HALTED — no scanning until halt is cleared | "
-                    f"Reason: {risk_manager._halt_reason} | "
-                    f"Duration: {elapsed:.0f}s"
+                await _broadcast_rf_decision(
+                    event_manager=event_manager,
+                    user_id=user_id,
+                    symbol=active_symbol,
+                    phase="monitoring",
+                    decision="lifecycle_active",
+                    reason=(
+                        f"Monitoring {active_symbol}#{active_contract}; "
+                        "new opportunities are blocked until close"
+                    ),
+                    details={"contract_id": active_contract},
+                    min_interval_seconds=10,
                 )
             else:
                 # No active trade, system not halted — safe to scan
-                logger.debug(f"[RF] ✅ No active trades | Mutex free | Scanning {len(rf_config.RF_SYMBOLS)} symbols...")
+                cycle_ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                logger.info(
+                    f"[RF] CYCLE #{cycle} | {cycle_ts} | "
+                    f"Checking trading opportunities across {len(rf_config.RF_SYMBOLS)} symbols"
+                )
+                await _broadcast_rf_decision(
+                    event_manager=event_manager,
+                    user_id=user_id,
+                    symbol="ALL",
+                    phase="scan",
+                    decision="checking_opportunities",
+                    reason=f"Checking opportunities across {len(rf_config.RF_SYMBOLS)} symbols",
+                    details={"cycle": cycle, "symbols": len(rf_config.RF_SYMBOLS)},
+                    min_interval_seconds=0,
+                )
                 
                 for symbol in rf_config.RF_SYMBOLS:
                     # If a trade became active during this loop iteration, stop immediately
@@ -509,6 +596,7 @@ async def run(stake: Optional[float] = None, api_token: Optional[str] = None,
                         break
 
                     try:
+                        logger.info(f"[RF][{symbol}] SCAN | Checking trading opportunities")
                         await _process_symbol(
                             symbol, strategy, risk_manager, data_fetcher,
                             trade_engine, stake, user_id, event_manager,
@@ -625,7 +713,13 @@ async def run(stake: Optional[float] = None, api_token: Optional[str] = None,
         # Release cross-process session lock
         await _release_session_lock(user_id)
 
-        logger.info("🛑 Rise/Fall bot stopped")
+        stop_message = "Rise/Fall bot stopped"
+        if risk_manager.is_halted():
+            stop_message = (
+                f"Rise/Fall bot stopped with active system lock: "
+                f"{risk_manager._halt_reason}"
+            )
+        logger.info(f"🛑 {stop_message}")
 
         # Send final statistics via Telegram
         if TELEGRAM_ENABLED:
@@ -639,7 +733,8 @@ async def run(stake: Optional[float] = None, api_token: Optional[str] = None,
         await event_manager.broadcast({
             "type": "bot_status",
             "status": "stopped",
-            "message": "Rise/Fall bot stopped",
+            "message": stop_message,
+            "timestamp": datetime.now().isoformat(),
             "account_id": user_id,
         })
 
@@ -768,7 +863,10 @@ async def _process_symbol(
     # ── Pre-check: Fetch data and check for signal BEFORE acquiring lock ──
     # (avoid holding the lock during data fetching / analysis)
     ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    logger.debug(f"[RF][{symbol}] {ts} | Pre-scan: fetching 1m candle data")
+    logger.info(
+        f"[RF][{symbol}] SCAN | {ts} | "
+        f"Checking trading opportunities (fetching {rf_config.RF_TIMEFRAME} candles)"
+    )
 
     df = await data_fetcher.fetch_timeframe(
         symbol, rf_config.RF_TIMEFRAME, count=rf_config.RF_CANDLE_COUNT
@@ -790,6 +888,7 @@ async def _process_symbol(
     # Strategy analysis
     signal = strategy.analyze(data_1m=df, symbol=symbol, stake=stake)
     if signal is None:
+        logger.info(f"[RF][{symbol}] SCAN | No opportunity: strategy conditions not met")
         await _broadcast_rf_decision(
             event_manager=event_manager,
             user_id=user_id,
@@ -810,6 +909,10 @@ async def _process_symbol(
     stake_val = signal["stake"]
     duration = signal["duration"]
     duration_unit = signal["duration_unit"]
+    logger.info(
+        f"[RF][{symbol}] ✅ Opportunity detected | "
+        f"direction={direction} stake=${stake_val} duration={duration}{duration_unit}"
+    )
 
     # ── Pre-check: Stake validation (use actual signal stake) ──
     max_stake = getattr(rf_config, "RF_MAX_STAKE", 100.0)
@@ -942,6 +1045,10 @@ async def _process_symbol(
             return  # finally block will release lock
 
         contract_id = result["contract_id"]
+        logger.info(
+            f"[RF] STEP 2/6 | {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} | "
+            f"EXECUTION CONFIRMED {symbol}#{contract_id} direction={direction}"
+        )
 
         # Update locked trade info with real contract ID
         risk_manager._locked_trade_info = {"contract_id": contract_id, "symbol": symbol}
@@ -996,6 +1103,16 @@ async def _process_symbol(
             f"[RF] STEP 4/6 | {ts} | MONITORING contract #{contract_id} "
             f"— system LOCKED for other trades"
         )
+        await _broadcast_rf_decision(
+            event_manager=event_manager,
+            user_id=user_id,
+            symbol=symbol,
+            phase="monitoring",
+            decision="monitoring_trade",
+            reason=f"Monitoring {symbol}#{contract_id} until settlement",
+            details={"contract_id": contract_id, "direction": direction},
+            min_interval_seconds=0,
+        )
 
         settlement = await trade_engine.wait_for_result(contract_id, stake=stake_val)
 
@@ -1023,6 +1140,21 @@ async def _process_symbol(
                 "status": status,
                 "symbol": symbol,
             })
+
+        logger.info(
+            f"[RF] CLOSING | contract={contract_id} symbol={symbol} "
+            f"status={status} pnl={pnl:+.2f} closure={closure_reason}"
+        )
+        await _broadcast_rf_decision(
+            event_manager=event_manager,
+            user_id=user_id,
+            symbol=symbol,
+            phase="closing",
+            decision="closing_trade",
+            reason=f"Closing {symbol}#{contract_id}: status={status}, pnl={pnl:+.2f}",
+            details={"contract_id": contract_id, "status": status, "pnl": pnl},
+            min_interval_seconds=0,
+        )
 
         # ── STEP 5: DB write with retry — lock stays held until confirmed ──
         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -1083,6 +1215,21 @@ async def _process_symbol(
             "timestamp": datetime.now().isoformat(),
             "account_id": user_id,
         })
+        await _broadcast_rf_decision(
+            event_manager=event_manager,
+            user_id=user_id,
+            symbol=symbol,
+            phase="closing",
+            decision="trade_closed",
+            reason=f"{symbol} trade closed with P&L {pnl:+.2f}",
+            details={
+                "contract_id": contract_id,
+                "status": status,
+                "pnl": pnl,
+                "closure_reason": closure_reason,
+            },
+            min_interval_seconds=0,
+        )
 
         # Notify via Telegram
         if TELEGRAM_ENABLED:
@@ -1154,6 +1301,7 @@ async def _process_symbol(
         if risk_manager.is_halted():
             # Check if this is a transient error that might recover
             halt_reason_lower = risk_manager._halt_reason.lower()
+            halt_reason = risk_manager._halt_reason
             is_transient = any(x in halt_reason_lower for x in [
                 "trade execution failed",
                 "lifecycle error",
@@ -1165,20 +1313,59 @@ async def _process_symbol(
                 logger.warning(
                     f"[RF] ⚠️ System halted due to transient error. "
                     f"Releasing lock to allow recovery on next cycle. "
-                    f"Reason: {risk_manager._halt_reason}"
+                    f"Reason: {halt_reason}"
                 )
                 risk_manager.release_trade_lock(
                     reason=f"transient error recovery — {halt_reason_lower}"
                 )
                 # Auto-clear halt so next cycle can proceed
                 risk_manager.clear_halt()
+                await event_manager.broadcast({
+                    "type": "trade_lock_released",
+                    "symbol": symbol,
+                    "message": (
+                        f"🔓 Trade lock released for transient error recovery on {symbol} "
+                        f"(reason: {halt_reason})"
+                    ),
+                    "timestamp": datetime.now().isoformat(),
+                    "account_id": user_id,
+                })
+                await _broadcast_rf_decision(
+                    event_manager=event_manager,
+                    user_id=user_id,
+                    symbol=symbol,
+                    phase="risk",
+                    decision="lock_released",
+                    reason=f"Transient lock released for recovery: {halt_reason}",
+                    min_interval_seconds=0,
+                )
             else:
                 # Permanent errors (DB write failure, critical violations): hold lock
                 logger.error(
                     f"[RF] 🚨 System halted due to critical error. "
                     f"Trade lock HELD — manual intervention may be required. "
-                    f"Reason: {risk_manager._halt_reason}"
+                    f"Reason: {halt_reason}"
                 )
+                await _broadcast_rf_decision(
+                    event_manager=event_manager,
+                    user_id=user_id,
+                    symbol=symbol,
+                    phase="risk",
+                    decision="system_locked",
+                    reason=f"System lock held for {symbol}: {halt_reason}",
+                    severity="error",
+                    min_interval_seconds=0,
+                )
+                await event_manager.broadcast({
+                    "type": "bot_status",
+                    "status": "running",
+                    "message": (
+                        f"🚨 SYSTEM LOCKED: {halt_reason}. "
+                        "Trade lock remains held until manual intervention."
+                    ),
+                    "timestamp": datetime.now().isoformat(),
+                    "account_id": user_id,
+                })
         else:
             # Broadcast lock released
             await event_manager.broadcast({
