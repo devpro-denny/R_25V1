@@ -17,6 +17,17 @@ from app.schemas.common import PerformanceResponse
 
 router = APIRouter()
 
+def _is_decorative_log_line(line: str) -> bool:
+    """Return True for visual separators like ======= to keep UI logs clean."""
+    if not line:
+        return False
+    cleaned = line.strip()
+    # Keep only the message segment when line includes timestamp/metadata pipes.
+    if "|" in cleaned:
+        cleaned = cleaned.split("|")[-1].strip()
+    cleaned = re.sub(r"^\[[^\]]+\]\s*", "", cleaned)
+    return bool(re.fullmatch(r"[=\-_*~]{8,}", cleaned))
+
 
 @router.get("/signals")
 async def get_recent_signals(
@@ -88,6 +99,8 @@ async def get_recent_logs(
                         stripped = line.strip()
                         if not stripped:
                             continue
+                        if _is_decorative_log_line(stripped):
+                            continue
                         if f"[{user_id}]" in stripped or "[None]" in stripped or "[" not in stripped:
                             filtered_logs.append(stripped)
 
@@ -112,6 +125,8 @@ async def get_recent_logs(
                                 stripped = f"{ts} | {level} | [RF] {msg}"
                             else:
                                 continue
+                        if _is_decorative_log_line(stripped):
+                            continue
                         filtered_logs.append(stripped)
 
         filtered_logs.sort()

@@ -55,3 +55,15 @@ async def test_ws_logging_handler_drops_mixed_or_stopped_bot_logs():
             handler.emit(_record("risefallbot.strategy", "u1", "rf-line"))
             await asyncio.sleep(0)
             assert mock_broadcast.await_count == 0
+
+
+@pytest.mark.asyncio
+async def test_ws_logging_handler_drops_decorative_divider_logs():
+    handler = WebSocketLoggingHandler(status_cache_ttl_seconds=0)
+    handler.setFormatter(logging.Formatter("%(message)s"))
+
+    with patch("app.bot.manager.bot_manager.get_status", return_value={"is_running": True, "active_strategy": "RiseFall"}), \
+         patch("app.core.logging.event_manager.broadcast", new=AsyncMock()) as mock_broadcast:
+        handler.emit(_record("risefallbot", "u1", "============================================================"))
+        await asyncio.sleep(0)
+        assert mock_broadcast.await_count == 0

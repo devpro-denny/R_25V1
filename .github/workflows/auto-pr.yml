@@ -1,0 +1,69 @@
+name: Auto Create PR
+
+on:
+  push:
+    branches-ignore:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: auto-pr-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  auto_pr:
+    name: Create Pull Request
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+
+    steps:
+      - name: Create PR if missing
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const branch = context.ref.replace('refs/heads/', '');
+            const base = 'main';
+
+            if (branch === base) {
+              core.info('Push was to base branch; skipping PR creation.');
+              return;
+            }
+
+            const { data: openPrs } = await github.rest.pulls.list({
+              owner,
+              repo,
+              state: 'open',
+              head: `${owner}:${branch}`,
+              base
+            });
+
+            if (openPrs.length > 0) {
+              core.info(`Open PR already exists: ${openPrs[0].html_url}`);
+              return;
+            }
+
+            const title = `Auto PR: ${branch}`;
+            const body = [
+              'Automated pull request created by GitHub Actions.',
+              '',
+              `- Source branch: \`${branch}\``,
+              `- Target branch: \`${base}\``,
+            ].join('\n');
+
+            const { data: pr } = await github.rest.pulls.create({
+              owner,
+              repo,
+              title,
+              head: branch,
+              base,
+              body,
+              maintainer_can_modify: true,
+            });
+
+            core.info(`Created PR #${pr.number}: ${pr.html_url}`);

@@ -2,6 +2,7 @@ import logging
 import sys
 import asyncio
 import time
+import re
 from typing import Optional
 
 from app.core.context import user_id_var
@@ -57,6 +58,18 @@ class WebSocketLoggingHandler(logging.Handler):
         self._status_cache[user_id] = {"bot_type": bot_type, "ts": now}
         return bot_type
 
+    @staticmethod
+    def _is_decorative_log_line(msg: str) -> bool:
+        """
+        Suppress decorative divider lines (e.g. =======) for frontend readability.
+        """
+        if not msg:
+            return False
+        cleaned = msg.strip()
+        # Handle messages like "[RF] ======="
+        cleaned = re.sub(r"^\[[^\]]+\]\s*", "", cleaned)
+        return bool(re.fullmatch(r"[=\-_*~]{8,}", cleaned))
+
     def emit(self, record):
         try:
             user_id = getattr(record, 'user_id', None)
@@ -71,7 +84,11 @@ class WebSocketLoggingHandler(logging.Handler):
             if not running_bot or record_bot != running_bot:
                 return
 
-            msg = self.format(record)
+            # Use raw message (without duplicated timestamp/name prefixes)
+            # because frontend already renders its own timestamp/level columns.
+            msg = record.getMessage()
+            if self._is_decorative_log_line(msg):
+                return
             
             # Broadcast directly using event manager
             # We use create_task because emit is synchronous

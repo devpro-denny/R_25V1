@@ -291,10 +291,8 @@ async def run(stake: Optional[float] = None, api_token: Optional[str] = None,
     from app.bot.events import event_manager
     from app.services.trades_service import UserTradesService
 
-    logger.info("=" * 60)
-    logger.info("🚀 Rise/Fall Scalping Bot Starting")
-    logger.info("   ⚠️ STRICT SINGLE-TRADE ENFORCEMENT: asyncio.Lock mutex")
-    logger.info("=" * 60)
+    logger.info("[RF] 🚀 Rise/Fall scalping bot starting")
+    logger.info("[RF] 🔒 Strict single-trade enforcement enabled (asyncio.Lock mutex)")
 
     # Resolve user config: explicit params > Supabase profile > env vars
     user_cfg = await _fetch_user_config()
@@ -337,11 +335,11 @@ async def run(stake: Optional[float] = None, api_token: Optional[str] = None,
             except Exception as e:
                 logger.error(f"❌ Telegram notification failed: {e}")
 
-    logger.info(f"📊 Symbols: {rf_config.RF_SYMBOLS}")
-    logger.info(f"⏱️ Scan interval: {rf_config.RF_SCAN_INTERVAL}s")
-    logger.info(f"💵 Stake: ${stake}")
-    logger.info(f"📏 Contract: {rf_config.RF_CONTRACT_DURATION}{rf_config.RF_DURATION_UNIT}")
-    logger.info("=" * 60)
+    logger.info(
+        f"[RF] ⚙️ Config | symbols={rf_config.RF_SYMBOLS} "
+        f"scan={rf_config.RF_SCAN_INTERVAL}s stake=${stake} "
+        f"contract={rf_config.RF_CONTRACT_DURATION}{rf_config.RF_DURATION_UNIT}"
+    )
 
     global _running
     # ────────────────────────────────────────────────────────────────────────
@@ -420,9 +418,7 @@ async def run(stake: Optional[float] = None, api_token: Optional[str] = None,
         while _running:
             cycle += 1
             await _refresh_session_lock(user_id)
-            logger.info("=" * 60)
-            logger.info(f"[RF] CYCLE #{cycle} | {datetime.now().strftime('%H:%M:%S')}")
-            logger.info("=" * 60)
+            logger.debug(f"[RF] Cycle #{cycle} | {datetime.now().strftime('%H:%M:%S')}")
 
             # Daily stats reset at midnight
             risk_manager.ensure_daily_reset_if_needed()
@@ -495,7 +491,7 @@ async def run(stake: Optional[float] = None, api_token: Optional[str] = None,
                 )
             else:
                 # No active trade, system not halted — safe to scan
-                logger.info(f"[RF] ✅ No active trades | Mutex free | Scanning {len(rf_config.RF_SYMBOLS)} symbols...")
+                logger.debug(f"[RF] ✅ No active trades | Mutex free | Scanning {len(rf_config.RF_SYMBOLS)} symbols...")
                 
                 for symbol in rf_config.RF_SYMBOLS:
                     # If a trade became active during this loop iteration, stop immediately
@@ -523,7 +519,7 @@ async def run(stake: Optional[float] = None, api_token: Optional[str] = None,
 
             # Log summary
             stats = risk_manager.get_statistics()
-            logger.info(
+            logger.debug(
                 f"[RF] Cycle #{cycle} done | "
                 f"trades={stats['trades_today']} "
                 f"W={stats['wins']} L={stats['losses']} "
@@ -772,7 +768,7 @@ async def _process_symbol(
     # ── Pre-check: Fetch data and check for signal BEFORE acquiring lock ──
     # (avoid holding the lock during data fetching / analysis)
     ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    logger.info(f"[RF][{symbol}] {ts} | Pre-scan: fetching 1m candle data")
+    logger.debug(f"[RF][{symbol}] {ts} | Pre-scan: fetching 1m candle data")
 
     df = await data_fetcher.fetch_timeframe(
         symbol, rf_config.RF_TIMEFRAME, count=rf_config.RF_CANDLE_COUNT
