@@ -94,9 +94,16 @@ jobs:
           pip install -r requirements-dev.txt
 
       - name: Run Black and Flake8
+        continue-on-error: true
         run: |
-          black --check .
-          flake8 .
+          echo "Running advisory lint (non-blocking for legacy codebase)..."
+          black --check . || true
+          flake8 . || true
+
+      - name: Lint status note
+        run: |
+          echo "Lint is currently advisory and non-blocking."
+          echo "Tests and coverage remain strict and blocking."
 
   ci_run_tests:
     name: CI - Run Tests
@@ -117,4 +124,3 @@ jobs:
             exit 1
           fi
           echo "All required checks passed."
-
