@@ -31,6 +31,7 @@ ta==0.11.0
 python-telegram-bot==22.5
 
 # Environment Variables
+python-dotenv>=1.0.1
 # HTTP Client
 httpx==0.27.2
 
