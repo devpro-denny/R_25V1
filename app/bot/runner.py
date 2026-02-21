@@ -462,6 +462,7 @@ class BotRunner:
         return {
             "status": self.status.value,
             "is_running": self.is_running,
+            "active_strategy": self.active_strategy,
             "uptime_seconds": uptime,
             "start_time": self.start_time.isoformat() if self.start_time else None,
             "error_message": self.error_message,
