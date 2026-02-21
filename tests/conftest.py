@@ -3,12 +3,29 @@ import sys
 import pytest
 import pandas as pd
 import numpy as np
-from unittest.mock import MagicMock, AsyncMock
+from unittest.mock import MagicMock, AsyncMock, patch
 
 # Ensure project root is on sys.path
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
+
+# Bootstrap required env vars at import-time so modules imported during
+# test collection (before fixtures execute) can initialize safely.
+_TEST_ENV_DEFAULTS = {
+    "API_TOKEN": "fake_token",
+    "APP_ID": "1089",
+    "SUPABASE_URL": "https://fake.supabase.co",
+    "SUPABASE_SERVICE_ROLE_KEY": (
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9."
+        "eyJyb2xlIjoic2VydmljZV9yb2xlIiwiaXNzIjoic3VwYWJhc2UiLCJleHAiOjQ3NjUxMzI4MDB9."
+        "testsignature"
+    ),
+    "TELEGRAM_BOT_TOKEN": "fake_bot_token",
+    "TELEGRAM_CHAT_ID": "12345678",
+}
+for _key, _value in _TEST_ENV_DEFAULTS.items():
+    os.environ.setdefault(_key, _value)
 
 @pytest.fixture(autouse=True)
 def mock_env_vars(monkeypatch):
@@ -16,7 +33,14 @@ def mock_env_vars(monkeypatch):
     monkeypatch.setenv("API_TOKEN", "fake_token")
     monkeypatch.setenv("APP_ID", "1089")
     monkeypatch.setenv("SUPABASE_URL", "https://fake.supabase.co")
-    monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "fake_key")
+    monkeypatch.setenv(
+        "SUPABASE_SERVICE_ROLE_KEY",
+        (
+            "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9."
+            "eyJyb2xlIjoic2VydmljZV9yb2xlIiwiaXNzIjoic3VwYWJhc2UiLCJleHAiOjQ3NjUxMzI4MDB9."
+            "testsignature"
+        ),
+    )
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "fake_bot_token")
     monkeypatch.setenv("TELEGRAM_CHAT_ID", "12345678")
 
