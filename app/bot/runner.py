@@ -16,29 +16,43 @@ from enum import Enum
 
 # Import existing bot modules
 from data_fetcher import DataFetcher
-from strategy import TradingStrategy
 from trade_engine import TradeEngine
-from risk_manager import RiskManager
 import config
 
 from app.bot.state import BotState
 from app.bot.events import event_manager
 from app.bot.telegram_bridge import telegram_bridge
-from app.core.context import user_id_var
+from app.core.context import user_id_var, bot_type_var
 from app.services.trades_service import UserTradesService  # ? NEW IMPORT
 from functools import wraps
+
+
+def _strategy_to_bot_type(strategy_name: Optional[str]) -> str:
+    value = (strategy_name or "").strip().lower()
+    if value == "scalping":
+        return "scalping"
+    if value == "conservative":
+        return "conservative"
+    if value == "risefall":
+        return "risefall"
+    return "system"
+
 
 def with_user_context(func):
     @wraps(func)
     async def wrapper(self, *args, **kwargs):
-        token = None
+        user_token = None
+        bot_token = None
         if self.account_id:
-            token = user_id_var.set(self.account_id)
+            user_token = user_id_var.set(self.account_id)
+        bot_token = bot_type_var.set(_strategy_to_bot_type(self._get_strategy_name()))
         try:
             return await func(self, *args, **kwargs)
         finally:
-            if token:
-                user_id_var.reset(token)
+            if user_token:
+                user_id_var.reset(user_token)
+            if bot_token:
+                bot_type_var.reset(bot_token)
     return wrapper
 
 from utils import setup_logger
@@ -111,7 +125,13 @@ class BotRunner:
         
         # User Configurable Settings
         self.user_stake: Optional[float] = None
-        self.active_strategy: str = "Conservative" # Default strategy
+        if self.strategy and hasattr(self.strategy, "get_strategy_name"):
+            try:
+                self.active_strategy = self.strategy.get_strategy_name()
+            except Exception:
+                self.active_strategy = "Conservative"
+        else:
+            self.active_strategy = "Conservative"
         
         # Scanning statistics
         self.scan_count = 0
@@ -126,6 +146,9 @@ class BotRunner:
         # Telegram bridge
         self.telegram_bridge = telegram_bridge
 
+        # Sync per-strategy market scope on init.
+        self._sync_strategy_scope()
+
     def _get_strategy_name(self) -> str:
         """Resolve strategy name safely for structured decision events."""
         try:
@@ -133,7 +156,29 @@ class BotRunner:
                 return self.strategy.get_strategy_name()
         except Exception:
             pass
-        return self.active_strategy or "Unknown"
+        return getattr(self, "active_strategy", "Unknown") or "Unknown"
+
+    def _sync_strategy_scope(self) -> None:
+        """Bind runner symbol universe/config to currently injected strategy."""
+        if self.strategy and hasattr(self.strategy, "get_symbols"):
+            try:
+                self.symbols = list(self.strategy.get_symbols())
+            except Exception:
+                self.symbols = list(config.SYMBOLS)
+        else:
+            self.symbols = list(config.SYMBOLS)
+
+        if self.strategy and hasattr(self.strategy, "get_asset_config"):
+            try:
+                self.asset_config = dict(self.strategy.get_asset_config())
+            except Exception:
+                self.asset_config = dict(config.ASSET_CONFIG)
+        else:
+            self.asset_config = dict(config.ASSET_CONFIG)
+
+        # Keep symbol counters aligned with active symbol universe.
+        self.signals_by_symbol = {symbol: self.signals_by_symbol.get(symbol, 0) for symbol in self.symbols}
+        self.errors_by_symbol = {symbol: self.errors_by_symbol.get(symbol, 0) for symbol in self.symbols}
 
     def _should_emit_decision(
         self, key: str, fingerprint: str, min_interval_seconds: int = 20
@@ -221,6 +266,9 @@ class BotRunner:
         
         if strategy_name:
             self.active_strategy = strategy_name
+
+        # Ensure runner scope and logging context reflect active strategy.
+        self._sync_strategy_scope()
         
         # STRICT ENFORCEMENT: User Stake Must Be Present
         if self.user_stake is None:
@@ -1099,7 +1147,7 @@ class BotRunner:
         Monitor the currently active trade
         This runs when a trade is locked, checking its status
         """
-        if not self.risk_manager.has_active_trade:
+        if not self.risk_manager or not getattr(self.risk_manager, "has_active_trade", False):
             return
         
         active_info = self.risk_manager.get_active_trade_info()
@@ -1115,10 +1163,10 @@ class BotRunner:
             trade_status = await self.trade_engine.get_trade_status(contract_id)            
             # Check for stagnation exit (scalping trades only)
             if trade_status and not trade_status.get('is_sold'):
-                # Import here to avoid circular dependency
-                from scalping_risk_manager import ScalpingRiskManager
-                
-                if isinstance(self.risk_manager, ScalpingRiskManager):
+                if (
+                    hasattr(self.risk_manager, "check_trailing_profit")
+                    and hasattr(self.risk_manager, "check_stagnation_exit")
+                ):
                     current_pnl = trade_status.get('profit', 0.0)
                     trade_info = {
                         'open_time': active_info.get('open_time'),

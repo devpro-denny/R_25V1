@@ -30,13 +30,18 @@ class WebSocketLoggingHandler(logging.Handler):
         """Map logger namespace to bot type."""
         if str(logger_name).startswith("risefallbot"):
             return "risefall"
-        return "multiplier"
+        if str(logger_name).startswith("conservative"):
+            return "conservative"
+        if str(logger_name).startswith("scalping"):
+            return "scalping"
+        return "system"
 
     def _get_running_bot_type(self, user_id: str) -> Optional[str]:
         """
         Return the currently running bot type for a user:
         - 'risefall'
-        - 'multiplier'
+        - 'conservative'
+        - 'scalping'
         - None (no bot running / unknown)
         """
         now = time.time()
@@ -51,7 +56,14 @@ class WebSocketLoggingHandler(logging.Handler):
             status = bot_manager.get_status(user_id)
             if status.get("is_running"):
                 active_strategy = status.get("active_strategy")
-                bot_type = "risefall" if active_strategy == "RiseFall" else "multiplier"
+                if active_strategy == "RiseFall":
+                    bot_type = "risefall"
+                elif active_strategy == "Scalping":
+                    bot_type = "scalping"
+                elif active_strategy == "Conservative":
+                    bot_type = "conservative"
+                else:
+                    bot_type = "system"
         except Exception:
             bot_type = None
 
@@ -76,7 +88,11 @@ class WebSocketLoggingHandler(logging.Handler):
             if not user_id:
                 return
 
-            record_bot = self._classify_bot_from_logger(record.name)
+            context_bot = getattr(record, "bot_type", None)
+            if context_bot in {"conservative", "scalping", "risefall"}:
+                record_bot = context_bot
+            else:
+                record_bot = self._classify_bot_from_logger(record.name)
             running_bot = self._get_running_bot_type(user_id)
 
             # Strict isolation: only stream logs that belong to the bot

@@ -9,40 +9,75 @@ import json
 import sys
 from datetime import datetime
 from typing import Dict, Any, Optional
-from app.core.context import user_id_var
+from pathlib import Path
+from app.core.context import user_id_var, bot_type_var
 
 class ContextInjectingFilter(logging.Filter):
     """
-    Injects user_id from contextvars into the log record.
+    Injects contextual metadata from contextvars into the log record.
     """
     def filter(self, record):
         record.user_id = user_id_var.get()
+        record.bot_type = bot_type_var.get()
         return True
 
-def setup_logger(log_file: str = "trading_bot.log", level: str = "INFO") -> logging.Logger:
+
+class BotTypeFilter(logging.Filter):
+    """Route log records to a specific bot log file based on bot_type context."""
+
+    def __init__(self, target_bot_type: str = None, include_untyped: bool = False):
+        super().__init__()
+        self.target_bot_type = target_bot_type
+        self.include_untyped = include_untyped
+
+    def filter(self, record):
+        bot_type = getattr(record, "bot_type", None)
+        if self.target_bot_type:
+            return bot_type == self.target_bot_type
+        if self.include_untyped:
+            return bot_type not in {"conservative", "scalping", "risefall"}
+        return False
+
+
+def _build_file_handler(log_file: str, formatter: logging.Formatter, level: int) -> logging.Handler:
+    path = Path(log_file)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    file_handler = logging.FileHandler(path, encoding="utf-8")
+    file_handler.setLevel(level)
+    file_handler.setFormatter(formatter)
+    return file_handler
+
+
+def setup_logger(
+    log_file: str = "trading_bot.log",
+    level: str = "INFO",
+    logger_name: str = "TradingBot",
+) -> logging.Logger:
     """
     Set up logging configuration with UTF-8 encoding for Windows compatibility
     
     Args:
         log_file: Path to log file
         level: Logging level (DEBUG, INFO, WARNING, ERROR)
+        logger_name: Logger namespace
     
     Returns:
         Configured logger instance
     """
     # Create logger
-    logger = logging.getLogger("TradingBot")
+    logger = logging.getLogger(logger_name)
     logger.setLevel(getattr(logging, level))
+    logger.propagate = False
     
     # Prevent duplicate handlers
-    if logger.handlers:
+    if getattr(logger, "_r50_configured", False):
         return logger
     
     # Create formatters
     # Create formatters with User ID support
     # We include user_id in the message string so it's written to file
     detailed_formatter = logging.Formatter(
-        '%(asctime)s | %(levelname)s | [%(user_id)s] %(message)s',
+        '%(asctime)s | %(levelname)s | [%(bot_type)s] [%(user_id)s] %(message)s',
         datefmt='%Y-%m-%d %H:%M:%S'
     )
     
@@ -58,18 +93,45 @@ def setup_logger(log_file: str = "trading_bot.log", level: str = "INFO") -> logg
         except AttributeError:
             pass  # Python < 3.7
     
-    # File handler with UTF-8 encoding
-    file_handler = logging.FileHandler(log_file, encoding='utf-8')
-    file_handler.setLevel(logging.DEBUG)  # File gets everything
-    file_handler.setFormatter(detailed_formatter)
-    
     # Utilities logger also needs context filter
     context_filter = ContextInjectingFilter()
     logger.addFilter(context_filter)
 
     # Add handlers
     logger.addHandler(console_handler)
-    logger.addHandler(file_handler)
+
+    # Dedicated file handlers for multiplier strategies to enforce isolation.
+    # Rise/Fall remains fully independent in risefallbot/*.
+    if log_file == "trading_bot.log":
+        conservative_handler = _build_file_handler(
+            "logs/conservative/conservative_bot.log",
+            detailed_formatter,
+            logging.DEBUG,
+        )
+        conservative_handler.addFilter(BotTypeFilter("conservative"))
+
+        scalping_handler = _build_file_handler(
+            "logs/scalping/scalping_bot.log",
+            detailed_formatter,
+            logging.DEBUG,
+        )
+        scalping_handler.addFilter(BotTypeFilter("scalping"))
+
+        system_handler = _build_file_handler(
+            "logs/system/multiplier_system.log",
+            detailed_formatter,
+            logging.DEBUG,
+        )
+        system_handler.addFilter(BotTypeFilter(include_untyped=True))
+
+        logger.addHandler(conservative_handler)
+        logger.addHandler(scalping_handler)
+        logger.addHandler(system_handler)
+    else:
+        file_handler = _build_file_handler(log_file, detailed_formatter, logging.DEBUG)
+        logger.addHandler(file_handler)
+
+    logger._r50_configured = True
     
     return logger
 

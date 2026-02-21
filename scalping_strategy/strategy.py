@@ -7,12 +7,12 @@ from base_strategy import BaseStrategy
 from typing import Dict, List, Optional
 import pandas as pd
 import numpy as np
-import logging
-import config
-import scalping_config
-from indicators import calculate_rsi, calculate_adx
+from importlib import import_module
+from utils import setup_logger
+from . import config as scalping_config
+from indicators import calculate_rsi as _default_calculate_rsi, calculate_adx as _default_calculate_adx
 
-logger = logging.getLogger(__name__)
+logger = setup_logger()
 
 
 class ScalpingStrategy(BaseStrategy):
@@ -76,6 +76,10 @@ class ScalpingStrategy(BaseStrategy):
         # =================================================================
         # CHECK 2-4: RSI and ADX validation
         # =================================================================
+        package_module = import_module("scalping_strategy")
+        calculate_rsi = getattr(package_module, "calculate_rsi", _default_calculate_rsi)
+        calculate_adx = getattr(package_module, "calculate_adx", _default_calculate_adx)
+
         # Calculate indicators with fallback
         rsi_series = calculate_rsi(data_1m, period=14)
         adx_series = calculate_adx(data_1m, period=14)
@@ -119,7 +123,7 @@ class ScalpingStrategy(BaseStrategy):
         atr_1m = self._calculate_atr(data_1m, period=14)
         
         # Get movement threshold for this symbol
-        base_threshold = config.ASSET_CONFIG.get(symbol, {}).get('movement_threshold_pct', 0.7)
+        base_threshold = scalping_config.ASSET_CONFIG.get(symbol, {}).get('movement_threshold_pct', 0.7)
         movement_threshold = base_threshold * scalping_config.SCALPING_ASSET_MOVEMENT_MULTIPLIER
         
         # Calculate recent price movement
@@ -316,6 +320,14 @@ class ScalpingStrategy(BaseStrategy):
             ['1h', '5m', '1m']
         """
         return scalping_config.SCALPING_TIMEFRAMES
+
+    def get_symbols(self) -> List[str]:
+        """Return scalping symbol universe from local scalping config."""
+        return list(scalping_config.SYMBOLS)
+
+    def get_asset_config(self) -> Dict:
+        """Return scalping asset configuration."""
+        return dict(scalping_config.ASSET_CONFIG)
     
     def get_strategy_name(self) -> str:
         """

@@ -8,11 +8,9 @@ import os
 
 logger = logging.getLogger(__name__)
 
-# Import strategy classes
-from conservative_strategy import ConservativeStrategy
-from conservative_risk_manager import ConservativeRiskManager
-from scalping_strategy import ScalpingStrategy
-from scalping_risk_manager import ScalpingRiskManager
+# Import strategy classes from isolated packages
+from conservative_strategy import ConservativeStrategy, ConservativeRiskManager
+from scalping_strategy import ScalpingStrategy, ScalpingRiskManager
 from risefallbot import RiseFallStrategy, RiseFallRiskManager
 
 

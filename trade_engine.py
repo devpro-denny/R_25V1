@@ -677,9 +677,12 @@ class TradeEngine:
                 
                 # Check if risk manager wants to close
                 if risk_manager:
-                    # Scalping: Apply trail and stagnation rules (handled in trade loop)
-                    from scalping_risk_manager import ScalpingRiskManager
-                    if isinstance(risk_manager, ScalpingRiskManager):
+                    # Strategy-specific exits are capability-driven to avoid hard
+                    # coupling to any specific strategy module.
+                    if (
+                        hasattr(risk_manager, "check_trailing_profit")
+                        and hasattr(risk_manager, "check_stagnation_exit")
+                    ):
                         trade_info = risk_manager.get_active_trade_info()
                         if trade_info and trade_info.get('contract_id') == contract_id:
                             current_pnl = status['profit']
@@ -706,11 +709,11 @@ class TradeEngine:
                                 contract_id, status['profit'], status['current_spot'], previous_spot
                             )
                     else:
-                        exit_check = risk_manager.should_close_trade(
-                            contract_id,  # Pass contract_id to identify which trade
-                            status['profit'],
-                            status['current_spot'],
-                            previous_spot
+                            exit_check = risk_manager.should_close_trade(
+                                contract_id,  # Pass contract_id to identify which trade
+                                status['profit'],
+                                status['current_spot'],
+                                previous_spot
                         )
                     
                     if exit_check.get('should_close'):
@@ -718,9 +721,15 @@ class TradeEngine:
                         await self.close_trade(contract_id)
                         await asyncio.sleep(2)
                         final_status = await self.get_trade_status(contract_id)
-                        if final_status:
-                            final_status['exit_reason'] = exit_check['reason']
-                            final_status['symbol'] = symbol  # Ensure symbol is returned
+                        if not final_status:
+                            final_status = {
+                                "contract_id": contract_id,
+                                "status": "sold",
+                                "profit": status.get("profit", 0.0),
+                            }
+
+                        final_status['exit_reason'] = exit_check['reason']
+                        final_status['symbol'] = symbol  # Ensure symbol is returned
                         # Removed redundant notification here - Runner handles it
                         # Calculate duration for risk manager exit
                         duration = 0
@@ -819,6 +828,31 @@ class TradeEngine:
         except Exception as e:
             logger.error(f"âŒ Error closing trade: {e}")
             return None
+
+    def _unlock_trade_slot_on_failure(self, risk_manager, contract_id: Optional[str]) -> None:
+        """
+        Best-effort cleanup for partially failed lifecycle states.
+        Supports both conservative (dict-tracked) and scalping (id-tracked)
+        active trade structures without cross-strategy assumptions.
+        """
+        if not risk_manager or not hasattr(risk_manager, "active_trades") or not contract_id:
+            return
+
+        active_trades = getattr(risk_manager, "active_trades", [])
+        if not isinstance(active_trades, list):
+            return
+
+        if active_trades and isinstance(active_trades[0], dict):
+            filtered = [t for t in active_trades if t.get("contract_id") != contract_id]
+        else:
+            filtered = [t for t in active_trades if t != contract_id]
+
+        try:
+            risk_manager.active_trades = filtered
+        except Exception:
+            # Conservative wrapper exposes read-only property; update wrapped manager.
+            if hasattr(risk_manager, "risk_manager") and hasattr(risk_manager.risk_manager, "active_trades"):
+                risk_manager.risk_manager.active_trades = filtered
     
     async def execute_trade(self, signal: Dict, risk_manager) -> Optional[Dict]:
         """
@@ -835,6 +869,7 @@ class TradeEngine:
         Returns:
             Final trade result or None if failed
         """
+        contract_id = None
         try:
             direction = signal['signal']
             symbol = signal.get('symbol', config.SYMBOLS[0])
@@ -872,6 +907,8 @@ class TradeEngine:
             if not trade_info:
                 logger.error(f"âŒ Failed to open trade on {symbol}")
                 return None
+
+            contract_id = trade_info.get("contract_id")
             
             # Record with risk manager
             risk_manager.record_trade_open(trade_info)
@@ -902,9 +939,7 @@ class TradeEngine:
             
             if final_status is None:
                 logger.error("âŒ Monitoring failed - unlocking trade slot")
-                # risk_manager.has_active_trade = False  # Legacy attribute removed
-                if risk_manager and hasattr(risk_manager, 'active_trades'):
-                     risk_manager.active_trades = [t for t in risk_manager.active_trades if t.get('contract_id') != contract_id]
+                self._unlock_trade_slot_on_failure(risk_manager, contract_id)
             
             return final_status
             
@@ -914,9 +949,7 @@ class TradeEngine:
             logger.error(traceback.format_exc())
             
             try:
-                # risk_manager.has_active_trade = False  # Legacy attribute removed
-                if risk_manager and hasattr(risk_manager, 'active_trades'):
-                     risk_manager.active_trades = [t for t in risk_manager.active_trades if t.get('contract_id') != contract_id]
+                self._unlock_trade_slot_on_failure(risk_manager, contract_id)
                 logger.info("ðŸ”“ Trade slot unlocked after error")
             except:
                 pass

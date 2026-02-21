@@ -4,12 +4,11 @@ Wraps the existing strategy.py logic to implement the BaseStrategy interface
 """
 
 from base_strategy import BaseStrategy
-from strategy import TradingStrategy
 from typing import Dict, List, Optional
-import pandas as pd
-import logging
+from importlib import import_module
+from utils import setup_logger
 
-logger = logging.getLogger(__name__)
+logger = setup_logger()
 
 
 class ConservativeStrategy(BaseStrategy):
@@ -20,7 +19,9 @@ class ConservativeStrategy(BaseStrategy):
     
     def __init__(self):
         """Initialize the conservative strategy wrapper"""
-        self.strategy = TradingStrategy()
+        strategy_module = import_module("conservative_strategy")
+        strategy_cls = getattr(strategy_module, "TradingStrategy")
+        self.strategy = strategy_cls()
     
     def analyze(self, **kwargs) -> Optional[Dict]:
         """
@@ -66,6 +67,18 @@ class ConservativeStrategy(BaseStrategy):
             ['1w', '1d', '4h', '1h', '5m', '1m']
         """
         return ['1w', '1d', '4h', '1h', '5m', '1m']
+
+    def get_symbols(self) -> List[str]:
+        """Return conservative symbol universe from conservative config."""
+        from . import config
+
+        return list(config.SYMBOLS)
+
+    def get_asset_config(self) -> Dict:
+        """Return conservative asset configuration."""
+        from . import config
+
+        return dict(config.ASSET_CONFIG)
     
     def get_strategy_name(self) -> str:
         """
