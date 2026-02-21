@@ -59,12 +59,14 @@ def _resolve_log_files(active_strategy: str, user_id: str) -> list[str]:
         return [
             f"logs/conservative/{user_key}.log",
             "logs/conservative/conservative_bot.log",
+            "logs/system/multiplier_system.log",
             "trading_bot.log",
         ]
     if active_strategy == "Scalping":
         return [
             f"logs/scalping/{user_key}.log",
             "logs/scalping/scalping_bot.log",
+            "logs/system/multiplier_system.log",
             "trading_bot.log",
         ]
     if active_strategy == "RiseFall":
@@ -178,20 +180,29 @@ async def get_recent_logs(
                 }
             )
 
-        log_file = _select_log_file(active_strategy, user_id)
-        if log_file:
+        # Prefer user-scoped file, but fall back to other strategy files if
+        # the first candidate is empty/unmatched (prevents blank terminal UI).
+        for log_file in _resolve_log_files(active_strategy, user_id):
+            if not os.path.exists(log_file):
+                continue
             with open(log_file, "r", encoding="utf-8") as f:
                 log_lines = f.readlines()
                 total_lines += len(log_lines)
-                for line in log_lines:
-                    stripped = line.strip()
-                    if not stripped:
-                        continue
-                    if _is_decorative_log_line(stripped):
-                        continue
-                    if not _should_include_log_line(stripped, user_id, active_strategy):
-                        continue
-                    filtered_logs.append(stripped)
+
+            candidate_filtered = []
+            for line in log_lines:
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                if _is_decorative_log_line(stripped):
+                    continue
+                if not _should_include_log_line(stripped, user_id, active_strategy):
+                    continue
+                candidate_filtered.append(stripped)
+
+            if candidate_filtered:
+                filtered_logs = candidate_filtered
+                break
 
         filtered_logs = filtered_logs[-lines:]
 

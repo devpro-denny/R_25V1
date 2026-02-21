@@ -309,3 +309,38 @@ def test_monitor_logs_normalizes_lowercase_scalping_strategy(mock_auth):
         assert response.status_code == 200
         mock_open.assert_called_once_with(expected_path, "r", encoding="utf-8")
         assert len(response.json()["logs"]) == 1
+
+
+def test_monitor_logs_falls_back_when_user_file_is_empty(mock_auth):
+    primary_path = "logs/scalping/u123.log"
+    fallback_path = "logs/scalping/scalping_bot.log"
+
+    def _exists(path):
+        normalized = str(path).replace("\\", "/")
+        return normalized in {primary_path, fallback_path}
+
+    def _open(path, mode="r", encoding=None):
+        normalized = str(path).replace("\\", "/")
+        mock_file = MagicMock()
+        if normalized == primary_path:
+            mock_file.__enter__.return_value.readlines.return_value = []
+        else:
+            mock_file.__enter__.return_value.readlines.return_value = [
+                "2026-02-21 13:10:36 | INFO | [scalping] [u123] Fallback file line\n",
+            ]
+        return mock_file
+
+    with patch("app.api.monitor.os.path.exists", side_effect=_exists), \
+         patch("builtins.open", side_effect=_open) as mock_open, \
+         patch("app.api.monitor.bot_manager") as mock_manager:
+        mock_manager.get_status.return_value = {
+            "is_running": True,
+            "active_strategy": "Scalping",
+        }
+
+        response = client.get("/api/v1/monitor/logs?lines=10")
+        assert response.status_code == 200
+        assert len(response.json()["logs"]) == 1
+        assert "Fallback file line" in response.json()["logs"][0]
+        opened_paths = [str(c.args[0]).replace("\\", "/") for c in mock_open.call_args_list]
+        assert opened_paths == [primary_path, fallback_path]
