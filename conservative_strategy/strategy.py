@@ -261,7 +261,7 @@ class TradingStrategy:
         # Identify Targets (TP) and Structure Points (SL)
         target_level, sl_level = self._identify_tp_sl_levels(
             structure_levels, current_price, signal_direction,
-            data_1d, data_4h, data_1h, data_5m, symbol=symbol
+            data_1d, data_4h, data_1h, data_5m, symbol
         )
 
         if not target_level:
