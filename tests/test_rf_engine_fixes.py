@@ -175,3 +175,35 @@ async def test_send_waits_for_matching_req_id(engine):
     resp = await engine._send({"buy": 1})
     assert resp is not None
     assert resp.get("buy", {}).get("contract_id") == "new_1"
+
+
+@pytest.mark.asyncio
+async def test_send_ignores_frames_without_req_id(engine):
+    """
+    Regression guard:
+    _send() must ignore subscription/update frames that do not carry req_id.
+    Otherwise a stale contract update can be mistaken as BUY response.
+    """
+    ws = AsyncMock()
+    ws.open = True
+    ws.send = AsyncMock()
+
+    frames = [
+        json.dumps(
+            {
+                "msg_type": "proposal_open_contract",
+                "proposal_open_contract": {"contract_id": "stale_no_req"},
+            }
+        ),
+        json.dumps({"msg_type": "buy", "req_id": 1, "buy": {"contract_id": "new_2"}}),
+    ]
+
+    async def recv_side_effect():
+        return frames.pop(0)
+
+    ws.recv = recv_side_effect
+    engine.ws = ws
+
+    resp = await engine._send({"buy": 1})
+    assert resp is not None
+    assert resp.get("buy", {}).get("contract_id") == "new_2"

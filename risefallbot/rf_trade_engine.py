@@ -187,9 +187,27 @@ class RFTradeEngine:
                 if resp_req_id is None:
                     resp_req_id = resp.get("echo_req", {}).get("req_id")
 
-                if resp_req_id is not None and int(resp_req_id) != int(expected_req_id):
+                # CRITICAL: Only a frame with the matching req_id is a valid
+                # response for this request. Subscription updates usually have
+                # no req_id and must be ignored, otherwise BUY can be treated
+                # as failed while Deriv already opened the contract.
+                if resp_req_id is None:
                     logger.debug(
-                        f"[RF-Engine] Ignoring unrelated response req_id={resp_req_id} "
+                        "[RF-Engine] Ignoring websocket frame without req_id "
+                        f"while waiting for req_id={expected_req_id}"
+                    )
+                    continue
+
+                try:
+                    if int(resp_req_id) != int(expected_req_id):
+                        logger.debug(
+                            f"[RF-Engine] Ignoring unrelated response req_id={resp_req_id} "
+                            f"(expected={expected_req_id})"
+                        )
+                        continue
+                except (TypeError, ValueError):
+                    logger.debug(
+                        f"[RF-Engine] Ignoring frame with invalid req_id={resp_req_id!r} "
                         f"(expected={expected_req_id})"
                     )
                     continue
