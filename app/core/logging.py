@@ -155,29 +155,42 @@ class WebSocketLoggingHandler(logging.Handler):
 
 def setup_api_logger():
     """Setup logging for FastAPI application"""
-    
+
     logger = logging.getLogger()
+    if getattr(logger, "_r50_api_configured", False):
+        return logger
+
     logger.setLevel(logging.INFO)
-    
+
+    # Remove pre-existing handlers to avoid duplicate log lines when
+    # runtime/platform handlers were attached before app initialization.
+    logger.handlers.clear()
+    logger.filters.clear()
+
     # 1. Console Handler (Standard Output)
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setLevel(logging.INFO)
-    
+
     formatter = logging.Formatter(
         '%(asctime)s | %(levelname)s | %(name)s | %(message)s',
         datefmt='%Y-%m-%d %H:%M:%S'
     )
     console_handler.setFormatter(formatter)
     logger.addHandler(console_handler)
-    
+
     # 2. Context Filter (Injects user_id)
     context_filter = ContextInjectingFilter()
     logger.addFilter(context_filter)
-    
+
     # 3. WebSocket Handler (Streams to Frontend)
     ws_handler = WebSocketLoggingHandler()
     ws_handler.setLevel(logging.INFO)
     ws_handler.setFormatter(formatter)
     logger.addHandler(ws_handler)
-    
+
+    # Reduce chatty third-party transport logs in production.
+    for noisy_logger in ("httpx", "httpcore"):
+        logging.getLogger(noisy_logger).setLevel(logging.WARNING)
+
+    logger._r50_api_configured = True
     return logger

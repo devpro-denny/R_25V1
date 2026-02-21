@@ -5,6 +5,7 @@ Get and update bot configuration
 
 from fastapi import APIRouter, HTTPException, Depends
 from typing import Dict, Any
+import logging
 
 import config
 from app.schemas.common import ConfigResponse
@@ -16,6 +17,8 @@ router = APIRouter()
 from app.core.cache import cache
 
 from app.core.supabase import supabase
+
+logger = logging.getLogger(__name__)
 
 @router.get("/current", response_model=ConfigResponse)
 async def get_current_config(current_user: dict = Depends(get_current_active_user)):

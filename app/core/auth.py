@@ -11,6 +11,7 @@ from supabase.client import Client
 
 from app.core.settings import settings
 from app.core.supabase import supabase
+from app.core.cache import cache
 
 logger = logging.getLogger(__name__)
 
@@ -44,15 +45,26 @@ async def get_current_user(
              pass 
              # We will do the promotion check after fetching the profile to avoid redundant writes
 
-        # Check profiles table for status
-        profile_response = supabase.table('profiles').select('*').eq('id', user.id).single().execute()
+        # Check profiles table for status (with short cache to reduce DB chatter)
+        profile_cache_key = f"auth_profile:{user.id}"
+        profile = cache.get(profile_cache_key)
+        if profile is None:
+            profile_response = (
+                supabase.table("profiles")
+                .select("role,is_approved,created_at")
+                .eq("id", user.id)
+                .single()
+                .execute()
+            )
+            profile = profile_response.data or {}
+            if profile:
+                cache.set(profile_cache_key, profile, ttl=60)
         
         role = 'user'
         is_approved = False
         created_at = user.created_at # Fallback
 
-        if profile_response.data:
-            profile = profile_response.data
+        if profile:
             role = profile.get('role', 'user')
             is_approved = profile.get('is_approved', False)
             created_at = profile.get('created_at')
@@ -67,6 +79,7 @@ async def get_current_user(
                     'role': 'admin',
                     'is_approved': True
                 }).eq('id', user.id).execute()
+                cache.delete(profile_cache_key)
                 
                 # Update local vars to reflect change
                 role = 'admin'
