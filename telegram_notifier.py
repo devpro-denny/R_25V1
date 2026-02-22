@@ -12,9 +12,9 @@ from telegram import Bot
 from telegram.error import TelegramError
 import logging
 import config
-from utils import setup_logger, format_currency
+from utils import format_currency
 
-logger = setup_logger()
+logger = logging.getLogger(__name__)
 
 class TelegramLoggingHandler(logging.Handler):
     """
@@ -487,6 +487,7 @@ class TelegramNotifier:
             "Please review and approve via Supabase or Admin API.\n\n"
             f"⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
         )
+        await self.send_message(message)
         
     async def notify_trade_open(self, *args, **kwargs):
         """Alias for notify_trade_opened"""
