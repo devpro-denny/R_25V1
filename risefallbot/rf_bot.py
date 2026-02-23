@@ -1015,17 +1015,43 @@ async def _process_symbol(
     # Strategy analysis
     signal = strategy.analyze(data_1m=df, symbol=symbol, stake=stake)
     if signal is None:
-        logger.info(f"[RF][{symbol}] SCAN | No opportunity: strategy conditions not met")
+        analysis_meta = {}
+        if hasattr(strategy, "get_last_analysis"):
+            try:
+                analysis_meta = strategy.get_last_analysis(symbol) or {}
+            except Exception:
+                analysis_meta = {}
+
+        skip_reason = analysis_meta.get("reason") or "Strategy conditions not met"
+        skip_code = analysis_meta.get("code") or "strategy_conditions_not_met"
+        skip_details = (
+            analysis_meta.get("details")
+            if isinstance(analysis_meta.get("details"), dict)
+            else {}
+        )
+        mode = "zone_candle_optimized" if (
+            getattr(rf_config, "RF_ENABLE_ZONE_FILTER", False)
+            or getattr(rf_config, "RF_ENABLE_CANDLE_FILTER", False)
+        ) else "triple_confirmation"
+
+        logger.info(
+            f"[RF][{symbol}] SCAN | No opportunity: {skip_reason} "
+            f"(code={skip_code})"
+        )
         await _broadcast_rf_decision(
             event_manager=event_manager,
             user_id=user_id,
             symbol=symbol,
             phase="signal",
             decision="no_trade",
-            reason="Strategy conditions not met",
-            details={"mode": "triple_confirmation"},
+            reason=skip_reason,
+            details={
+                "mode": mode,
+                "skip_code": skip_code,
+                **skip_details,
+            },
         )
-        return  # No triple-confirmation — already logged by strategy
+        return  # Strategy rejected setup; reason emitted above
 
     # ══════════════════════════════════════════════════════════════════════
     # SIGNAL CONFIRMED — Enter strict 6-step lifecycle
@@ -1070,6 +1096,12 @@ async def _process_symbol(
             "confidence": signal.get("confidence"),
             "rsi": signal.get("rsi"),
             "stoch": signal.get("stoch"),
+            "scenario": signal.get("scenario"),
+            "market_bias": signal.get("market_bias"),
+            "zone_type": signal.get("zone_type"),
+            "zone_level": signal.get("zone_level"),
+            "candle_momentum": signal.get("candle_momentum"),
+            "candle_direction": signal.get("candle_direction"),
         },
         min_interval_seconds=0,
     )
