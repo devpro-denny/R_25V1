@@ -97,8 +97,9 @@ class RiseFallStrategy(BaseStrategy):
         self.zone_lookback = _cfg_int("RF_ZONE_LOOKBACK", 50)
         self.zone_touch_tolerance = _cfg_float("RF_ZONE_TOUCH_TOLERANCE", 0.0003)
         self.zone_min_touches = _cfg_int("RF_ZONE_MIN_TOUCHES", 2)
-        self.momentum_body_ratio = _cfg_float("RF_MOMENTUM_BODY_RATIO", 0.60)
+        self.momentum_body_ratio = _cfg_float("RF_MOMENTUM_BODY_RATIO", 0.70)
         self.momentum_wick_ratio = _cfg_float("RF_MOMENTUM_WICK_RATIO", 0.25)
+        self.momentum_avg_lookback = _cfg_int("RF_MOMENTUM_AVG_LOOKBACK", 5)
         self.enable_zone_filter = _cfg_bool("RF_ENABLE_ZONE_FILTER", False)
         self.enable_candle_filter = _cfg_bool("RF_ENABLE_CANDLE_FILTER", False)
         self.retest_lookback = _cfg_int("RF_RETEST_LOOKBACK", 5)
@@ -154,6 +155,7 @@ class RiseFallStrategy(BaseStrategy):
             idx=idx,
             body_ratio=self.momentum_body_ratio,
             wick_ratio=self.momentum_wick_ratio,
+            avg_lookback=self.momentum_avg_lookback,
         )
 
         if self.enable_zone_filter and not near_zone:
@@ -214,6 +216,11 @@ class RiseFallStrategy(BaseStrategy):
             retest_lookback=self.retest_lookback,
         )
         logger.debug(f"[RF][{symbol}] Scenario classified: {scenario}")
+        if self.enable_zone_filter and scenario == "basic":
+            logger.debug(
+                f"[RF][{symbol}] Basic scenario without structural trigger - waiting"
+            )
+            return None
 
         signal = {
             "symbol": symbol,
