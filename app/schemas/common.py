@@ -26,6 +26,11 @@ class PerformanceResponse(BaseModel):
     memory_usage: Optional[float] = Field(None, ge=0.0, le=100.0)
     error_rate: Optional[float] = Field(None, ge=0.0, le=100.0)
     active_connections: Optional[int] = Field(None, ge=0)
+    scalping_total_symbol_checks: Optional[int] = Field(None, ge=0)
+    scalping_signals_generated: Optional[int] = Field(None, ge=0)
+    scalping_rejections: Optional[int] = Field(None, ge=0)
+    scalping_opportunity_rate_pct: Optional[float] = Field(None, ge=0.0, le=100.0)
+    scalping_gate_counters: Optional[Dict[str, int]] = Field(None)
 
 
 class ConfigResponse(BaseModel):

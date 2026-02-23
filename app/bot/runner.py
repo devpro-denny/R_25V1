@@ -10,6 +10,7 @@ Manages the lifecycle of the trading bot with multi-asset support
 
 import asyncio
 import logging
+import re
 from datetime import datetime
 from typing import Optional, Dict, List
 from enum import Enum
@@ -137,6 +138,9 @@ class BotRunner:
         self.scan_count = 0
         self.signals_by_symbol: Dict[str, int] = {symbol: 0 for symbol in self.symbols}
         self.errors_by_symbol: Dict[str, int] = {symbol: 0 for symbol in self.symbols}
+        self.scalping_total_symbol_checks: int = 0
+        self.scalping_signals_generated: int = 0
+        self.scalping_gate_counters: Dict[str, int] = {}
         
         # Logging control
         self.last_status_log: Dict[str, Dict] = {} # {symbol: {'msg': str, 'time': datetime}}
@@ -157,6 +161,102 @@ class BotRunner:
         except Exception:
             pass
         return getattr(self, "active_strategy", "Unknown") or "Unknown"
+
+    def _is_scalping_strategy(self) -> bool:
+        """Return True when active strategy is scalping."""
+        return (self._get_strategy_name() or "").strip().lower() == "scalping"
+
+    @staticmethod
+    def _normalize_rejection_slug(text: str) -> str:
+        normalized = re.sub(r"[^a-z0-9]+", "_", str(text or "").lower()).strip("_")
+        return normalized or "unknown_rejection"
+
+    def _build_scalping_gate_counter_key(
+        self,
+        reason: str,
+        gate: Optional[str] = None,
+        reason_code: Optional[str] = None,
+    ) -> str:
+        """
+        Build normalized gate counter key from strategy metadata or reason fallback.
+        """
+        if gate and reason_code:
+            return f"{self._normalize_rejection_slug(gate)}:{self._normalize_rejection_slug(reason_code)}"
+
+        lower_reason = str(reason or "").lower()
+
+        reason_map = [
+            ("no fresh crossover on 1h/5m", "gate_2_trend:no_fresh_crossover"),
+            ("trend mismatch", "gate_2_trend:trend_mismatch"),
+            ("no 1h break of structure", "gate_2_trend:no_1h_break_of_structure"),
+            ("weak trend (adx", "gate_3_indicators:adx_below_threshold"),
+            ("adx declining", "gate_3_indicators:adx_declining"),
+            ("not in up range", "gate_3_indicators:rsi_out_of_range"),
+            ("not in down range", "gate_3_indicators:rsi_out_of_range"),
+            ("adverse pre-entry move", "gate_4_momentum:adverse_pre_entry_move"),
+            ("no momentum breakout", "gate_4_momentum:no_momentum_breakout"),
+            ("weak body ratio", "gate_4_momentum:weak_body_ratio"),
+            ("candle direction mismatch", "gate_4_momentum:candle_direction_mismatch"),
+            ("parabolic spike detected", "gate_4_momentum:parabolic_spike"),
+            ("5m structure not confirmed", "gate_4_structure:five_minute_structure_not_confirmed"),
+            ("price not near any key zone", "gate_4_price_action:not_near_key_zone"),
+            ("no 5m zone rejection confirmed", "gate_4_price_action:no_zone_rejection"),
+            ("low r:r", "gate_5_risk:low_rr_ratio"),
+            ("invalid stop loss", "gate_5_risk:invalid_stop_loss"),
+        ]
+
+        for pattern, mapped in reason_map:
+            if pattern in lower_reason:
+                return mapped
+
+        if gate:
+            return f"{self._normalize_rejection_slug(gate)}:{self._normalize_rejection_slug(reason_code or reason)}"
+
+        return f"gate_unknown:{self._normalize_rejection_slug(reason_code or reason)}"
+
+    def _record_scalping_strategy_outcome(self, signal: Optional[Dict]) -> None:
+        """
+        Track per-gate strategy outcomes for scalping opportunity frequency analysis.
+        """
+        if not self._is_scalping_strategy():
+            return
+
+        self.scalping_total_symbol_checks += 1
+
+        if not isinstance(signal, dict):
+            key = "gate_unknown:invalid_signal_payload"
+            self.scalping_gate_counters[key] = self.scalping_gate_counters.get(key, 0) + 1
+            return
+
+        if signal.get("can_trade"):
+            self.scalping_signals_generated += 1
+            return
+
+        details = signal.get("details")
+        details = details if isinstance(details, dict) else {}
+
+        reason = str(details.get("reason", "unknown_rejection"))
+        gate = details.get("gate")
+        reason_code = details.get("reason_code")
+        key = self._build_scalping_gate_counter_key(reason=reason, gate=gate, reason_code=reason_code)
+        self.scalping_gate_counters[key] = self.scalping_gate_counters.get(key, 0) + 1
+
+    def get_scalping_gate_metrics(self) -> Dict[str, object]:
+        """
+        Return scalping opportunity frequency snapshot and gate-level counters.
+        """
+        total_checks = self.scalping_total_symbol_checks
+        signals = self.scalping_signals_generated
+        rejections = max(total_checks - signals, 0)
+        rate_pct = round((signals / total_checks) * 100, 2) if total_checks > 0 else 0.0
+
+        return {
+            "scalping_total_symbol_checks": total_checks,
+            "scalping_signals_generated": signals,
+            "scalping_rejections": rejections,
+            "scalping_opportunity_rate_pct": rate_pct,
+            "scalping_gate_counters": dict(self.scalping_gate_counters),
+        }
 
     def _sync_strategy_scope(self) -> None:
         """Bind runner symbol universe/config to currently injected strategy."""
@@ -517,7 +617,8 @@ class BotRunner:
                 "scan_count": self.scan_count,
                 "active_symbol": active_trade_info['symbol'] if active_trade_info else None,
                 "signals_by_symbol": self.signals_by_symbol,
-                "errors_by_symbol": self.errors_by_symbol
+                "errors_by_symbol": self.errors_by_symbol,
+                "scalping_gate_metrics": self.get_scalping_gate_metrics() if self._is_scalping_strategy() else None,
             }
         }
     
@@ -869,10 +970,22 @@ class BotRunner:
             
             # Call strategy analyze method
             signal = self.strategy.analyze(**strategy_kwargs)
+            self._record_scalping_strategy_outcome(signal)
 
         except Exception as e:
             self._cycle_step(symbol, 2, 6, f"Strategy analysis failed: {e}", emoji="\u274C", level="error")
             raise
+
+        if not isinstance(signal, dict):
+            self._cycle_step(symbol, 3, 6, "No trade setup: Invalid strategy response", emoji="\u23ED\ufe0f")
+            await self._broadcast_decision(
+                symbol=symbol,
+                phase="signal",
+                decision="no_trade",
+                reason="Invalid strategy response",
+                throttle_key=f"{symbol}:invalid_strategy_payload",
+            )
+            return False
         
         if not signal.get('can_trade'):
             details = signal.get('details', {})
