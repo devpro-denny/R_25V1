@@ -1,19 +1,6 @@
 """
-Rise/Fall Scalping Bot Configuration
-All Rise/Fall strategy-specific constants and thresholds
-
-══════════════════════════════════════════════════════════════════════════════
-TRADING SYSTEM RULES (must be enforced):
-══════════════════════════════════════════════════════════════════════════════
-1. Only one open trade at a time across all assets.
-2. Once a trade is opened, no other trade until the current trade is fully closed.
-3. Let contracts expire naturally without early exit.
-4. A new trade can only be opened after the current trade is completely closed.
-5. Prevent three consecutive losing trades: after two consecutive losses, block
-   the next trade until the loss-streak cooldown expires.
-══════════════════════════════════════════════════════════════════════════════
-
-rf_config.py
+Rise/Fall scalping bot configuration.
+All Rise/Fall strategy-specific constants and thresholds.
 """
 
 import os
@@ -23,7 +10,7 @@ import os
 RF_SYMBOLS = ["R_10", "R_25", "R_50", "R_100"]
 
 # ==================== TIMEFRAME ====================
-RF_TIMEFRAME = "1m"  # 1-minute candles only
+RF_TIMEFRAME = "1m"   # 1-minute candles only
 RF_CANDLE_COUNT = 50  # Candles to fetch (must be > RF_MIN_BARS)
 
 # ==================== INDICATOR PARAMETERS ====================
@@ -33,52 +20,67 @@ RF_EMA_SLOW = 13
 
 # RSI (momentum oscillator)
 RF_RSI_PERIOD = 7
-RF_RSI_OVERSOLD = 30   # Below this → CALL opportunity
-RF_RSI_OVERBOUGHT = 70  # Above this → PUT opportunity
+RF_RSI_OVERSOLD = 30    # Below this -> CALL opportunity
+RF_RSI_OVERBOUGHT = 70  # Above this -> PUT opportunity
 
 # Stochastic %K (momentum confirmation)
 RF_STOCH_K_PERIOD = 5
 RF_STOCH_D_PERIOD = 3
-RF_STOCH_OVERSOLD = 20   # Below this → CALL confirmation
-RF_STOCH_OVERBOUGHT = 80  # Above this → PUT confirmation
+RF_STOCH_OVERSOLD = 20    # Below this -> CALL confirmation
+RF_STOCH_OVERBOUGHT = 80  # Above this -> PUT confirmation
+
+# ==================== ZONE ANALYSIS ====================
+# Spatial filter: identify key support/resistance levels and trade only nearby.
+RF_ZONE_LOOKBACK = 50             # Bars to scan for key horizontal zones
+RF_ZONE_TOUCH_TOLERANCE = 0.0003  # Price % tolerance for zone proximity
+RF_ZONE_MIN_TOUCHES = 2           # Minimum touches required for a valid zone
+
+# Candle quality filter: strong body with controlled wick size.
+RF_MOMENTUM_BODY_RATIO = 0.60     # Minimum body/range ratio
+RF_MOMENTUM_WICK_RATIO = 0.25     # Maximum wick/range ratio
+
+# Optimization feature flags.
+RF_ENABLE_ZONE_FILTER = True      # Gate signals through zone analysis
+RF_ENABLE_CANDLE_FILTER = True    # Gate signals through momentum candle check
+RF_RETEST_LOOKBACK = 5            # Bars to inspect for retest scenario
 
 # ==================== CONTRACT PARAMETERS ====================
-RF_DEFAULT_STAKE = 1.00      # Default stake in USD
-RF_CONTRACT_DURATION = 2     # Contract duration
-RF_DURATION_UNIT = "m"       # Duration unit: minutes
+RF_DEFAULT_STAKE = 1.00   # Default stake in USD
+RF_CONTRACT_DURATION = 2  # Contract duration
+RF_DURATION_UNIT = "m"    # Duration unit: minutes
 
 # ==================== RISK MANAGEMENT ====================
-RF_MAX_CONCURRENT_PER_SYMBOL = 1   # Max 1 trade per symbol at a time
-RF_MAX_CONCURRENT_TOTAL = 1        # Max 1 trade total across ALL symbols
-RF_COOLDOWN_SECONDS = 30           # Seconds between trades per symbol
-RF_MAX_TRADES_PER_DAY = 30         # Daily trade cap across all symbols
-RF_MIN_BARS = 30                   # Minimum bars before trading (warm-up)
+RF_MAX_CONCURRENT_PER_SYMBOL = 1  # Max 1 trade per symbol at a time
+RF_MAX_CONCURRENT_TOTAL = 1       # Max 1 trade total across all symbols
+RF_COOLDOWN_SECONDS = 30          # Seconds between trades per symbol
+RF_MAX_TRADES_PER_DAY = 30        # Daily trade cap across all symbols
+RF_MIN_BARS = 30                  # Minimum bars before trading (warm-up)
 
-# Watchdog timeout for stale pending entries
-# If a 'pending' entry is older than this with no matching contract, auto-release lock
-RF_PENDING_TIMEOUT_SECONDS = 60    # 60 seconds — detect hung state and recover
+# Watchdog timeout for stale pending entries.
+# If a pending entry is older than this with no matching contract, auto-release lock.
+RF_PENDING_TIMEOUT_SECONDS = 60
 
-# Consecutive loss protection (Rule 5: prevent 3 consecutive losses)
-# After 2 losses, block next trade to avoid a 3rd consecutive loss
-RF_MAX_CONSECUTIVE_LOSSES = 2      # Block after 2 consecutive losses
-RF_LOSS_COOLDOWN_SECONDS = 21600   # Cooldown after hitting loss streak (6 hours)
+# Consecutive loss protection (Rule 5: prevent 3 consecutive losses).
+# After 2 losses, block next trade to avoid a 3rd consecutive loss.
+RF_MAX_CONSECUTIVE_LOSSES = 2
+RF_LOSS_COOLDOWN_SECONDS = 21600  # 6 hours
 
-# Daily loss limit: stop trading when daily P&L <= -(multiplier × stake)
-RF_DAILY_LOSS_LIMIT_MULTIPLIER = 3.0  # Stop when daily loss >= 3× stake
+# Daily loss limit: stop trading when daily PnL <= -(multiplier * stake)
+RF_DAILY_LOSS_LIMIT_MULTIPLIER = 3.0
 
-# Global cooldown: minimum seconds between ANY trades (across all symbols)
-RF_GLOBAL_COOLDOWN_SECONDS = 30   # After any trade closes, wait before next trade
+# Global cooldown: minimum seconds between any trades (across all symbols)
+RF_GLOBAL_COOLDOWN_SECONDS = 30
 
 # Max stake cap (safety limit)
-RF_MAX_STAKE = 100.0   # Maximum stake per trade (USD)
+RF_MAX_STAKE = 100.0  # Maximum stake per trade (USD)
 
 # ==================== LOGGING ====================
 RF_LOG_FILE = "logs/risefall/risefall_bot.log"
 RF_LOG_LEVEL = "INFO"
 
 # ==================== DB WRITE RETRY ====================
-RF_DB_WRITE_MAX_RETRIES = 3        # Max attempts to write trade to DB
-RF_DB_WRITE_RETRY_DELAY = 2        # Seconds between retry attempts
+RF_DB_WRITE_MAX_RETRIES = 3  # Max attempts to write trade to DB
+RF_DB_WRITE_RETRY_DELAY = 2  # Seconds between retry attempts
 
 # ==================== WEBSOCKET ====================
 RF_WS_URL = "wss://ws.derivws.com/websockets/v3"
