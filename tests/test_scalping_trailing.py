@@ -66,28 +66,28 @@ class TestTrailingProfitActivation:
     """Trailing activates at 8% but does not close immediately."""
     
     def test_activation_at_threshold(self, rm):
-        # 8% of $50 = $4
-        should_close, reason, just_activated = rm.check_trailing_profit(_info(), current_pnl=4.0)
+        # 12% of $50 = $6
+        should_close, reason, just_activated = rm.check_trailing_profit(_info(), current_pnl=6.0)
         assert should_close is False
         assert just_activated is True  # First activation!
         # State should be initialized
         assert 'C001' in rm._trailing_state
         assert rm._trailing_state['C001']['trailing_active'] is True
-        assert rm._trailing_state['C001']['highest_profit_pct'] == pytest.approx(8.0)
+        assert rm._trailing_state['C001']['highest_profit_pct'] == pytest.approx(12.0)
     
     def test_activation_above_threshold(self, rm):
-        # 10% of $50 = $5
-        should_close, reason, just_activated = rm.check_trailing_profit(_info(), current_pnl=5.0)
+        # 14% of $50 = $7
+        should_close, reason, just_activated = rm.check_trailing_profit(_info(), current_pnl=7.0)
         assert should_close is False
         assert just_activated is True  # First activation!
-        assert rm._trailing_state['C001']['highest_profit_pct'] == pytest.approx(10.0)
+        assert rm._trailing_state['C001']['highest_profit_pct'] == pytest.approx(14.0)
     
     def test_subsequent_call_not_activation(self, rm):
         # First call activates
-        _, _, activated1 = rm.check_trailing_profit(_info(), current_pnl=4.0)
+        _, _, activated1 = rm.check_trailing_profit(_info(), current_pnl=6.0)
         assert activated1 is True
         # Second call is NOT activation
-        _, _, activated2 = rm.check_trailing_profit(_info(), current_pnl=5.0)
+        _, _, activated2 = rm.check_trailing_profit(_info(), current_pnl=7.0)
         assert activated2 is False
 
 
@@ -185,7 +185,7 @@ class TestTrailingProfitCleanup:
     
     def test_cleanup_on_close(self, rm):
         # Activate trailing
-        rm.check_trailing_profit(_info(), current_pnl=5.0)  # 10%
+        rm.check_trailing_profit(_info(), current_pnl=6.0)  # 12%
         assert 'C001' in rm._trailing_state
         assert 'C001' in rm._trade_metadata
         

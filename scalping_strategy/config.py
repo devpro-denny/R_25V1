@@ -61,7 +61,7 @@ SCALPING_ASSET_MOVEMENT_MULTIPLIER = 1.7
 
 # ==================== SCALPING RISK MANAGEMENT ====================
 # Portfolio-wide concurrent cap across all symbols.
-SCALPING_MAX_CONCURRENT_TRADES = 2
+SCALPING_MAX_CONCURRENT_TRADES = 1
 # Per-symbol concurrent cap (single asset may only have one open trade).
 SCALPING_MAX_CONCURRENT_PER_SYMBOL = 1
 SCALPING_COOLDOWN_SECONDS = 30
@@ -74,17 +74,17 @@ SCALPING_RUNAWAY_WINDOW_MINUTES = 10
 SCALPING_RUNAWAY_TRADE_COUNT = 10
 
 # ==================== STAGNATION EXIT ====================
-SCALPING_STAGNATION_EXIT_TIME = 120  # seconds (2 minutes)
+SCALPING_STAGNATION_EXIT_TIME = 180  # seconds (3 minutes)
 SCALPING_STAGNATION_LOSS_PCT = 7.0  # percentage of stake
 
 # ==================== TRAILING PROFIT ====================
-SCALPING_TRAIL_ACTIVATION_PCT = 8.0   # Trail activates at 8% profit of stake
+SCALPING_TRAIL_ACTIVATION_PCT = 12.0   # Trail activates at 12% profit of stake
 
 # Dynamic trailing distance tiers: (min_profit_pct, trail_distance_pct)
 # As profit grows, the trail widens to give big winners room to breathe.
 # Tiers are checked from highest to lowest; first match wins.
 SCALPING_TRAIL_TIERS = [
-    (25.0, 7.0),   # 25%+ profit → 7% trail distance
-    (15.0, 5.0),   # 15-25% profit → 5% trail distance
-    (8.0,  3.0),   # 8-15% profit → 3% trail distance (default)
+    (30.0, 7.0),   # 30%+ profit -> 7% trail distance
+    (15.0, 5.0),   # 15-30% profit -> 5% trail distance
+    (12.0, 3.0),   # 12-15% profit -> 3% trail distance (default)
 ]
