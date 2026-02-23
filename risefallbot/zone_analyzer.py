@@ -140,6 +140,30 @@ def _merge_middle_zones(zones: List[Zone], tolerance: float) -> List[Zone]:
     return sorted(merged, key=lambda z: float(z["level"]))
 
 
+def rolling_extreme_zones(df: pd.DataFrame, lookback: int = 50) -> List[Zone]:
+    """
+    Return hard outer boundaries using absolute extremes of the rolling window:
+      - support: lowest low
+      - resistance: highest high
+    """
+    if df is None or df.empty:
+        return []
+
+    lb = max(2, int(lookback))
+    frame = df.tail(lb)
+    try:
+        highest_high = float(frame["high"].astype(float).max())
+        lowest_low = float(frame["low"].astype(float).min())
+    except (KeyError, TypeError, ValueError):
+        return []
+
+    zones: List[Zone] = [
+        {"level": lowest_low, "type": "support", "touches": 1},
+        {"level": highest_high, "type": "resistance", "touches": 1},
+    ]
+    return sorted(zones, key=lambda z: float(z["level"]))
+
+
 def get_key_zones(
     df: pd.DataFrame,
     lookback: Optional[int] = None,
@@ -147,7 +171,9 @@ def get_key_zones(
     min_touches: Optional[int] = None,
 ) -> List[Zone]:
     """
-    Build key zones from pivot highs/lows.
+    Build key zones from:
+      1) absolute rolling extremes (hard boundaries)
+      2) pivot-based cluster zones (inner structure)
     """
     if df is None or df.empty:
         return []
@@ -170,7 +196,7 @@ def get_key_zones(
     pivot_highs = find_pivot_highs(frame)
     pivot_lows = find_pivot_lows(frame)
 
-    zones: List[Zone] = []
+    zones: List[Zone] = rolling_extreme_zones(frame, lookback=lb)
     for cluster in cluster_levels(pivot_highs, tol):
         if len(cluster) >= min_t:
             zones.append(_build_zone(cluster, "resistance"))

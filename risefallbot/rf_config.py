@@ -36,8 +36,9 @@ RF_ZONE_TOUCH_TOLERANCE = 0.0003  # Price % tolerance for zone proximity
 RF_ZONE_MIN_TOUCHES = 2           # Minimum touches required for a valid zone
 
 # Candle quality filter: strong body with controlled wick size.
-RF_MOMENTUM_BODY_RATIO = 0.60     # Minimum body/range ratio
+RF_MOMENTUM_BODY_RATIO = 0.70     # Minimum body/range ratio
 RF_MOMENTUM_WICK_RATIO = 0.25     # Maximum wick/range ratio
+RF_MOMENTUM_AVG_LOOKBACK = 5      # Previous candles used for avg body comparison
 
 # Optimization feature flags.
 RF_ENABLE_ZONE_FILTER = True      # Gate signals through zone analysis
