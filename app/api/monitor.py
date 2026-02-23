@@ -18,6 +18,22 @@ from app.schemas.common import PerformanceResponse
 router = APIRouter()
 
 
+def _repair_mojibake_text(text: str) -> str:
+    """Repair UTF-8-as-Latin-1 mojibake for historical log lines."""
+    if not isinstance(text, str) or not text:
+        return text
+
+    if not any(marker in text for marker in ("â", "ð", "Ã", "ï")):
+        return text
+
+    for source_encoding in ("cp1252", "latin-1"):
+        try:
+            return text.encode(source_encoding).decode("utf-8")
+        except (UnicodeEncodeError, UnicodeDecodeError):
+            continue
+    return text
+
+
 def _normalize_strategy_name(strategy_name: str | None) -> str | None:
     """Normalize strategy names from profile/status payloads."""
     if not strategy_name:
@@ -194,6 +210,7 @@ async def get_recent_logs(
                 stripped = line.strip()
                 if not stripped:
                     continue
+                stripped = _repair_mojibake_text(stripped)
                 if _is_decorative_log_line(stripped):
                     continue
                 if not _should_include_log_line(stripped, user_id, active_strategy):

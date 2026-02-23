@@ -8,6 +8,24 @@ from typing import Optional
 from app.core.context import user_id_var
 from app.bot.events import event_manager
 
+
+def _repair_mojibake_text(text: Optional[str]) -> Optional[str]:
+    """
+    Repair UTF-8-as-Latin-1 mojibake in streamed log messages.
+    """
+    if not isinstance(text, str) or not text:
+        return text
+
+    if not any(marker in text for marker in ("â", "ð", "Ã", "ï")):
+        return text
+
+    for source_encoding in ("cp1252", "latin-1"):
+        try:
+            return text.encode(source_encoding).decode("utf-8")
+        except (UnicodeEncodeError, UnicodeDecodeError):
+            continue
+    return text
+
 class ContextInjectingFilter(logging.Filter):
     """
     Injects user_id from contextvars into the log record.
@@ -105,7 +123,7 @@ class WebSocketLoggingHandler(logging.Handler):
             if not user_id:
                 return
 
-            msg = record.getMessage()
+            msg = _repair_mojibake_text(record.getMessage())
 
             context_bot = self._normalize_strategy_to_bot_type(getattr(record, "bot_type", None))
             if context_bot in {"conservative", "scalping", "risefall", "system"}:

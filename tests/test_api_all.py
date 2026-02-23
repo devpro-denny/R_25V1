@@ -344,3 +344,25 @@ def test_monitor_logs_falls_back_when_user_file_is_empty(mock_auth):
         assert "Fallback file line" in response.json()["logs"][0]
         opened_paths = [str(c.args[0]).replace("\\", "/") for c in mock_open.call_args_list]
         assert opened_paths == [primary_path, fallback_path]
+
+
+def test_monitor_logs_repairs_mojibake_lines(mock_auth):
+    with patch("app.api.monitor.os.path.exists", return_value=True), \
+         patch("builtins.open") as mock_open, \
+         patch("app.api.monitor.bot_manager") as mock_manager:
+        mock_file = MagicMock()
+        mock_file.__enter__.return_value.readlines.return_value = [
+            "2026-02-23 08:21:34 | INFO | [u123] âœ… Trade Engine connected to Deriv API\n",
+            "2026-02-23 08:21:34 | INFO | [u123] â€¢ R_25: 160x\n",
+        ]
+        mock_open.return_value = mock_file
+        mock_manager.get_status.return_value = {
+            "is_running": True,
+            "active_strategy": "Scalping",
+        }
+
+        response = client.get("/api/v1/monitor/logs?lines=10")
+        assert response.status_code == 200
+        logs = response.json()["logs"]
+        assert any("✅ Trade Engine connected to Deriv API" in line for line in logs)
+        assert any("• R_25: 160x" in line for line in logs)

@@ -41,6 +41,53 @@ class BotTypeFilter(logging.Filter):
         return False
 
 
+def _repair_mojibake_text(text: Optional[str]) -> Optional[str]:
+    """
+    Repair common UTF-8-as-Latin-1 mojibake sequences in log messages.
+
+    Example:
+        "âœ…" -> "✅"
+        "ðŸŽ¯" -> "🎯"
+    """
+    if not isinstance(text, str) or not text:
+        return text
+
+    # Fast pre-check to avoid unnecessary work on normal ASCII text.
+    if not any(marker in text for marker in ("â", "ð", "Ã", "ï")):
+        return text
+
+    for source_encoding in ("cp1252", "latin-1"):
+        try:
+            return text.encode(source_encoding).decode("utf-8")
+        except (UnicodeEncodeError, UnicodeDecodeError):
+            continue
+    return text
+
+
+class MojibakeRepairFilter(logging.Filter):
+    """Normalize mojibake in record.msg/args before handlers format the line."""
+
+    def filter(self, record):
+        try:
+            if isinstance(record.msg, str):
+                record.msg = _repair_mojibake_text(record.msg)
+
+            if isinstance(record.args, tuple):
+                record.args = tuple(
+                    _repair_mojibake_text(arg) if isinstance(arg, str) else arg for arg in record.args
+                )
+            elif isinstance(record.args, dict):
+                record.args = {
+                    key: (_repair_mojibake_text(val) if isinstance(val, str) else val)
+                    for key, val in record.args.items()
+                }
+        except Exception:
+            # Never block logging due to sanitizer errors.
+            pass
+
+        return True
+
+
 def _safe_log_component(value: Optional[str]) -> str:
     """Sanitize dynamic log path components for safe filenames."""
     text = str(value) if value is not None else "anonymous"
@@ -154,6 +201,7 @@ def setup_logger(
     
     # Utilities logger also needs context filter
     context_filter = ContextInjectingFilter()
+    logger.addFilter(MojibakeRepairFilter())
     logger.addFilter(context_filter)
 
     # Add handlers
