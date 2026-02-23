@@ -62,13 +62,17 @@ class ScalpingStrategy(BaseStrategy):
             logger.error(f"[SCALPING][{symbol}] Insufficient data (need at least 50 candles per timeframe)")
             return {"can_trade": False, "details": {"reason": "Insufficient data (need >50 candles)"}}
 
-        # STEP 2/6: Trend alignment with fresh crossover + 1h structure confirmation
-        trend_1h = self._determine_trend(data_1h, "1h", fast_period=20, slow_period=50)
+        # STEP 2/6: 1h directional bias + 5m fresh trigger + 1h structure confirmation
+        trend_1h = self._determine_bias(data_1h, "1h", fast_period=20, slow_period=50)
         trend_5m = self._determine_trend(data_5m, "5m", fast_period=9, slow_period=21)
 
-        if trend_1h is None or trend_5m is None:
-            _step_log(2, "No fresh crossover on 1h/5m")
-            return {"can_trade": False, "details": {"reason": "No fresh crossover on 1h/5m"}}
+        if trend_1h is None:
+            _step_log(2, "No 1h trend bias (EMA20/50)")
+            return {"can_trade": False, "details": {"reason": "No 1h trend bias (EMA20/50)"}}
+
+        if trend_5m is None:
+            _step_log(2, "No fresh crossover on 5m")
+            return {"can_trade": False, "details": {"reason": "No fresh crossover on 5m"}}
 
         if trend_1h != trend_5m:
             _step_log(2, f"Trend mismatch (1h: {trend_1h}, 5m: {trend_5m})")
@@ -301,6 +305,38 @@ class ScalpingStrategy(BaseStrategy):
 
         _step_log(6, f"Signal generated ({direction}) | Confidence {signal['confidence']:.1f}")
         return signal
+
+    def _determine_bias(
+        self,
+        df: pd.DataFrame,
+        timeframe_name: str,
+        fast_period: int = 20,
+        slow_period: int = 50,
+    ) -> Optional[str]:
+        """
+        Determine directional EMA bias on the last closed bar.
+
+        Returns:
+            'UP', 'DOWN', or None when EMAs are equal/insufficient data.
+        """
+        min_required = slow_period + 5
+        if len(df) < min_required:
+            logger.debug(f"[SCALPING][{timeframe_name}] Insufficient candles for bias detection")
+            return None
+
+        ema_fast = self._calculate_ema(df, fast_period)
+        ema_slow = self._calculate_ema(df, slow_period)
+        if ema_fast is None or ema_slow is None:
+            return None
+
+        current_fast = float(ema_fast.iloc[-2])
+        current_slow = float(ema_slow.iloc[-2])
+
+        if current_fast > current_slow:
+            return "UP"
+        if current_fast < current_slow:
+            return "DOWN"
+        return None
 
     def _determine_trend(
         self,
