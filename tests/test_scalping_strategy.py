@@ -88,8 +88,9 @@ class TestScalpingStrategyAnalyze:
     @patch("scalping_strategy.calculate_rsi")
     @patch("scalping_strategy.calculate_adx")
     def test_analyze_trend_mismatch(self, mock_adx, mock_rsi, strategy, mock_ohlc):
-        with patch.object(ScalpingStrategy, "_determine_trend") as mock_trend:
-            mock_trend.side_effect = ["UP", "DOWN"]
+        with patch.object(ScalpingStrategy, "_determine_bias", return_value="UP"), patch.object(
+            ScalpingStrategy, "_determine_trend", return_value="DOWN"
+        ):
             result = strategy.analyze(data_1h=mock_ohlc, data_5m=mock_ohlc, data_1m=mock_ohlc)
             assert result["can_trade"] is False
             assert "Trend mismatch" in result["details"]["reason"]
@@ -97,7 +98,9 @@ class TestScalpingStrategyAnalyze:
     @patch("scalping_strategy.calculate_rsi")
     @patch("scalping_strategy.calculate_adx")
     def test_analyze_weak_adx(self, mock_adx, mock_rsi, strategy, mock_ohlc):
-        with patch.object(ScalpingStrategy, "_determine_trend", return_value="UP"):
+        with patch.object(ScalpingStrategy, "_determine_bias", return_value="UP"), patch.object(
+            ScalpingStrategy, "_determine_trend", return_value="UP"
+        ):
             mock_adx.return_value = pd.Series([10.0] * 60)
             mock_rsi.return_value = pd.Series([60.0] * 60)
             result = strategy.analyze(data_1h=mock_ohlc, data_5m=mock_ohlc, data_1m=mock_ohlc)
@@ -107,7 +110,9 @@ class TestScalpingStrategyAnalyze:
     @patch("scalping_strategy.calculate_rsi")
     @patch("scalping_strategy.calculate_adx")
     def test_analyze_adx_declining(self, mock_adx, mock_rsi, strategy, mock_ohlc):
-        with patch.object(ScalpingStrategy, "_determine_trend", return_value="UP"):
+        with patch.object(ScalpingStrategy, "_determine_bias", return_value="UP"), patch.object(
+            ScalpingStrategy, "_determine_trend", return_value="UP"
+        ):
             mock_rsi.return_value = pd.Series([60.0] * 60)
             mock_adx.return_value = pd.Series([30.0] * 57 + [30.0, 20.0, 20.0])
             result = strategy.analyze(data_1h=mock_ohlc, data_5m=mock_ohlc, data_1m=mock_ohlc)
@@ -117,7 +122,9 @@ class TestScalpingStrategyAnalyze:
     @patch("scalping_strategy.calculate_rsi")
     @patch("scalping_strategy.calculate_adx")
     def test_analyze_rsi_out_of_range_up(self, mock_adx, mock_rsi, strategy, mock_ohlc):
-        with patch.object(ScalpingStrategy, "_determine_trend", return_value="UP"):
+        with patch.object(ScalpingStrategy, "_determine_bias", return_value="UP"), patch.object(
+            ScalpingStrategy, "_determine_trend", return_value="UP"
+        ):
             mock_adx.return_value = pd.Series([25.0] * 60)
             mock_rsi.return_value = pd.Series([40.0] * 60)
             result = strategy.analyze(data_1h=mock_ohlc, data_5m=mock_ohlc, data_1m=mock_ohlc)
@@ -127,9 +134,9 @@ class TestScalpingStrategyAnalyze:
     @patch("scalping_strategy.calculate_rsi")
     @patch("scalping_strategy.calculate_adx")
     def test_analyze_no_momentum_breakout(self, mock_adx, mock_rsi, strategy, mock_ohlc):
-        with patch.object(ScalpingStrategy, "_determine_trend", return_value="UP"), patch.object(
-            ScalpingStrategy, "_calculate_atr", return_value=10.0
-        ):
+        with patch.object(ScalpingStrategy, "_determine_bias", return_value="UP"), patch.object(
+            ScalpingStrategy, "_determine_trend", return_value="UP"
+        ), patch.object(ScalpingStrategy, "_calculate_atr", return_value=10.0):
             mock_adx.return_value = pd.Series([25.0] * 60)
             mock_rsi.return_value = pd.Series([60.0] * 60)
 
@@ -144,9 +151,11 @@ class TestScalpingStrategyAnalyze:
     @patch("scalping_strategy.calculate_rsi")
     @patch("scalping_strategy.calculate_adx")
     def test_analyze_parabolic_spike_fails(self, mock_adx, mock_rsi, strategy, mock_ohlc):
-        with patch.object(ScalpingStrategy, "_determine_trend", return_value="UP"), patch.object(
-            ScalpingStrategy, "_calculate_atr", return_value=0.5
-        ), patch.object(ScalpingStrategy, "_is_parabolic_spike", return_value=True):
+        with patch.object(ScalpingStrategy, "_determine_bias", return_value="UP"), patch.object(
+            ScalpingStrategy, "_determine_trend", return_value="UP"
+        ), patch.object(ScalpingStrategy, "_calculate_atr", return_value=0.5), patch.object(
+            ScalpingStrategy, "_is_parabolic_spike", return_value=True
+        ):
             mock_adx.return_value = pd.Series([25.0] * 60)
             mock_rsi.return_value = pd.Series([60.0] * 60)
 
@@ -163,9 +172,11 @@ class TestScalpingStrategyAnalyze:
     @patch("scalping_strategy.calculate_rsi")
     @patch("scalping_strategy.calculate_adx")
     def test_analyze_zone_proximity_gate(self, mock_adx, mock_rsi, strategy, mock_ohlc):
-        with patch.object(ScalpingStrategy, "_determine_trend", return_value="UP"), patch.object(
-            ScalpingStrategy, "_calculate_atr", return_value=0.5
-        ), patch.object(ScalpingStrategy, "_is_parabolic_spike", return_value=False):
+        with patch.object(ScalpingStrategy, "_determine_bias", return_value="UP"), patch.object(
+            ScalpingStrategy, "_determine_trend", return_value="UP"
+        ), patch.object(ScalpingStrategy, "_calculate_atr", return_value=0.5), patch.object(
+            ScalpingStrategy, "_is_parabolic_spike", return_value=False
+        ):
             mock_adx.return_value = pd.Series([25.0] * 60)
             mock_rsi.return_value = pd.Series([60.0] * 60)
 
@@ -181,11 +192,11 @@ class TestScalpingStrategyAnalyze:
     @patch("scalping_strategy.calculate_rsi")
     @patch("scalping_strategy.calculate_adx")
     def test_analyze_success_up(self, mock_adx, mock_rsi, strategy, mock_ohlc):
-        with patch.object(ScalpingStrategy, "_determine_trend", return_value="UP"), patch.object(
-            ScalpingStrategy, "_calculate_atr", return_value=0.5
-        ), patch.object(ScalpingStrategy, "_is_parabolic_spike", return_value=False), patch.object(
-            ScalpingStrategy, "_price_near_zone", return_value=(True, {"level": 100.5, "type": "support"})
-        ), patch.object(
+        with patch.object(ScalpingStrategy, "_determine_bias", return_value="UP"), patch.object(
+            ScalpingStrategy, "_determine_trend", return_value="UP"
+        ), patch.object(ScalpingStrategy, "_calculate_atr", return_value=0.5), patch.object(
+            ScalpingStrategy, "_is_parabolic_spike", return_value=False
+        ), patch.object(ScalpingStrategy, "_price_near_zone", return_value=(True, {"level": 100.5, "type": "support"})), patch.object(
             ScalpingStrategy, "_confirm_zone_rejection", return_value=True
         ), patch.object(
             ScalpingStrategy, "_detect_1m_pattern", return_value="engulfing"

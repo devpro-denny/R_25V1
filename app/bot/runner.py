@@ -187,6 +187,8 @@ class BotRunner:
 
         reason_map = [
             ("no fresh crossover on 1h/5m", "gate_2_trend:no_fresh_crossover"),
+            ("no fresh crossover on 5m", "gate_2_trend:no_fresh_crossover"),
+            ("no 1h trend bias", "gate_2_trend:no_1h_trend_bias"),
             ("trend mismatch", "gate_2_trend:trend_mismatch"),
             ("no 1h break of structure", "gate_2_trend:no_1h_break_of_structure"),
             ("weak trend (adx", "gate_3_indicators:adx_below_threshold"),
