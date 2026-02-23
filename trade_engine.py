@@ -28,7 +28,7 @@ except Exception as e:
 class TradeEngine:
     """Handles trade execution across multiple assets with dynamic multipliers"""
     
-    def __init__(self, api_token: str, app_id: str = "1089"):
+    def __init__(self, api_token: str, app_id: str = "1089", risk_mode: Optional[str] = None):
         """Initialize TradeEngine with multi-asset support"""
         self.api_token = api_token
         self.app_id = app_id
@@ -40,7 +40,7 @@ class TradeEngine:
         self.max_reconnect_attempts = 5
         
         # Risk mode configuration
-        self.risk_mode = getattr(config, 'RISK_MODE', 'TOP_DOWN')
+        self.risk_mode = str(risk_mode).strip().upper() if risk_mode else getattr(config, 'RISK_MODE', 'TOP_DOWN')
         self.use_topdown_strategy = getattr(config, 'USE_TOPDOWN_STRATEGY', True)
         
         # Load asset configurations

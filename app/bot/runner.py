@@ -650,7 +650,8 @@ class BotRunner:
                 
                 self.trade_engine = TradeEngine(
                     token_to_use,
-                    config.DERIV_APP_ID
+                    config.DERIV_APP_ID,
+                    risk_mode=(self._get_strategy_name() or "Conservative").strip().upper(),
                 )
                 
                 # Only initialize risk_manager if not already injected
