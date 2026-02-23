@@ -3,6 +3,7 @@ import sys
 import asyncio
 import time
 import re
+from datetime import datetime, timezone
 from typing import Optional
 
 from app.core.context import user_id_var
@@ -155,12 +156,18 @@ class WebSocketLoggingHandler(logging.Handler):
             try:
                 loop = asyncio.get_running_loop()
                 if loop.is_running():
+                    try:
+                        # Frontend expects ISO-8601 strings for consistent Date parsing.
+                        ts = datetime.fromtimestamp(float(record.created), tz=timezone.utc).isoformat()
+                    except Exception:
+                        ts = datetime.now(timezone.utc).isoformat()
+
                     payload = {
                         "type": "log",
                         "bot": record_bot,
                         "level": record.levelname,
                         "message": msg,
-                        "timestamp": record.created,
+                        "timestamp": ts,
                         "account_id": user_id
                     }
                     loop.create_task(event_manager.broadcast(payload))

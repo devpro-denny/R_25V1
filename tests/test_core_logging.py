@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from datetime import datetime
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -38,6 +39,9 @@ async def test_ws_logging_handler_emits_only_matching_running_bot():
         assert payload["type"] == "log"
         assert payload["bot"] == "risefall"
         assert payload["account_id"] == "u1"
+        assert isinstance(payload["timestamp"], str)
+        # Must be parseable ISO-8601 so frontend Date rendering is stable.
+        datetime.fromisoformat(payload["timestamp"])
 
 
 @pytest.mark.asyncio
