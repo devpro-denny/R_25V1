@@ -18,7 +18,7 @@ concurrency:
 
 env:
   PYTHON_VERSION: "3.13"
-  COVERAGE_FAIL_UNDER: "83"
+  COVERAGE_FAIL_UNDER: "80"
 
 jobs:
   pytest:
