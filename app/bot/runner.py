@@ -443,9 +443,9 @@ class BotRunner:
             # Create bot task
             self.task = asyncio.create_task(self._run_bot())
             
-            # Wait for bot to fully initialize
-            max_wait = 10
-            for i in range(max_wait):
+            # Wait for bot to fully initialize (network handshakes can exceed 10s).
+            max_wait = max(int(getattr(config, "BOT_STARTUP_TIMEOUT_SECONDS", 25)), 5)
+            for _ in range(max_wait):
                 await asyncio.sleep(1)
                 
                 if self.is_running:
@@ -468,8 +468,20 @@ class BotRunner:
                 if self.status == BotStatus.ERROR:
                     error_msg = self.error_message or "Bot initialization failed"
                     raise Exception(error_msg)
+
+                if self.task and self.task.done():
+                    task_error = None
+                    try:
+                        task_error = self.task.exception()
+                    except asyncio.CancelledError:
+                        task_error = asyncio.CancelledError()
+
+                    if task_error:
+                        raise Exception(f"Bot startup task failed: {task_error}")
+
+                    raise Exception(self.error_message or "Bot startup task exited before running")
             
-            raise Exception("Bot startup timeout")
+            raise Exception(f"Bot startup timeout ({max_wait}s)")
                 
         except Exception as e:
             self._cycle_step("SYSTEM", 6, 6, f"Startup failed: {e}", emoji="\u274C", level="error")
