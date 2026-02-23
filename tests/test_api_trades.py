@@ -46,6 +46,7 @@ def test_get_trade_history():
             "contract_id": 456, 
             "symbol": "R_10",
             "direction": "PUT",
+            "strategy_type": "Scalping",
             "status": "won",
             "profit": 5.0
         }]
@@ -55,6 +56,7 @@ def test_get_trade_history():
         assert response.status_code == 200
         data = response.json()
         assert data[0]["contract_id"] == "456"
+        assert data[0]["strategy_type"] == "Scalping"
 
 def test_get_trade_stats():
     """Test /stats endpoint."""
