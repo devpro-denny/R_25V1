@@ -55,6 +55,9 @@ SCALPING_TP_ATR_MULTIPLIER = 2.25
 SCALPING_BODY_RATIO_MIN = 0.65
 SCALPING_ADX_SLOPE_MIN = -1.5
 SCALPING_ZONE_TOLERANCE_PCT = 0.0015
+# 5m EMA fallback minimum slope (percent change per closed candle) used when
+# there is no recent fresh crossover.
+SCALPING_5M_EMA_SLOPE_MIN_PCT = 0.005
 
 # Asset-specific movement thresholds (conservative × 1.7)
 SCALPING_ASSET_MOVEMENT_MULTIPLIER = 1.7

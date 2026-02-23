@@ -69,7 +69,9 @@ class ScalpingStrategy(BaseStrategy):
             "5m",
             fast_period=9,
             slow_period=21,
-            crossover_lookback=3,
+            crossover_lookback=5,
+            allow_alignment_fallback=True,
+            min_slope_pct=getattr(scalping_config, "SCALPING_5M_EMA_SLOPE_MIN_PCT", 0.0),
         )
 
         if trend_1h is None:
@@ -351,12 +353,15 @@ class ScalpingStrategy(BaseStrategy):
         fast_period: int = 9,
         slow_period: int = 21,
         crossover_lookback: int = 1,
+        allow_alignment_fallback: bool = False,
+        min_slope_pct: float = 0.0,
     ) -> Optional[str]:
         """
-        Determine trend using a fresh EMA crossover on recent closed bars.
+        Determine trend using fresh crossover first, with optional EMA
+        alignment+slope fallback on the latest closed bar.
 
         Returns:
-            'UP', 'DOWN', or None if no fresh crossover.
+            'UP', 'DOWN', or None if no qualifying signal is present.
         """
         lookback = max(int(crossover_lookback), 1)
         min_required = max(slow_period + 5, lookback + 3)
@@ -388,6 +393,39 @@ class ScalpingStrategy(BaseStrategy):
                 return "UP"
             if crossed_down:
                 return "DOWN"
+
+        if not allow_alignment_fallback:
+            return None
+
+        # Fallback: accept EMA alignment only when slope confirms momentum.
+        prev_fast = float(ema_fast.iloc[-3])
+        prev_slow = float(ema_slow.iloc[-3])
+        current_fast = float(ema_fast.iloc[-2])
+        current_slow = float(ema_slow.iloc[-2])
+
+        if prev_fast == 0 or prev_slow == 0:
+            return None
+
+        fast_slope_pct = ((current_fast - prev_fast) / abs(prev_fast)) * 100.0
+        slow_slope_pct = ((current_slow - prev_slow) / abs(prev_slow)) * 100.0
+        slope_threshold = max(float(min_slope_pct), 0.0)
+
+        aligned_up = (
+            current_fast > current_slow
+            and fast_slope_pct >= slope_threshold
+            and slow_slope_pct >= slope_threshold
+        )
+        if aligned_up:
+            return "UP"
+
+        aligned_down = (
+            current_fast < current_slow
+            and fast_slope_pct <= -slope_threshold
+            and slow_slope_pct <= -slope_threshold
+        )
+        if aligned_down:
+            return "DOWN"
+
         return None
 
     def _calculate_ema(self, df: pd.DataFrame, period: int) -> Optional[pd.Series]:

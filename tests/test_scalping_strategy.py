@@ -3,6 +3,7 @@ import pytest
 from unittest.mock import patch
 
 from scalping_strategy import ScalpingStrategy
+from scalping_strategy import config as scalping_config
 
 
 @pytest.fixture
@@ -98,6 +99,52 @@ class TestScalpingStrategyTrend:
             assert trend_default is None
             assert trend_lookback == "UP"
 
+    def test_determine_trend_fallback_alignment_with_slope(self, strategy):
+        df = pd.DataFrame({"close": [100.0] * 60})
+        fast = pd.Series([100.0] * 60)
+        slow = pd.Series([100.0] * 60)
+        # No crossover on latest closed pair, but aligned with positive slope.
+        fast.iloc[-3] = 100.10
+        slow.iloc[-3] = 100.00
+        fast.iloc[-2] = 100.20
+        slow.iloc[-2] = 100.10
+
+        with patch.object(ScalpingStrategy, "_calculate_ema") as mock_ema:
+            mock_ema.side_effect = [fast, slow]
+            trend = strategy._determine_trend(
+                df,
+                "5m",
+                fast_period=9,
+                slow_period=21,
+                crossover_lookback=1,
+                allow_alignment_fallback=True,
+                min_slope_pct=0.005,
+            )
+            assert trend == "UP"
+
+    def test_determine_trend_fallback_rejects_flat_slope(self, strategy):
+        df = pd.DataFrame({"close": [100.0] * 60})
+        fast = pd.Series([100.0] * 60)
+        slow = pd.Series([100.0] * 60)
+        # Aligned but nearly flat slope below threshold.
+        fast.iloc[-3] = 100.1000
+        slow.iloc[-3] = 100.0000
+        fast.iloc[-2] = 100.1001
+        slow.iloc[-2] = 100.0001
+
+        with patch.object(ScalpingStrategy, "_calculate_ema") as mock_ema:
+            mock_ema.side_effect = [fast, slow]
+            trend = strategy._determine_trend(
+                df,
+                "5m",
+                fast_period=9,
+                slow_period=21,
+                crossover_lookback=1,
+                allow_alignment_fallback=True,
+                min_slope_pct=0.005,
+            )
+            assert trend is None
+
 
 class TestScalpingStrategyAnalyze:
     def test_analyze_missing_data(self, strategy):
@@ -110,6 +157,22 @@ class TestScalpingStrategyAnalyze:
         result = strategy.analyze(data_1h=short_df, data_5m=short_df, data_1m=short_df)
         assert result["can_trade"] is False
         assert "Insufficient data" in result["details"]["reason"]
+
+    def test_analyze_uses_extended_5m_crossover_lookback(self, strategy, mock_ohlc):
+        with patch.object(ScalpingStrategy, "_determine_bias", return_value="UP"), patch.object(
+            ScalpingStrategy, "_determine_trend", return_value=None
+        ) as mock_trend:
+            result = strategy.analyze(data_1h=mock_ohlc, data_5m=mock_ohlc, data_1m=mock_ohlc)
+            assert result["can_trade"] is False
+            assert "No fresh crossover on 5m" in result["details"]["reason"]
+            mock_trend.assert_called_once()
+            args, kwargs = mock_trend.call_args
+            assert args == (mock_ohlc, "5m")
+            assert kwargs["fast_period"] == 9
+            assert kwargs["slow_period"] == 21
+            assert kwargs["crossover_lookback"] == 5
+            assert kwargs["allow_alignment_fallback"] is True
+            assert kwargs["min_slope_pct"] == scalping_config.SCALPING_5M_EMA_SLOPE_MIN_PCT
 
     @patch("scalping_strategy.calculate_rsi")
     @patch("scalping_strategy.calculate_adx")
