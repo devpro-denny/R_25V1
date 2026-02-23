@@ -13,7 +13,7 @@ Optimization layers (config-gated):
   - scenario classification (breakout/retest/basic)
 """
 
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 import logging
 
 import pandas as pd
@@ -103,6 +103,27 @@ class RiseFallStrategy(BaseStrategy):
         self.enable_zone_filter = _cfg_bool("RF_ENABLE_ZONE_FILTER", False)
         self.enable_candle_filter = _cfg_bool("RF_ENABLE_CANDLE_FILTER", False)
         self.retest_lookback = _cfg_int("RF_RETEST_LOOKBACK", 5)
+        self._last_analysis: Dict[str, Dict[str, Any]] = {}
+
+    def _set_analysis(
+        self,
+        symbol: str,
+        decision: str,
+        reason: str,
+        code: str,
+        details: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        self._last_analysis[symbol] = {
+            "decision": decision,
+            "reason": reason,
+            "code": code,
+            "details": details or {},
+        }
+
+    def get_last_analysis(self, symbol: str) -> Dict[str, Any]:
+        """Return the latest analyze() decision metadata for the symbol."""
+        data = self._last_analysis.get(symbol, {})
+        return dict(data) if isinstance(data, dict) else {}
 
     def analyze(self, **kwargs) -> Optional[Dict]:
         """
@@ -114,10 +135,23 @@ class RiseFallStrategy(BaseStrategy):
 
         if df is None or df.empty:
             logger.debug(f"[RF][{symbol}] No 1m data available")
+            self._set_analysis(
+                symbol,
+                decision="no_trade",
+                reason="No 1m data available",
+                code="no_data",
+            )
             return None
 
         if len(df) < self.min_bars:
             logger.debug(f"[RF][{symbol}] Warm-up: {len(df)}/{self.min_bars} bars")
+            self._set_analysis(
+                symbol,
+                decision="no_trade",
+                reason=f"Warm-up: {len(df)}/{self.min_bars} bars",
+                code="warmup_insufficient_bars",
+                details={"bars": int(len(df)), "min_bars": int(self.min_bars)},
+            )
             return None
 
         # --- Compute indicators ---
@@ -134,6 +168,12 @@ class RiseFallStrategy(BaseStrategy):
 
         if pd.isna(ema_f) or pd.isna(ema_s) or pd.isna(rsi_val) or pd.isna(stoch_val):
             logger.debug(f"[RF][{symbol}] Indicator NaN - skipping")
+            self._set_analysis(
+                symbol,
+                decision="no_trade",
+                reason="Indicator NaN - skipping",
+                code="indicator_nan",
+            )
             return None
 
         # --- Zone and candle analysis ---
@@ -160,10 +200,27 @@ class RiseFallStrategy(BaseStrategy):
 
         if self.enable_zone_filter and not near_zone:
             logger.debug(f"[RF][{symbol}] Price not near key zone - waiting")
+            self._set_analysis(
+                symbol,
+                decision="no_trade",
+                reason="Price not near key zone",
+                code="zone_miss",
+                details={
+                    "zones_count": int(len(zones)),
+                    "current_price": float(current_price),
+                },
+            )
             return None
 
         if self.enable_candle_filter and not has_momentum:
             logger.debug(f"[RF][{symbol}] No momentum candle - waiting")
+            self._set_analysis(
+                symbol,
+                decision="no_trade",
+                reason="No momentum candle",
+                code="candle_quality_fail",
+                details={"candle_direction": candle_dir},
+            )
             return None
 
         logger.info(
@@ -188,24 +245,58 @@ class RiseFallStrategy(BaseStrategy):
 
         if direction is None:
             logger.debug(f"[RF][{symbol}] No triple-confirmation - no signal")
+            self._set_analysis(
+                symbol,
+                decision="no_trade",
+                reason="Triple-confirmation not met",
+                code="triple_confirmation_fail",
+            )
             return None
 
         # Structural bias alignment (part of zone layer)
         if self.enable_zone_filter:
             if direction == "CALL" and market_bias == "bearish":
                 logger.debug(f"[RF][{symbol}] CALL against bearish bias - skipping")
+                self._set_analysis(
+                    symbol,
+                    decision="no_trade",
+                    reason="CALL against bearish market bias",
+                    code="bias_mismatch",
+                    details={"direction": direction, "market_bias": market_bias},
+                )
                 return None
             if direction == "PUT" and market_bias == "bullish":
                 logger.debug(f"[RF][{symbol}] PUT against bullish bias - skipping")
+                self._set_analysis(
+                    symbol,
+                    decision="no_trade",
+                    reason="PUT against bullish market bias",
+                    code="bias_mismatch",
+                    details={"direction": direction, "market_bias": market_bias},
+                )
                 return None
 
         # Candle-direction alignment (part of candle layer)
         if self.enable_candle_filter:
             if direction == "CALL" and candle_dir != "bullish":
                 logger.debug(f"[RF][{symbol}] Candle direction mismatch for CALL")
+                self._set_analysis(
+                    symbol,
+                    decision="no_trade",
+                    reason="Candle direction mismatch for CALL",
+                    code="candle_direction_mismatch",
+                    details={"direction": direction, "candle_direction": candle_dir},
+                )
                 return None
             if direction == "PUT" and candle_dir != "bearish":
                 logger.debug(f"[RF][{symbol}] Candle direction mismatch for PUT")
+                self._set_analysis(
+                    symbol,
+                    decision="no_trade",
+                    reason="Candle direction mismatch for PUT",
+                    code="candle_direction_mismatch",
+                    details={"direction": direction, "candle_direction": candle_dir},
+                )
                 return None
 
         scenario = classify_scenario(
@@ -219,6 +310,13 @@ class RiseFallStrategy(BaseStrategy):
         if self.enable_zone_filter and scenario == "basic":
             logger.debug(
                 f"[RF][{symbol}] Basic scenario without structural trigger - waiting"
+            )
+            self._set_analysis(
+                symbol,
+                decision="no_trade",
+                reason="Basic scenario without structural trigger",
+                code="basic_scenario_filtered",
+                details={"scenario": scenario},
             )
             return None
 
@@ -242,6 +340,21 @@ class RiseFallStrategy(BaseStrategy):
         }
         logger.info(
             f"[RF][{symbol}] Signal: {direction} | Stake: ${stake} | Scenario: {scenario}"
+        )
+        self._set_analysis(
+            symbol,
+            decision="signal",
+            reason=f"Signal {direction} accepted",
+            code="signal_ready",
+            details={
+                "direction": direction,
+                "scenario": scenario,
+                "market_bias": market_bias,
+                "zone_type": matched_zone["type"] if matched_zone else None,
+                "zone_level": float(matched_zone["level"]) if matched_zone else None,
+                "candle_direction": candle_dir,
+                "candle_momentum": bool(has_momentum),
+            },
         )
         return signal
 
