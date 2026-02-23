@@ -72,6 +72,32 @@ class TestScalpingStrategyTrend:
             trend = strategy._determine_trend(df, "1h", fast_period=20, slow_period=50)
             assert trend is None
 
+    def test_determine_trend_uses_recent_crossover_lookback(self, strategy):
+        df = pd.DataFrame({"close": [100.0] * 60})
+        fast = pd.Series([100.0] * 60)
+        slow = pd.Series([100.0] * 60)
+        # Crossover happened one closed candle earlier (between -4 and -3),
+        # not on the latest closed pair (-3 and -2).
+        fast.iloc[-4] = 99.0
+        slow.iloc[-4] = 100.0
+        fast.iloc[-3] = 101.0
+        slow.iloc[-3] = 100.0
+        fast.iloc[-2] = 101.0
+        slow.iloc[-2] = 100.0
+
+        with patch.object(ScalpingStrategy, "_calculate_ema") as mock_ema:
+            mock_ema.side_effect = [fast, slow, fast, slow]
+            trend_default = strategy._determine_trend(df, "5m", fast_period=9, slow_period=21)
+            trend_lookback = strategy._determine_trend(
+                df,
+                "5m",
+                fast_period=9,
+                slow_period=21,
+                crossover_lookback=3,
+            )
+            assert trend_default is None
+            assert trend_lookback == "UP"
+
 
 class TestScalpingStrategyAnalyze:
     def test_analyze_missing_data(self, strategy):
