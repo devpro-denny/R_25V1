@@ -64,7 +64,13 @@ class ScalpingStrategy(BaseStrategy):
 
         # STEP 2/6: 1h directional bias + 5m fresh trigger + 1h structure confirmation
         trend_1h = self._determine_bias(data_1h, "1h", fast_period=20, slow_period=50)
-        trend_5m = self._determine_trend(data_5m, "5m", fast_period=9, slow_period=21)
+        trend_5m = self._determine_trend(
+            data_5m,
+            "5m",
+            fast_period=9,
+            slow_period=21,
+            crossover_lookback=3,
+        )
 
         if trend_1h is None:
             _step_log(2, "No 1h trend bias (EMA20/50)")
@@ -344,14 +350,16 @@ class ScalpingStrategy(BaseStrategy):
         timeframe_name: str,
         fast_period: int = 9,
         slow_period: int = 21,
+        crossover_lookback: int = 1,
     ) -> Optional[str]:
         """
-        Determine trend using a fresh EMA crossover on the last closed bar.
+        Determine trend using a fresh EMA crossover on recent closed bars.
 
         Returns:
             'UP', 'DOWN', or None if no fresh crossover.
         """
-        min_required = slow_period + 5
+        lookback = max(int(crossover_lookback), 1)
+        min_required = max(slow_period + 5, lookback + 3)
         if len(df) < min_required:
             logger.debug(f"[SCALPING][{timeframe_name}] Insufficient candles for trend detection")
             return None
@@ -361,18 +369,25 @@ class ScalpingStrategy(BaseStrategy):
         if ema_fast is None or ema_slow is None:
             return None
 
-        prev_fast = float(ema_fast.iloc[-3])
-        prev_slow = float(ema_slow.iloc[-3])
-        current_fast = float(ema_fast.iloc[-2])
-        current_slow = float(ema_slow.iloc[-2])
+        # Evaluate closed-candle cross events from most recent to older bars.
+        for step in range(lookback):
+            current_idx = -2 - step
+            prev_idx = current_idx - 1
+            if abs(prev_idx) > len(ema_fast):
+                break
 
-        crossed_up = (prev_fast <= prev_slow) and (current_fast > current_slow)
-        crossed_down = (prev_fast >= prev_slow) and (current_fast < current_slow)
+            prev_fast = float(ema_fast.iloc[prev_idx])
+            prev_slow = float(ema_slow.iloc[prev_idx])
+            current_fast = float(ema_fast.iloc[current_idx])
+            current_slow = float(ema_slow.iloc[current_idx])
 
-        if crossed_up:
-            return "UP"
-        if crossed_down:
-            return "DOWN"
+            crossed_up = (prev_fast <= prev_slow) and (current_fast > current_slow)
+            crossed_down = (prev_fast >= prev_slow) and (current_fast < current_slow)
+
+            if crossed_up:
+                return "UP"
+            if crossed_down:
+                return "DOWN"
         return None
 
     def _calculate_ema(self, df: pd.DataFrame, period: int) -> Optional[pd.Series]:
