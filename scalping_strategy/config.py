@@ -84,7 +84,7 @@ SCALPING_TRAIL_ACTIVATION_PCT = 8.0   # Trail activates at 8% profit of stake
 # As profit grows, the trail widens to give big winners room to breathe.
 # Tiers are checked from highest to lowest; first match wins.
 SCALPING_TRAIL_TIERS = [
-    (25.0, 7.0),   # 25%+ profit → 7% trail distance
-    (15.0, 5.0),   # 15-25% profit → 5% trail distance
-    (8.0,  3.0),   # 8-15% profit → 3% trail distance (default)
+    (30.0, 7.0),   # 30%+ profit -> 7% trail distance
+    (15.0, 5.0),   # 15-30% profit -> 5% trail distance
+    (12.0, 3.0),   # 12-15% profit -> 3% trail distance (default)
 ]
