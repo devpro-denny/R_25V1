@@ -164,6 +164,18 @@ async def get_performance(current_user: dict = Depends(get_current_active_user))
         "error_rate": round(error_rate, 2),
         "active_connections": len(event_manager.active_connections),
     }
+
+    # Include scalping opportunity frequency metrics when available.
+    try:
+        if hasattr(bot, "get_scalping_gate_metrics"):
+            status = bot.get_status() if hasattr(bot, "get_status") else {}
+            active_strategy = _normalize_strategy_name(status.get("active_strategy")) if isinstance(status, dict) else None
+            if active_strategy == "Scalping":
+                performance.update(bot.get_scalping_gate_metrics())
+    except Exception:
+        # Keep performance endpoint resilient even if optional metric extraction fails.
+        pass
+
     return prepare_response(performance)
 
 

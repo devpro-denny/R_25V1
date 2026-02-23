@@ -206,6 +206,44 @@ def test_monitor_performance(mock_auth):
         assert response.json()["error_rate"] == 5.0
         assert response.json()["win_rate"] == 80.0
 
+
+def test_monitor_performance_includes_scalping_gate_metrics(mock_auth):
+    with patch("app.api.monitor.bot_manager") as mock_manager:
+        mock_bot = MagicMock()
+        mock_bot.scan_count = 20
+        mock_bot.errors_by_symbol = {"R_25": 1}
+        mock_bot.state.get_performance.return_value = {
+            "uptime_seconds": 120,
+            "cycles_completed": 4,
+        }
+        mock_bot.state.get_statistics.return_value = {
+            "total_trades": 1,
+            "winning_trades": 1,
+            "losing_trades": 0,
+            "win_rate": 100.0,
+            "total_pnl": 5.0,
+            "daily_pnl": 5.0,
+        }
+        mock_bot.get_status.return_value = {"active_strategy": "Scalping"}
+        mock_bot.get_scalping_gate_metrics.return_value = {
+            "scalping_total_symbol_checks": 50,
+            "scalping_signals_generated": 2,
+            "scalping_rejections": 48,
+            "scalping_opportunity_rate_pct": 4.0,
+            "scalping_gate_counters": {"gate_2_trend:no_fresh_crossover": 40},
+        }
+
+        mock_manager.get_bot.return_value = mock_bot
+
+        response = client.get("/api/v1/monitor/performance")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["scalping_total_symbol_checks"] == 50
+        assert data["scalping_signals_generated"] == 2
+        assert data["scalping_rejections"] == 48
+        assert data["scalping_opportunity_rate_pct"] == 4.0
+        assert data["scalping_gate_counters"]["gate_2_trend:no_fresh_crossover"] == 40
+
 def test_monitor_logs(mock_auth):
     with patch("app.api.monitor.os.path.exists", return_value=True), \
          patch("builtins.open") as mock_open, \
