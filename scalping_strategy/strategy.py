@@ -1,31 +1,34 @@
 """
 Scalping Strategy Implementation
-3-timeframe analysis with relaxed thresholds for more frequent trading
+3-timeframe analysis with focused entry-quality filters.
 """
 
-from base_strategy import BaseStrategy
-from typing import Dict, List, Optional
 from datetime import datetime
-import pandas as pd
-import numpy as np
 from importlib import import_module
+from typing import Any, Dict, List, Optional, Tuple
+
+import numpy as np
+import pandas as pd
+
+from base_strategy import BaseStrategy
+from indicators import calculate_adx as _default_calculate_adx
+from indicators import calculate_rsi as _default_calculate_rsi
 from utils import setup_logger
+
 from . import config as scalping_config
-from indicators import calculate_rsi as _default_calculate_rsi, calculate_adx as _default_calculate_adx
 
 logger = setup_logger()
 
 
 class ScalpingStrategy(BaseStrategy):
     """
-    Scalping strategy using 3 timeframes (1h, 5m, 1m) with relaxed validation rules.
-    Trades more frequently than conservative strategy with tighter risk management.
+    Scalping strategy using 3 timeframes (1h, 5m, 1m).
     """
-    
+
     def __init__(self):
-        """Initialize scalping strategy"""
+        """Initialize scalping strategy."""
         pass
-    
+
     def analyze(self, **kwargs) -> Optional[Dict]:
         """
         Analyze market data for scalping opportunities.
@@ -34,47 +37,54 @@ class ScalpingStrategy(BaseStrategy):
             **kwargs: Must include data_1h, data_5m, data_1m, symbol
 
         Returns:
-            Signal dict if trade should be executed, None otherwise
+            Signal dict if trade should be executed, otherwise a rejected signal dict.
         """
-        data_1h = kwargs.get('data_1h')
-        data_5m = kwargs.get('data_5m')
-        data_1m = kwargs.get('data_1m')
-        symbol = kwargs.get('symbol', 'R_50')
+        data_1h = kwargs.get("data_1h")
+        data_5m = kwargs.get("data_5m")
+        data_1m = kwargs.get("data_1m")
+        symbol = kwargs.get("symbol", "R_50")
 
-        def _step_log(step: int, message: str, emoji: str = "ℹ️", level: str = "info") -> None:
+        def _step_log(step: int, message: str, level: str = "info") -> None:
             ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            line = f"[SCALPING][{symbol}] STEP {step}/6 | {ts} | {emoji} {message}"
+            line = f"[SCALPING][{symbol}] STEP {step}/6 | {ts} | {message}"
             getattr(logger, level)(line)
 
         # STEP 1/6: Validate input data
-        _step_log(1, "Starting analysis", emoji="🔎")
+        _step_log(1, "Starting analysis")
         if not all([data_1h is not None, data_5m is not None, data_1m is not None]):
-            logger.error(f"[SCALPING][{symbol}] ❌ Missing required timeframe data (1h, 5m, 1m)")
-            return {'can_trade': False, 'details': {'reason': 'Missing required timeframe data (1h, 5m, 1m)'}}
+            logger.error(f"[SCALPING][{symbol}] Missing required timeframe data (1h, 5m, 1m)")
+            return {
+                "can_trade": False,
+                "details": {"reason": "Missing required timeframe data (1h, 5m, 1m)"},
+            }
 
         if len(data_1h) < 50 or len(data_5m) < 50 or len(data_1m) < 50:
-            logger.error(f"[SCALPING][{symbol}] ❌ Insufficient data (need at least 50 candles per timeframe)")
-            return {'can_trade': False, 'details': {'reason': 'Insufficient data (need >50 candles)'}}
+            logger.error(f"[SCALPING][{symbol}] Insufficient data (need at least 50 candles per timeframe)")
+            return {"can_trade": False, "details": {"reason": "Insufficient data (need >50 candles)"}}
 
-        current_price = data_1m['close'].iloc[-1]
-        logger.debug(f"[SCALPING][{symbol}] 💰 Price={current_price:.5f}")
-
-        # STEP 2/6: Trend alignment
-        trend_1h = self._determine_trend(data_1h, '1h')
-        trend_5m = self._determine_trend(data_5m, '5m')
+        # STEP 2/6: Trend alignment with fresh crossover + 1h structure confirmation
+        trend_1h = self._determine_trend(data_1h, "1h", fast_period=20, slow_period=50)
+        trend_5m = self._determine_trend(data_5m, "5m", fast_period=9, slow_period=21)
 
         if trend_1h is None or trend_5m is None:
-            _step_log(2, "Trend unavailable", emoji="❌")
-            return {'can_trade': False, 'details': {'reason': 'Could not determine trend'}}
+            _step_log(2, "No fresh crossover on 1h/5m")
+            return {"can_trade": False, "details": {"reason": "No fresh crossover on 1h/5m"}}
 
         if trend_1h != trend_5m:
-            _step_log(2, f"Trend mismatch (1h: {trend_1h}, 5m: {trend_5m})", emoji="❌")
-            return {'can_trade': False, 'details': {'reason': f'Trend mismatch (1h: {trend_1h}, 5m: {trend_5m})'}}
+            _step_log(2, f"Trend mismatch (1h: {trend_1h}, 5m: {trend_5m})")
+            return {
+                "can_trade": False,
+                "details": {"reason": f"Trend mismatch (1h: {trend_1h}, 5m: {trend_5m})"},
+            }
 
         direction = trend_1h
-        _step_log(2, f"Trend aligned: {direction}", emoji="✅")
+        if not self._check_1h_break_of_structure(data_1h, direction):
+            _step_log(2, f"No 1h break of structure for {direction}")
+            return {"can_trade": False, "details": {"reason": f"No 1h break of structure for {direction}"}}
 
-        # STEP 3/6: Indicator validation (RSI/ADX)
+        _step_log(2, f"Trend aligned: {direction}")
+
+        # STEP 3/6: Indicator validation (RSI/ADX) using closed candle values.
         package_module = import_module("scalping_strategy")
         calculate_rsi = getattr(package_module, "calculate_rsi", _default_calculate_rsi)
         calculate_adx = getattr(package_module, "calculate_adx", _default_calculate_adx)
@@ -82,70 +92,150 @@ class ScalpingStrategy(BaseStrategy):
         rsi_series = calculate_rsi(data_1m, period=14)
         adx_series = calculate_adx(data_1m, period=14)
 
-        rsi_1m = rsi_series.iloc[-1] if rsi_series is not None and not rsi_series.empty else None
-        adx_1m = adx_series.iloc[-1] if adx_series is not None and not adx_series.empty else None
-
+        rsi_1m = None
+        if rsi_series is not None and len(rsi_series) >= 2:
+            rsi_1m = float(rsi_series.iloc[-2])
         if rsi_1m is None or np.isnan(rsi_1m):
-            logger.warning(f"[SCALPING][{symbol}] ⚠️ RSI fallback applied (50)")
+            logger.warning(f"[SCALPING][{symbol}] RSI fallback applied (50)")
             rsi_1m = 50.0
 
+        adx_1m = None
+        if adx_series is not None and len(adx_series) >= 2:
+            adx_1m = float(adx_series.iloc[-2])
         if adx_1m is None or np.isnan(adx_1m):
-            logger.warning(f"[SCALPING][{symbol}] ⚠️ ADX fallback applied (0)")
+            logger.warning(f"[SCALPING][{symbol}] ADX fallback applied (0)")
             adx_1m = 0.0
 
-        logger.debug(f"[SCALPING][{symbol}] 📊 Indicators | RSI={rsi_1m:.2f} ADX={adx_1m:.2f}")
+        logger.debug(f"[SCALPING][{symbol}] Indicators | RSI={rsi_1m:.2f} ADX={adx_1m:.2f}")
 
         if adx_1m < scalping_config.SCALPING_ADX_THRESHOLD:
-            _step_log(
-                3,
-                f"Weak trend (ADX {adx_1m:.1f} < {scalping_config.SCALPING_ADX_THRESHOLD})",
-                emoji="❌",
-            )
+            _step_log(3, f"Weak trend (ADX {adx_1m:.1f} < {scalping_config.SCALPING_ADX_THRESHOLD})")
             return {
-                'can_trade': False,
-                'details': {'reason': f'Weak trend (ADX {adx_1m:.1f} < {scalping_config.SCALPING_ADX_THRESHOLD})'}
+                "can_trade": False,
+                "details": {
+                    "reason": f"Weak trend (ADX {adx_1m:.1f} < {scalping_config.SCALPING_ADX_THRESHOLD})"
+                },
             }
+
+        adx_slope = 0.0
+        if adx_series is not None and len(adx_series) >= 3:
+            adx_prev = float(adx_series.iloc[-3])
+            if not np.isnan(adx_prev):
+                adx_slope = adx_1m - adx_prev
+                if adx_slope < scalping_config.SCALPING_ADX_SLOPE_MIN:
+                    _step_log(3, f"ADX declining (slope {adx_slope:.2f})")
+                    return {
+                        "can_trade": False,
+                        "details": {"reason": f"ADX declining (slope {adx_slope:.2f})"},
+                    }
 
         if direction == "UP":
             if not (scalping_config.SCALPING_RSI_UP_MIN <= rsi_1m <= scalping_config.SCALPING_RSI_UP_MAX):
-                _step_log(3, f"RSI {rsi_1m:.1f} not in UP range", emoji="❌")
-                return {'can_trade': False, 'details': {'reason': f'RSI {rsi_1m:.1f} not in UP range'}}
+                _step_log(3, f"RSI {rsi_1m:.1f} not in UP range")
+                return {"can_trade": False, "details": {"reason": f"RSI {rsi_1m:.1f} not in UP range"}}
         else:
-            if not (scalping_config.SCALPING_RSI_DOWN_MIN <= rsi_1m <= scalping_config.SCALPING_RSI_DOWN_MAX):
-                _step_log(3, f"RSI {rsi_1m:.1f} not in DOWN range", emoji="❌")
-                return {'can_trade': False, 'details': {'reason': f'RSI {rsi_1m:.1f} not in DOWN range'}}
+            if not (
+                scalping_config.SCALPING_RSI_DOWN_MIN <= rsi_1m <= scalping_config.SCALPING_RSI_DOWN_MAX
+            ):
+                _step_log(3, f"RSI {rsi_1m:.1f} not in DOWN range")
+                return {"can_trade": False, "details": {"reason": f"RSI {rsi_1m:.1f} not in DOWN range"}}
 
-        _step_log(3, "Indicator gate passed", emoji="✅")
+        _step_log(3, "Indicator gate passed")
 
-        # STEP 4/6: Momentum and structure checks
-        atr_1m = self._calculate_atr(data_1m, period=14)
+        # STEP 4/6: Momentum, structure, and price-action location checks.
+        signal_candle = data_1m.iloc[-2]
+        signal_open = float(signal_candle["open"])
+        signal_close = float(signal_candle["close"])
+        signal_high = float(signal_candle["high"])
+        signal_low = float(signal_candle["low"])
+        current_price = float(data_1m["close"].iloc[-1])  # live price used for actual entry
 
-        base_threshold = scalping_config.ASSET_CONFIG.get(symbol, {}).get('movement_threshold_pct', 0.7)
+        atr_1m = self._calculate_atr(data_1m.iloc[:-1], period=14)
+        base_threshold = scalping_config.ASSET_CONFIG.get(symbol, {}).get("movement_threshold_pct", 0.7)
         movement_threshold = base_threshold * scalping_config.SCALPING_ASSET_MOVEMENT_MULTIPLIER
 
-        price_5_candles_ago = data_1m['close'].iloc[-6]
-        price_change_pct = abs((current_price - price_5_candles_ago) / price_5_candles_ago * 100)
+        price_5_candles_ago = float(data_1m["close"].iloc[-7])
+        if price_5_candles_ago == 0:
+            _step_log(4, "Invalid reference price for movement check")
+            return {"can_trade": False, "details": {"reason": "Invalid reference price for movement check"}}
 
-        if price_change_pct > movement_threshold:
-            _step_log(
-                4,
-                f"Price movement too high ({price_change_pct:.2f}% > {movement_threshold:.2f}%)",
-                emoji="❌",
-            )
-            return {'can_trade': False, 'details': {'reason': f'Price movement too high ({price_change_pct:.2f}%)'}}
+        price_change_pct = (signal_close - price_5_candles_ago) / price_5_candles_ago * 100
+        adverse_move = (
+            (direction == "UP" and price_change_pct < -movement_threshold)
+            or (direction == "DOWN" and price_change_pct > movement_threshold)
+        )
+        if adverse_move:
+            _step_log(4, f"Adverse pre-entry move ({price_change_pct:.2f}%)")
+            return {
+                "can_trade": False,
+                "details": {"reason": f"Adverse pre-entry move ({price_change_pct:.2f}%)"},
+            }
 
-        last_candle_size = abs(data_1m['close'].iloc[-1] - data_1m['open'].iloc[-1])
+        last_candle_size = abs(signal_close - signal_open)
         momentum_threshold = atr_1m * scalping_config.SCALPING_MOMENTUM_THRESHOLD
-
         if last_candle_size < momentum_threshold:
-            _step_log(4, "No momentum breakout", emoji="❌")
-            return {'can_trade': False, 'details': {'reason': 'No momentum breakout'}}
+            _step_log(4, "No momentum breakout")
+            return {"can_trade": False, "details": {"reason": "No momentum breakout"}}
+
+        signal_range = signal_high - signal_low
+        body_ratio = 1.0
+        if signal_range > 0:
+            body_ratio = last_candle_size / signal_range
+            if body_ratio < scalping_config.SCALPING_BODY_RATIO_MIN:
+                _step_log(4, f"Weak body ratio ({body_ratio:.2f})")
+                return {"can_trade": False, "details": {"reason": f"Weak body ratio ({body_ratio:.2f})"}}
+
+        if direction == "UP" and signal_close <= signal_open:
+            _step_log(4, "Candle direction mismatch (UP trade, bearish candle)")
+            return {
+                "can_trade": False,
+                "details": {"reason": "Candle direction mismatch (UP trade, bearish candle)"},
+            }
+        if direction == "DOWN" and signal_close >= signal_open:
+            _step_log(4, "Candle direction mismatch (DOWN trade, bullish candle)")
+            return {
+                "can_trade": False,
+                "details": {"reason": "Candle direction mismatch (DOWN trade, bullish candle)"},
+            }
 
         if self._is_parabolic_spike(data_1m, atr_1m):
-            _step_log(4, "Parabolic spike detected", emoji="❌")
-            return {'can_trade': False, 'details': {'reason': 'Parabolic spike detected'}}
+            _step_log(4, "Parabolic spike detected")
+            return {"can_trade": False, "details": {"reason": "Parabolic spike detected"}}
 
-        _step_log(4, "Structure gate passed", emoji="✅")
+        if not self._confirm_5m_structure(data_5m, direction):
+            _step_log(4, f"5m structure not confirmed for {direction}")
+            return {
+                "can_trade": False,
+                "details": {"reason": f"5m structure not confirmed for {direction}"},
+            }
+
+        zones = self._get_5m_zones(data_5m)
+        near_zone, matched_zone = self._price_near_zone(
+            signal_close,
+            zones,
+            scalping_config.SCALPING_ZONE_TOLERANCE_PCT,
+        )
+        if not near_zone:
+            _step_log(4, "Price not near any key zone")
+            return {
+                "can_trade": False,
+                "details": {"reason": "Price not near any key zone - waiting"},
+            }
+
+        if not self._confirm_zone_rejection(data_5m, matched_zone, direction):
+            zone_level = float(matched_zone["level"]) if matched_zone else signal_close
+            _step_log(4, f"No 5m zone rejection confirmed at {zone_level:.5f}")
+            return {
+                "can_trade": False,
+                "details": {"reason": f"No 5m zone rejection confirmed at {zone_level:.5f}"},
+            }
+
+        pattern = self._detect_1m_pattern(data_1m, direction)
+        confidence = 7.0
+        if pattern in ("engulfing", "pin_bar"):
+            confidence = min(10.0, confidence + 1.5)
+
+        _step_log(4, "Structure gate passed")
 
         # STEP 5/6: Build TP/SL + validate R:R
         sl_distance = atr_1m * scalping_config.SCALPING_SL_ATR_MULTIPLIER
@@ -162,150 +252,341 @@ class ScalpingStrategy(BaseStrategy):
         reward = abs(tp_price - current_price)
 
         if risk == 0:
-            _step_log(5, "Invalid stop-loss (risk=0)", emoji="❌")
-            return {'can_trade': False, 'details': {'reason': 'Invalid Stop Loss (Risk=0)'}}
+            _step_log(5, "Invalid stop-loss (risk=0)")
+            return {"can_trade": False, "details": {"reason": "Invalid Stop Loss (Risk=0)"}}
 
         rr_ratio = reward / risk
         if rr_ratio < scalping_config.SCALPING_MIN_RR_RATIO:
-            _step_log(
-                5,
-                f"Low R:R ({rr_ratio:.2f} < {scalping_config.SCALPING_MIN_RR_RATIO})",
-                emoji="❌",
-            )
+            _step_log(5, f"Low R:R ({rr_ratio:.2f} < {scalping_config.SCALPING_MIN_RR_RATIO})")
             return {
-                'can_trade': False,
-                'details': {'reason': f'Low R:R ({rr_ratio:.2f} < {scalping_config.SCALPING_MIN_RR_RATIO})'}
+                "can_trade": False,
+                "details": {"reason": f"Low R:R ({rr_ratio:.2f} < {scalping_config.SCALPING_MIN_RR_RATIO})"},
             }
 
         _step_log(
             5,
-            f"Risk plan ready (Entry {current_price:.5f}, TP {tp_price:.5f}, SL {sl_price:.5f}, R:R {rr_ratio:.2f})",
-            emoji="✅",
+            (
+                f"Risk plan ready (Entry {current_price:.5f}, TP {tp_price:.5f}, "
+                f"SL {sl_price:.5f}, R:R {rr_ratio:.2f})"
+            ),
         )
 
         # STEP 6/6: Emit signal
+        zone_level = float(matched_zone["level"]) if matched_zone else None
+        zone_type = str(matched_zone.get("type")) if matched_zone else None
         signal = {
-            'can_trade': True,
-            'signal': direction,
-            'symbol': symbol,
-            'take_profit': tp_price,
-            'stop_loss': sl_price,
-            'risk_reward_ratio': rr_ratio,
-            'score': 7.0,
-            'confidence': 7.0,
-            'entry_price': current_price,
-            'details': {
-                'reason': f"Scalping signal - {direction} trend, RSI {rsi_1m:.1f}, ADX {adx_1m:.1f}, R:R {rr_ratio:.2f}",
-                'rsi': rsi_1m,
-                'adx': adx_1m,
-            }
+            "can_trade": True,
+            "signal": direction,
+            "symbol": symbol,
+            "take_profit": tp_price,
+            "stop_loss": sl_price,
+            "risk_reward_ratio": rr_ratio,
+            "score": confidence,
+            "confidence": confidence,
+            "entry_price": current_price,
+            "details": {
+                "reason": (
+                    f"Scalping signal - {direction} trend, RSI {rsi_1m:.1f}, "
+                    f"ADX {adx_1m:.1f}, R:R {rr_ratio:.2f}"
+                ),
+                "rsi": rsi_1m,
+                "adx": adx_1m,
+                "adx_slope": adx_slope,
+                "body_ratio": body_ratio,
+                "zone_level": zone_level,
+                "zone_type": zone_type,
+                "pa_pattern": pattern,
+            },
         }
 
-        signal_emoji = "🟢" if direction == "UP" else "🔴"
-        _step_log(6, f"Signal generated ({direction}) | Confidence {signal['confidence']:.1f}", emoji=signal_emoji)
-
+        _step_log(6, f"Signal generated ({direction}) | Confidence {signal['confidence']:.1f}")
         return signal
-    def _determine_trend(self, df: pd.DataFrame, timeframe_name: str) -> Optional[str]:
+
+    def _determine_trend(
+        self,
+        df: pd.DataFrame,
+        timeframe_name: str,
+        fast_period: int = 9,
+        slow_period: int = 21,
+    ) -> Optional[str]:
         """
-        Determine trend based on EMA logic (EMA 9 vs EMA 21).
-        
-        Args:
-            df: DataFrame with OHLC data
-            timeframe_name: Name for logging
-        
+        Determine trend using a fresh EMA crossover on the last closed bar.
+
         Returns:
-            'BULLISH', 'BEARISH', or None
+            'UP', 'DOWN', or None if no fresh crossover.
         """
-        if len(df) < 25:
+        min_required = slow_period + 5
+        if len(df) < min_required:
+            logger.debug(f"[SCALPING][{timeframe_name}] Insufficient candles for trend detection")
             return None
-        
-        # Calculate EMAs
-        ema_fast = self._calculate_ema(df, 9)
-        ema_slow = self._calculate_ema(df, 21)
-        
+
+        ema_fast = self._calculate_ema(df, fast_period)
+        ema_slow = self._calculate_ema(df, slow_period)
         if ema_fast is None or ema_slow is None:
             return None
-            
-        current_fast = ema_fast.iloc[-1]
-        current_slow = ema_slow.iloc[-1]
-        prev_fast = ema_fast.iloc[-2]
-        prev_slow = ema_slow.iloc[-2]
-        
-        # Bullish: Fast EMA > Slow EMA
-        if current_fast > current_slow:
+
+        prev_fast = float(ema_fast.iloc[-3])
+        prev_slow = float(ema_slow.iloc[-3])
+        current_fast = float(ema_fast.iloc[-2])
+        current_slow = float(ema_slow.iloc[-2])
+
+        crossed_up = (prev_fast <= prev_slow) and (current_fast > current_slow)
+        crossed_down = (prev_fast >= prev_slow) and (current_fast < current_slow)
+
+        if crossed_up:
             return "UP"
-        
-        # Bearish: Fast EMA < Slow EMA
-        if current_fast < current_slow:
+        if crossed_down:
             return "DOWN"
-        
         return None
 
     def _calculate_ema(self, df: pd.DataFrame, period: int) -> Optional[pd.Series]:
         """
         Calculate Exponential Moving Average.
-        
+
         Args:
             df: DataFrame with 'close' column
             period: EMA period
-            
+
         Returns:
             pd.Series containing EMA values
         """
         if len(df) < period:
             return None
-        return df['close'].ewm(span=period, adjust=False).mean()
-    
+        return df["close"].ewm(span=period, adjust=False).mean()
+
     def _calculate_atr(self, df: pd.DataFrame, period: int = 14) -> float:
         """
         Calculate ATR for volatility measurement.
-        
+
         Args:
             df: DataFrame with OHLC data
             period: ATR period
-        
+
         Returns:
             ATR value
         """
-        high_low = df['high'] - df['low']
-        high_close = np.abs(df['high'] - df['close'].shift())
-        low_close = np.abs(df['low'] - df['close'].shift())
-        
-        ranges = pd.concat([high_low, high_close, low_close], axis=1)
-        true_range = ranges.max(axis=1)
+        if df is None or len(df) < period + 1:
+            return 0.001
+
+        high_low = df["high"] - df["low"]
+        high_close = np.abs(df["high"] - df["close"].shift())
+        low_close = np.abs(df["low"] - df["close"].shift())
+
+        true_range = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
+        true_range = true_range.dropna()
+        if len(true_range) < period:
+            return 0.001
+
         atr = true_range.rolling(period).mean().iloc[-1]
-        
         return atr if not np.isnan(atr) else 0.001
-    
+
     def _is_parabolic_spike(self, df: pd.DataFrame, atr: float) -> bool:
         """
-        Detect parabolic spike (3+ consecutive large candles).
-        
-        Args:
-            df: DataFrame with OHLC data
-            atr: Current ATR value
-        
-        Returns:
-            True if parabolic spike detected
+        Detect parabolic spikes:
+        - 3 large closed candles in a row (> 2x ATR), or
+        - a single closed candle with body > 3x ATR.
         """
-        if len(df) < 3:
+        if len(df) < 4 or atr <= 0:
             return False
-        
-        # Check last 3 candles
-        last_3_candles = df.iloc[-3:]
+
+        last_3_closed = df.iloc[-4:-1]
         large_candle_count = 0
-        
-        for idx, row in last_3_candles.iterrows():
-            candle_size = abs(row['close'] - row['open'])
-            if candle_size > (atr * 2.0):  # 2x ATR threshold
+        for _, row in last_3_closed.iterrows():
+            candle_size = abs(float(row["close"]) - float(row["open"]))
+            if candle_size > (atr * 2.0):
                 large_candle_count += 1
-        
-        return large_candle_count >= 3
-    
+
+        if large_candle_count >= 3:
+            return True
+
+        last_body = abs(float(df["close"].iloc[-2]) - float(df["open"].iloc[-2]))
+        return last_body > (atr * 3.0)
+
+    def _confirm_5m_structure(self, df_5m: pd.DataFrame, direction: str) -> bool:
+        """
+        Confirm price is on the correct side of 5m EMA(21).
+        """
+        if df_5m is None or len(df_5m) < 25:
+            return True
+
+        ema21 = self._calculate_ema(df_5m, 21)
+        if ema21 is None or len(ema21) < 2:
+            return True
+
+        last_close = float(df_5m["close"].iloc[-2])
+        ema21_val = float(ema21.iloc[-2])
+        if direction == "UP" and last_close < ema21_val:
+            return False
+        if direction == "DOWN" and last_close > ema21_val:
+            return False
+        return True
+
+    def _check_1h_break_of_structure(self, df_1h: pd.DataFrame, direction: str) -> bool:
+        """
+        Confirm 1h structure progression:
+        - UP requires latest swing high > previous swing high.
+        - DOWN requires latest swing low < previous swing low.
+        """
+        if df_1h is None or len(df_1h) < 10:
+            return True
+
+        highs = df_1h["high"].values
+        lows = df_1h["low"].values
+
+        swing_highs = [
+            highs[i]
+            for i in range(2, len(highs) - 2)
+            if highs[i] > highs[i - 1]
+            and highs[i] > highs[i - 2]
+            and highs[i] > highs[i + 1]
+            and highs[i] > highs[i + 2]
+        ]
+        swing_lows = [
+            lows[i]
+            for i in range(2, len(lows) - 2)
+            if lows[i] < lows[i - 1]
+            and lows[i] < lows[i - 2]
+            and lows[i] < lows[i + 1]
+            and lows[i] < lows[i + 2]
+        ]
+
+        if direction == "UP" and len(swing_highs) >= 2:
+            return float(swing_highs[-1]) > float(swing_highs[-2])
+        if direction == "DOWN" and len(swing_lows) >= 2:
+            return float(swing_lows[-1]) < float(swing_lows[-2])
+        return True
+
+    def _get_5m_zones(self, df_5m: pd.DataFrame, lookback: int = 50) -> List[Dict[str, Any]]:
+        """
+        Build key 5m support/resistance zones from extremes and pivots.
+        """
+        if df_5m is None or len(df_5m) < 10:
+            return []
+
+        frame = df_5m.tail(lookback).reset_index(drop=True)
+        zones: List[Dict[str, Any]] = []
+
+        zones.append({"level": float(frame["high"].max()), "type": "resistance", "source": "extreme"})
+        zones.append({"level": float(frame["low"].min()), "type": "support", "source": "extreme"})
+
+        highs = frame["high"].values
+        lows = frame["low"].values
+        for i in range(2, len(frame) - 2):
+            if (
+                highs[i] > highs[i - 1]
+                and highs[i] > highs[i - 2]
+                and highs[i] > highs[i + 1]
+                and highs[i] > highs[i + 2]
+            ):
+                zones.append({"level": float(highs[i]), "type": "resistance", "source": "pivot"})
+            if (
+                lows[i] < lows[i - 1]
+                and lows[i] < lows[i - 2]
+                and lows[i] < lows[i + 1]
+                and lows[i] < lows[i + 2]
+            ):
+                zones.append({"level": float(lows[i]), "type": "support", "source": "pivot"})
+        return zones
+
+    def _price_near_zone(
+        self,
+        price: float,
+        zones: List[Dict[str, Any]],
+        tolerance_pct: float = 0.0015,
+    ) -> Tuple[bool, Optional[Dict[str, Any]]]:
+        """
+        Check whether price is near at least one zone.
+        """
+        best_zone: Optional[Dict[str, Any]] = None
+        best_diff = float("inf")
+        for zone in zones:
+            level = float(zone.get("level", 0.0))
+            if level <= 0:
+                continue
+            diff = abs(price - level) / level
+            if diff <= tolerance_pct and diff < best_diff:
+                best_diff = diff
+                best_zone = zone
+        return best_zone is not None, best_zone
+
+    def _confirm_zone_rejection(
+        self,
+        df_5m: pd.DataFrame,
+        matched_zone: Optional[Dict[str, Any]],
+        direction: str,
+    ) -> bool:
+        """
+        Confirm last closed 5m candle rejected the matched zone.
+        """
+        if df_5m is None or len(df_5m) < 5 or matched_zone is None:
+            return True
+
+        zone_level = float(matched_zone["level"])
+        zone_type = str(matched_zone.get("type", ""))
+        last_5m = df_5m.iloc[-2]
+
+        l_open = float(last_5m["open"])
+        l_close = float(last_5m["close"])
+        l_low = float(last_5m["low"])
+        l_high = float(last_5m["high"])
+        l_range = l_high - l_low
+        if l_range == 0:
+            return True
+
+        body_ratio = abs(l_close - l_open) / l_range
+
+        if direction == "UP" and zone_type in ("support", "middle"):
+            touched_zone = l_low <= zone_level * 1.001
+            rejected = l_close > zone_level and body_ratio >= 0.50
+            return touched_zone and rejected
+
+        if direction == "DOWN" and zone_type in ("resistance", "middle"):
+            touched_zone = l_high >= zone_level * 0.999
+            rejected = l_close < zone_level and body_ratio >= 0.50
+            return touched_zone and rejected
+
+        return True
+
+    def _detect_1m_pattern(self, df_1m: pd.DataFrame, direction: str) -> str:
+        """
+        Detect lightweight price-action pattern on signal candle.
+        """
+        if df_1m is None or len(df_1m) < 3:
+            return "none"
+
+        cur = df_1m.iloc[-2]
+        prev = df_1m.iloc[-3]
+
+        c_open = float(cur["open"])
+        c_close = float(cur["close"])
+        c_high = float(cur["high"])
+        c_low = float(cur["low"])
+        p_open = float(prev["open"])
+        p_close = float(prev["close"])
+
+        c_body = abs(c_close - c_open)
+        c_range = c_high - c_low
+        upper_wick = c_high - max(c_open, c_close)
+        lower_wick = min(c_open, c_close) - c_low
+
+        if direction == "UP" and c_open < p_close and c_close > p_open and c_close > c_open:
+            return "engulfing"
+        if direction == "DOWN" and c_open > p_close and c_close < p_open and c_close < c_open:
+            return "engulfing"
+
+        if c_body > 0 and c_range > 0:
+            if direction == "UP" and lower_wick >= c_body * 2.0:
+                if (min(c_open, c_close) - c_low) / c_range >= 0.55:
+                    return "pin_bar"
+            if direction == "DOWN" and upper_wick >= c_body * 2.0:
+                if (c_high - max(c_open, c_close)) / c_range >= 0.55:
+                    return "pin_bar"
+        return "none"
+
     def get_required_timeframes(self) -> List[str]:
         """
         Get list of timeframes required by scalping strategy.
-        
+
         Returns:
             ['1h', '5m', '1m']
         """
@@ -318,13 +599,12 @@ class ScalpingStrategy(BaseStrategy):
     def get_asset_config(self) -> Dict:
         """Return scalping asset configuration."""
         return dict(scalping_config.ASSET_CONFIG)
-    
+
     def get_strategy_name(self) -> str:
         """
         Get strategy name.
-        
+
         Returns:
             'Scalping'
         """
         return "Scalping"
-
