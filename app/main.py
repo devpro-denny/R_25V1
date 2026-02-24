@@ -22,6 +22,11 @@ from secure import (
     StrictTransportSecurity,
     XFrameOptions,
 )
+from app.core.logging import setup_api_logger
+
+# Setup logging as early as possible so import-time logs from other modules
+# are routed to stdout with correct severity mapping.
+logger = setup_api_logger()
 
 # Security Headers Configuration
 # Define policies - Updated to support frontend requirements
@@ -45,12 +50,8 @@ secure_headers = Secure(csp=csp, hsts=hsts, xfo=xfo, referrer=referrer)
 
 from app.api import auth, bot, config as config_api, monitor, trades
 from app.bot.manager import bot_manager
-from app.core.logging import setup_api_logger
 from app.core.settings import settings
 from app.ws import live
-
-# Setup logging
-logger = setup_api_logger()
 
 # Setup Telegram Error Logging
 try:
