@@ -1,10 +1,10 @@
 """
-Bot Runner - Multi-Asset Sequential Scanner
+Bot Runner - Multi-Asset Parallel Scanner
 Manages the lifecycle of the trading bot with multi-asset support
 - Scans strategy symbol universe
-- Sequential top-down analysis per symbol
-- Global 1-trade limit enforcement
-- First-come-first-served execution
+- Parallel per-symbol analysis each cycle
+- Global risk/position limit enforcement
+- Single execution path protection
 - Continuous monitoring of active trades
 """
 
@@ -71,7 +71,7 @@ class BotStatus(str, Enum):
 class BotRunner:
     """
     Multi-Asset Trading Bot Runner
-    - Scans multiple symbols sequentially
+    - Scans multiple symbols in parallel
     - Enforces global 1-trade position limit
     - First qualifying signal locks the system
     - Monitors active trades across all assets
@@ -146,6 +146,12 @@ class BotRunner:
         self.last_status_log: Dict[str, Dict] = {} # {symbol: {'msg': str, 'time': datetime}}
         # Structured decision event throttling cache
         self._decision_log_state: Dict[str, Dict] = {}
+        # Protect trade execution path when symbol scans run concurrently.
+        self._execution_mutex: asyncio.Lock = asyncio.Lock()
+        # Protect cycle-level winner claim when multiple symbols signal concurrently.
+        self._cycle_claim_mutex: asyncio.Lock = asyncio.Lock()
+        self._cycle_signal_claimed: bool = False
+        self._cycle_winner_symbol: Optional[str] = None
         
         # Telegram bridge
         self.telegram_bridge = telegram_bridge
@@ -639,7 +645,7 @@ class BotRunner:
     @with_user_context
     async def _run_bot(self):
         """
-        Main bot loop - Multi-asset sequential scanner
+        Main bot loop - Multi-asset parallel scanner
         Continuously scans all symbols looking for first qualifying signal
         """
         try:
@@ -840,17 +846,19 @@ class BotRunner:
     
     async def _multi_asset_scan_cycle(self):
         """
-        CRITICAL: Multi-Asset Sequential Scanner
+        CRITICAL: Multi-Asset Parallel Scanner
         
         Process:
         1. Check global trade permission (1-trade limit)
         2. If position active -> monitor only (skip scanning)
-        3. If no position -> scan all symbols sequentially
+        3. If no position -> scan all symbols in parallel
         4. First qualifying signal -> execute and lock system
         5. All other symbols blocked until trade closes
         """
         
         # Step 1: Check global permission
+        self._cycle_signal_claimed = False
+        self._cycle_winner_symbol = None
         can_trade_global, reason = self.risk_manager.can_trade()
         
         # If we have an active trade, monitor it instead of scanning
@@ -880,41 +888,49 @@ class BotRunner:
             )
             return
         
-        # Step 2: Sequential symbol scanning (First-Come-First-Served)
+        # Step 2: Parallel symbol scanning
         logger.info(f"[{self._get_strategy_name()}][SYSTEM] \U0001F50D Scanning symbols for entry signals")
-        
-        for symbol in self.symbols:
+
+        async def _analyze_symbol_safe(symbol: str) -> bool:
             # Check if we can still trade (might have changed during loop)
             can_trade_now, _ = self.risk_manager.can_trade(symbol)
             if not can_trade_now:
-                logger.debug(f"[{self._get_strategy_name()}][{symbol}] \u26D4 Global state changed, stopping scan")
-                break
-            
+                logger.debug(
+                    f"[{self._get_strategy_name()}][{symbol}] \u26D4 Global state changed, skipping symbol"
+                )
+                return False
+
             try:
-                # Execute Top-Down analysis for this symbol
-                signal_found = await self._analyze_symbol(symbol)
-                
-                if signal_found:
-                    # CRITICAL: First qualifying signal locks the system
-                    logger.info(f"[{self._get_strategy_name()}][{symbol}] \U0001F3C1 First qualifying signal won this cycle")
-                    logger.info(f"[{self._get_strategy_name()}][SYSTEM] \U0001F512 Other symbols blocked until closure")
-                    break  # Exit loop - system is now locked
-                
+                return await self._analyze_symbol(symbol)
             except Exception as e:
-                # Log error but continue to next symbol
-                logger.error(f"[{self._get_strategy_name()}][{symbol}] \u274C Symbol analysis failed: {type(e).__name__}: {e}", exc_info=True)
+                logger.error(
+                    f"[{self._get_strategy_name()}][{symbol}] \u274C Symbol analysis failed: "
+                    f"{type(e).__name__}: {e}",
+                    exc_info=True,
+                )
                 self.errors_by_symbol[symbol] = self.errors_by_symbol.get(symbol, 0) + 1
-                
-                # If too many errors for this symbol, notify
+
                 if self.errors_by_symbol[symbol] >= 5:
                     try:
                         await self.telegram_bridge.notify_error(
                             f"Multiple errors for {symbol}: {e}"
                         )
-                    except:
+                    except Exception:
                         pass
-                
-                continue  # Move to next symbol
+                return False
+
+        tasks = [asyncio.create_task(_analyze_symbol_safe(symbol)) for symbol in self.symbols]
+        if tasks:
+            results = await asyncio.gather(*tasks)
+            winners = [symbol for symbol, ok in zip(self.symbols, results) if ok]
+            if winners:
+                winner = winners[0]
+                logger.info(
+                    f"[{self._get_strategy_name()}][{winner}] \U0001F3C1 First qualifying signal won this cycle"
+                )
+                logger.info(
+                    f"[{self._get_strategy_name()}][SYSTEM] \U0001F512 Other symbols blocked until closure"
+                )
         
         logger.debug(f"[{self._get_strategy_name()}][SYSTEM] \u2705 Scan cycle complete")
     
@@ -1041,6 +1057,32 @@ class BotRunner:
                 
             return False
         
+        # Parallel scans can detect multiple opportunities at once.
+        # Only one symbol is allowed to claim the cycle for signal+execution.
+        async with self._cycle_claim_mutex:
+            if self._cycle_signal_claimed and self._cycle_winner_symbol != symbol:
+                winner = self._cycle_winner_symbol or "unknown"
+                self._cycle_step(
+                    symbol,
+                    3,
+                    6,
+                    f"Signal skipped: cycle already claimed by {winner}",
+                    emoji="\u23ED\ufe0f",
+                )
+                await self._broadcast_decision(
+                    symbol=symbol,
+                    phase="signal",
+                    decision="no_trade",
+                    reason=f"Cycle already claimed by {winner}",
+                    details={"gate": "cycle_winner_claimed", "winner": winner},
+                    throttle_key=f"{symbol}:cycle_claimed",
+                )
+                return False
+
+            if not self._cycle_signal_claimed:
+                self._cycle_signal_claimed = True
+                self._cycle_winner_symbol = symbol
+
         # We have a signal! Log it
         checks_passed = ", ".join(signal.get('details', {}).get('passed_checks', []))
         direction_emoji = "\U0001F7E2" if str(signal.get("signal", "")).upper() in {"BUY", "UP"} else "\U0001F534"
@@ -1129,220 +1171,245 @@ class BotRunner:
         # CRITICAL FIX: Add symbol to signal before validation
         signal_for_validation = signal.copy()
         signal_for_validation['symbol'] = symbol
-        
-        # Validate with risk manager (including global checks)
-        can_open, validation_msg = self.risk_manager.can_open_trade(
-            symbol=symbol,
-            stake=stake,
-            take_profit=signal.get('take_profit'),
-            stop_loss=signal.get('stop_loss'),
-            signal_dict=signal_for_validation
-        )
-        
-        if not can_open:
-            self._cycle_step(symbol, 4, 6, f"Risk gate blocked trade: {validation_msg}", emoji="\U0001F6D1", level="warning")
+
+        # Parallel scans can detect multiple opportunities at once.
+        # Ensure only one symbol can enter trade execution path at a time.
+        if self._execution_mutex.locked():
+            self._cycle_step(
+                symbol,
+                4,
+                6,
+                "Execution slot already claimed by another symbol",
+                emoji="\u23ED\ufe0f",
+            )
             await self._broadcast_decision(
                 symbol=symbol,
                 phase="risk",
                 decision="no_trade",
-                reason=validation_msg,
-                details={"gate": "can_open_trade"},
-                severity="warning",
-                throttle_key=f"{symbol}:trade_blocked",
+                reason="Another symbol already started trade execution",
+                details={"gate": "execution_slot_busy"},
+                throttle_key=f"{symbol}:execution_slot_busy",
             )
             return False
-            
-        # Notify Telegram about signal (Moved here to ensure all checks passed)
+
+        await self._execution_mutex.acquire()
         try:
-            signal_with_symbol = signal.copy()
-            signal_with_symbol['symbol'] = symbol
-            await self.telegram_bridge.notify_signal(signal_with_symbol)
-        except:
-            pass
-        
-        # Execute trade!
-        self._cycle_step(
-            symbol,
-            5,
-            6,
-            f"Executing {signal['signal']} | Stake ${stake:.2f} | Multiplier {multiplier}x",
-            emoji="\U0001F680",
-        )
-        await self._broadcast_decision(
-            symbol=symbol,
-            phase="execution",
-            decision="opportunity_taken",
-            reason="Risk checks passed, executing trade",
-            details={
-                "direction": signal.get("signal"),
-                "stake": stake,
-                "multiplier": multiplier,
-            },
-            min_interval_seconds=0,
-        )
-        
-        try:
-            # Add symbol to signal data
-            signal_with_symbol = signal.copy()
-            signal_with_symbol['symbol'] = symbol
-            signal_with_symbol['stake'] = stake
-            
-            # Execute trade using TradeEngine
-            result = await self.trade_engine.execute_trade(
-                signal_with_symbol, 
-                self.risk_manager
+            # Validate with risk manager (including global checks)
+            can_open, validation_msg = self.risk_manager.can_open_trade(
+                symbol=symbol,
+                stake=stake,
+                take_profit=signal.get('take_profit'),
+                stop_loss=signal.get('stop_loss'),
+                signal_dict=signal_for_validation
             )
             
-            if result:
-                # Trade executed and completed
-                pnl = result.get('profit', 0.0)
-                status = result.get('status', 'unknown')
-                contract_id = result.get('contract_id')
-                
-                result_emoji = "\u2705" if pnl > 0 else ("\u274C" if pnl < 0 else "\u2696\ufe0f")
-                self._cycle_step(
-                    symbol,
-                    6,
-                    6,
-                    f"Trade completed: {status} | P&L: ${pnl:.2f} | Contract: {contract_id}",
-                    emoji=result_emoji,
-                )
-
-                # CRITICAL FIX: Add signal to result for DB persistence
-                if 'signal' not in result:
-                    result['signal'] = signal_with_symbol['signal']
-                
-                # NEW: Add strategy_type to result for database
-                result['strategy_type'] = self.strategy.get_strategy_name()
-                
-                # Record trade closure
-                self.risk_manager.record_trade_close(contract_id, pnl, status)
-                self.state.update_trade(contract_id, result)
-
-
-                # Persist to Supabase with error handling
-                try:
-                    saved = UserTradesService.save_trade(self.account_id, result)
-                    if saved:
-                        logger.info(f"[{self._get_strategy_name()}][{symbol}] \U0001F9FE Trade persisted to DB: {contract_id}")
-                    else:
-                        logger.error(
-                            f"[{self._get_strategy_name()}][{symbol}] \u274C DB persistence failed for contract {contract_id} (no data returned)"
-                        )
-                        # Notify via Telegram
-                        try:
-                            await self.telegram_bridge.notify_error(
-                                f"Trade executed but DB save failed: {symbol} {status}"
-                            )
-                        except:
-                            pass
-                except Exception as e:
-                    logger.error(f"[{self._get_strategy_name()}][{symbol}] \u274C DB save exception for contract {contract_id}: {e}")
-                    import traceback
-                    logger.error(traceback.format_exc())
-                    # Notify via Telegram
-                    try:
-                        await self.telegram_bridge.notify_error(
-                            f"Trade executed but DB error: {symbol} - {str(e)}"
-                        )
-                    except:
-                        pass
-
-                
-                # Notify Telegram
-                try:
-                    # MERGE complete trade details into result for notification
-                    result_for_notify = result.copy()
-                    result_for_notify.update(signal_with_symbol) # Contains direction, stake, symbol
-                    
-                    # Ensure symbol is set (sometimes signal uses 'symbol', result uses 'symbol')
-                    if 'symbol' not in result_for_notify:
-                         result_for_notify['symbol'] = symbol
-                    
-                    await self.telegram_bridge.notify_trade_closed(result_for_notify, pnl, status, strategy_type=self.strategy.get_strategy_name())
-                except:
-                    pass
-                
-                # Broadcast to WebSockets
-                await event_manager.broadcast({
-                    "type": "trade_closed",
-                    "symbol": symbol,
-                    "trade": result,
-                    "pnl": pnl,
-                    "status": status,
-                    "timestamp": datetime.now().isoformat(),
-                    "account_id": self.account_id
-                })
-                
-                # Update statistics
-                stats = self.risk_manager.get_statistics()
-                self.state.update_statistics(stats)
-                
-                # CRITICAL: Update signal result and broadcast
-                signal_timestamp = signal_with_symbol.get('timestamp')
-                if signal_timestamp:
-                    self.state.update_signal_result(signal_timestamp, status, pnl)
-                    
-                    await event_manager.broadcast({
-                        "type": "signal_updated",
-                        "timestamp": signal_timestamp,
-                        "result": status,
-                        "pnl": pnl,
-                        "account_id": self.account_id
-                    })
-
-                    # Send UI Notification
-                    notification_type = "success" if pnl > 0 else "error" if pnl < 0 else "info"
-                    await event_manager.broadcast({
-                        "type": "notification",
-                        "level": notification_type,
-                        "title": f"Trade {status.title()}",
-                        "message": f"{symbol} trade closed. P&L: ${pnl:.2f}",
-                        "timestamp": datetime.now().isoformat(),
-                        "account_id": self.account_id
-                    })
-                
-                await event_manager.broadcast({
-                    "type": "statistics",
-                    "stats": stats,
-                    "timestamp": datetime.now().isoformat(),
-                    "account_id": self.account_id
-                })
-                
-                return True  # Trade executed
-            else:
-                self._cycle_step(symbol, 6, 6, "Trade execution failed (no result)", emoji="\u274C", level="error")
+            if not can_open:
+                self._cycle_step(symbol, 4, 6, f"Risk gate blocked trade: {validation_msg}", emoji="\U0001F6D1", level="warning")
                 await self._broadcast_decision(
                     symbol=symbol,
-                    phase="execution",
-                    decision="opportunity_failed",
-                    reason="Trade engine returned no result",
-                    severity="error",
-                    min_interval_seconds=0,
+                    phase="risk",
+                    decision="no_trade",
+                    reason=validation_msg,
+                    details={"gate": "can_open_trade"},
+                    severity="warning",
+                    throttle_key=f"{symbol}:trade_blocked",
                 )
                 return False
                 
-        except Exception as e:
-            self._cycle_step(symbol, 6, 6, f"Trade execution failed: {type(e).__name__}: {e}", emoji="\u274C", level="error")
-            logger.error(
-                f"[{self._get_strategy_name()}][{symbol}] TRADE_EXECUTION_FAILED traceback",
-                exc_info=True,
+            # Notify Telegram about signal (Moved here to ensure all checks passed)
+            try:
+                signal_with_symbol = signal.copy()
+                signal_with_symbol['symbol'] = symbol
+                await self.telegram_bridge.notify_signal(signal_with_symbol)
+            except:
+                pass
+            
+            # Execute trade!
+            self._cycle_step(
+                symbol,
+                5,
+                6,
+                f"Executing {signal['signal']} | Stake ${stake:.2f} | Multiplier {multiplier}x",
+                emoji="\U0001F680",
             )
             await self._broadcast_decision(
                 symbol=symbol,
                 phase="execution",
-                decision="opportunity_failed",
-                reason=f"{type(e).__name__}: {e}",
-                severity="error",
+                decision="opportunity_taken",
+                reason="Risk checks passed, executing trade",
+                details={
+                    "direction": signal.get("signal"),
+                    "stake": stake,
+                    "multiplier": multiplier,
+                },
                 min_interval_seconds=0,
             )
             
             try:
-                await self.telegram_bridge.notify_error(f"{symbol} trade failed: {e}")
-            except:
-                pass
-            
-            return False
+                # Add symbol to signal data
+                signal_with_symbol = signal.copy()
+                signal_with_symbol['symbol'] = symbol
+                signal_with_symbol['stake'] = stake
+                
+                # Execute trade using TradeEngine
+                result = await self.trade_engine.execute_trade(
+                    signal_with_symbol, 
+                    self.risk_manager
+                )
+                
+                if result:
+                    # Trade executed and completed
+                    pnl = result.get('profit', 0.0)
+                    status = result.get('status', 'unknown')
+                    contract_id = result.get('contract_id')
+                    
+                    result_emoji = "\u2705" if pnl > 0 else ("\u274C" if pnl < 0 else "\u2696\ufe0f")
+                    self._cycle_step(
+                        symbol,
+                        6,
+                        6,
+                        f"Trade completed: {status} | P&L: ${pnl:.2f} | Contract: {contract_id}",
+                        emoji=result_emoji,
+                    )
+
+                    # CRITICAL FIX: Add signal to result for DB persistence
+                    if 'signal' not in result:
+                        result['signal'] = signal_with_symbol['signal']
+                    
+                    # NEW: Add strategy_type to result for database
+                    result['strategy_type'] = self.strategy.get_strategy_name()
+                    
+                    # Record trade closure
+                    self.risk_manager.record_trade_close(contract_id, pnl, status)
+                    self.state.update_trade(contract_id, result)
+
+
+                    # Persist to Supabase with error handling
+                    try:
+                        saved = UserTradesService.save_trade(self.account_id, result)
+                        if saved:
+                            logger.info(f"[{self._get_strategy_name()}][{symbol}] \U0001F9FE Trade persisted to DB: {contract_id}")
+                        else:
+                            logger.error(
+                                f"[{self._get_strategy_name()}][{symbol}] \u274C DB persistence failed for contract {contract_id} (no data returned)"
+                            )
+                            # Notify via Telegram
+                            try:
+                                await self.telegram_bridge.notify_error(
+                                    f"Trade executed but DB save failed: {symbol} {status}"
+                                )
+                            except:
+                                pass
+                    except Exception as e:
+                        logger.error(f"[{self._get_strategy_name()}][{symbol}] \u274C DB save exception for contract {contract_id}: {e}")
+                        import traceback
+                        logger.error(traceback.format_exc())
+                        # Notify via Telegram
+                        try:
+                            await self.telegram_bridge.notify_error(
+                                f"Trade executed but DB error: {symbol} - {str(e)}"
+                            )
+                        except:
+                            pass
+
+                    
+                    # Notify Telegram
+                    try:
+                        # MERGE complete trade details into result for notification
+                        result_for_notify = result.copy()
+                        result_for_notify.update(signal_with_symbol) # Contains direction, stake, symbol
+                        
+                        # Ensure symbol is set (sometimes signal uses 'symbol', result uses 'symbol')
+                        if 'symbol' not in result_for_notify:
+                             result_for_notify['symbol'] = symbol
+                        
+                        await self.telegram_bridge.notify_trade_closed(result_for_notify, pnl, status, strategy_type=self.strategy.get_strategy_name())
+                    except:
+                        pass
+                    
+                    # Broadcast to WebSockets
+                    await event_manager.broadcast({
+                        "type": "trade_closed",
+                        "symbol": symbol,
+                        "trade": result,
+                        "pnl": pnl,
+                        "status": status,
+                        "timestamp": datetime.now().isoformat(),
+                        "account_id": self.account_id
+                    })
+                    
+                    # Update statistics
+                    stats = self.risk_manager.get_statistics()
+                    self.state.update_statistics(stats)
+                    
+                    # CRITICAL: Update signal result and broadcast
+                    signal_timestamp = signal_with_symbol.get('timestamp')
+                    if signal_timestamp:
+                        self.state.update_signal_result(signal_timestamp, status, pnl)
+                        
+                        await event_manager.broadcast({
+                            "type": "signal_updated",
+                            "timestamp": signal_timestamp,
+                            "result": status,
+                            "pnl": pnl,
+                            "account_id": self.account_id
+                        })
+
+                        # Send UI Notification
+                        notification_type = "success" if pnl > 0 else "error" if pnl < 0 else "info"
+                        await event_manager.broadcast({
+                            "type": "notification",
+                            "level": notification_type,
+                            "title": f"Trade {status.title()}",
+                            "message": f"{symbol} trade closed. P&L: ${pnl:.2f}",
+                            "timestamp": datetime.now().isoformat(),
+                            "account_id": self.account_id
+                        })
+                    
+                    await event_manager.broadcast({
+                        "type": "statistics",
+                        "stats": stats,
+                        "timestamp": datetime.now().isoformat(),
+                        "account_id": self.account_id
+                    })
+                    
+                    return True  # Trade executed
+                else:
+                    self._cycle_step(symbol, 6, 6, "Trade execution failed (no result)", emoji="\u274C", level="error")
+                    await self._broadcast_decision(
+                        symbol=symbol,
+                        phase="execution",
+                        decision="opportunity_failed",
+                        reason="Trade engine returned no result",
+                        severity="error",
+                        min_interval_seconds=0,
+                    )
+                    return False
+                    
+            except Exception as e:
+                self._cycle_step(symbol, 6, 6, f"Trade execution failed: {type(e).__name__}: {e}", emoji="\u274C", level="error")
+                logger.error(
+                    f"[{self._get_strategy_name()}][{symbol}] TRADE_EXECUTION_FAILED traceback",
+                    exc_info=True,
+                )
+                await self._broadcast_decision(
+                    symbol=symbol,
+                    phase="execution",
+                    decision="opportunity_failed",
+                    reason=f"{type(e).__name__}: {e}",
+                    severity="error",
+                    min_interval_seconds=0,
+                )
+                
+                try:
+                    await self.telegram_bridge.notify_error(f"{symbol} trade failed: {e}")
+                except:
+                    pass
+                
+                return False
+        finally:
+            if self._execution_mutex.locked():
+                self._execution_mutex.release()
     
     async def _monitor_active_trade(self):
         """

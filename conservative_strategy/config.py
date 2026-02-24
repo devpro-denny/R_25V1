@@ -34,7 +34,7 @@ CONTRACT_TYPE_DOWN = "MULTDOWN"  # Multiplier Down (for DOWN/SELL signals)
 # ==================== MULTI-ASSET CONFIGURATION ====================
 # List of symbols to monitor and trade
 # Removed R_10: 400x multiplier incompatible with 0.5% SL (would exceed stake on Deriv multipliers)
-SYMBOLS = ["R_25", "R_50", "R_75", "R_100"] #"1HZ100V", "1HZ75V", "1HZ90V"  # "RB200", "stpRNG5", "stpRNG4"
+SYMBOLS = ["R_25", "R_50", "R_75", "R_100", "1HZ100V", "1HZ25V", "1HZ30V", "1HZ50V", "1HZ75V", "1HZ90V", "RB200", "stpRNG5", "stpRNG4"]
 
 # Asset-specific configuration
 ASSET_CONFIG = {
@@ -65,6 +65,69 @@ ASSET_CONFIG = {
         "tick_size": 0.01,
         "movement_threshold_pct": 1.0,  # Observed rejections at 0.66-0.77%
         "entry_distance_pct": 1.0  # Max entry distance from level
+    },
+    "1HZ100V": {
+        "multiplier": 40,
+        "description": "Volatility 100 (1s) Index",
+        "tick_size": 0.01,
+        "movement_threshold_pct": 1.5,
+        "entry_distance_pct": 1.5
+    },
+    "1HZ25V": {
+        "multiplier": 160,
+        "description": "Volatility 25 (1s) Index",
+        "tick_size": 0.01,
+        "movement_threshold_pct": 0.9,
+        "entry_distance_pct": 0.9
+    },
+    "1HZ30V": {
+        "multiplier": 100,
+        "description": "Volatility 30 (1s) Index",
+        "tick_size": 0.01,
+        "movement_threshold_pct": 1.0,
+        "entry_distance_pct": 1.0
+    },
+    "1HZ50V": {
+        "multiplier": 80,
+        "description": "Volatility 50 (1s) Index",
+        "tick_size": 0.01,
+        "movement_threshold_pct": 1.1,
+        "entry_distance_pct": 1.1
+    },
+    "1HZ75V": {
+        "multiplier": 50,
+        "description": "Volatility 75 (1s) Index",
+        "tick_size": 0.01,
+        "movement_threshold_pct": 1.2,
+        "entry_distance_pct": 1.2
+    },
+    "1HZ90V": {
+        "multiplier": 45,
+        "description": "Volatility 90 (1s) Index",
+        "tick_size": 0.01,
+        "movement_threshold_pct": 1.3,
+        "entry_distance_pct": 1.3
+    },
+    "RB200": {
+        "multiplier": 40,
+        "description": "Range Break 200 Index",
+        "tick_size": 0.01,
+        "movement_threshold_pct": 0.8,  # Aligned with medium volatility assets
+        "entry_distance_pct": 0.8  # Max entry distance from level
+    },
+    "stpRNG5": {
+        "multiplier": 100,
+        "description": "Step Index 500",
+        "tick_size": 0.1,
+        "movement_threshold_pct": 0.8,  # Aligned with R_75 volatility
+        "entry_distance_pct": 0.8  # Max entry distance from level
+    },
+    "stpRNG4": {
+        "multiplier": 200,
+        "description": "Step Index 400",
+        "tick_size": 0.1,
+        "movement_threshold_pct": 0.7,  # Aligned with R_50 volatility
+        "entry_distance_pct": 0.7  # Max entry distance from level
     }
 } 
 
@@ -101,7 +164,7 @@ TAKE_PROFIT_PERCENT = None
 STOP_LOSS_PERCENT = None
 
 # Valid multipliers for all assets
-VALID_MULTIPLIERS = [40, 50, 80, 100, 160, 200, 400, 800, 1200, 1600]
+VALID_MULTIPLIERS = [40, 45, 50, 80, 100, 160, 200, 400, 800, 1200, 1600]
 
 # ==================== MULTI-ASSET MONITORING ====================
 MONITOR_ALL_ASSETS = True          # Monitor all assets simultaneously

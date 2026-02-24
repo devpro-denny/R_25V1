@@ -7,7 +7,7 @@ import os
 
 # ==================== SYMBOLS ====================
 # Synthetic indices supported for Rise/Fall contracts
-RF_SYMBOLS = ["R_10", "R_25", "R_50", "R_100"]
+RF_SYMBOLS = ["R_25", "R_50", "R_75", "R_100", "1HZ100V", "1HZ25V", "1HZ30V", "1HZ50V", "1HZ75V", "1HZ90V", "RB200", "stpRNG5", "stpRNG4"]
 
 # ==================== TIMEFRAME ====================
 RF_TIMEFRAME = "1m"   # 1-minute candles only

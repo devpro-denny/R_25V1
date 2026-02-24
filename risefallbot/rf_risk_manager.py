@@ -145,9 +145,15 @@ class RiseFallRiskManager(BaseRiskManager):
         """Expose the mutex for external lock checks (e.g. run loop)."""
         return self._trade_mutex
 
-    async def acquire_trade_lock(self, symbol: str, contract_id: str, stake: float = None) -> bool:
+    async def acquire_trade_lock(
+        self,
+        symbol: str,
+        contract_id: str,
+        stake: float = None,
+        wait_for_lock: bool = True,
+    ) -> bool:
         """
-        Acquire the trade mutex. Blocks if another trade holds it.
+        Acquire the trade mutex.
 
         This MUST be called before any trade execution. The caller must
         call release_trade_lock() only after the DB write is confirmed.
@@ -156,6 +162,9 @@ class RiseFallRiskManager(BaseRiskManager):
             symbol:      Trading symbol
             contract_id: Contract ID (for logging, may be 'pending' pre-buy)
             stake:       Reference stake for risk checks (daily loss limit)
+            wait_for_lock:
+                - True: block until mutex is available
+                - False: fail fast when mutex is already held
 
         Returns:
             True if acquired, False if system is halted
@@ -200,6 +209,12 @@ class RiseFallRiskManager(BaseRiskManager):
         logger.info(
             f"[RF] STEP 1/6 | {ts} | ACQUIRING TRADE LOCK for {symbol}#{contract_id}"
         )
+
+        if not wait_for_lock and self._trade_mutex.locked():
+            logger.info(
+                f"[RF-Risk] ⏭️ Lock busy for {symbol}#{contract_id} - fast-fail (parallel scan mode)"
+            )
+            return False
 
         await self._trade_mutex.acquire()
 
