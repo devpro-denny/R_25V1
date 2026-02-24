@@ -7,6 +7,7 @@ from typing import Optional, Dict
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import logging
+import time
 from supabase.client import Client
 
 from app.core.settings import settings
@@ -14,6 +15,20 @@ from app.core.supabase import supabase
 from app.core.cache import cache
 
 logger = logging.getLogger(__name__)
+
+_REVOKED_SESSION_LOG_COOLDOWN_SECONDS = 60.0
+_last_revoked_session_log = 0.0
+
+
+def _log_revoked_session_once() -> None:
+    """Throttle repetitive revoked-session auth logs from stale browser tokens."""
+    global _last_revoked_session_log
+    now = time.monotonic()
+    if now - _last_revoked_session_log >= _REVOKED_SESSION_LOG_COOLDOWN_SECONDS:
+        logger.info("Rejected JWT for non-existent/revoked Supabase session")
+        _last_revoked_session_log = now
+    else:
+        logger.debug("Suppressed repeated revoked-session JWT warning")
 
 # HTTP Bearer for token extraction
 security = HTTPBearer(auto_error=False)
@@ -108,7 +123,11 @@ async def get_current_user(
         }
         
     except Exception as e:
-        logger.warning(f"Auth error: {e}")
+        message = str(e).lower()
+        if "session from session_id claim in jwt does not exist" in message:
+            _log_revoked_session_once()
+        else:
+            logger.warning(f"Auth error: {e}")
         return None
 
 
