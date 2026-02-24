@@ -129,6 +129,9 @@ class _RFPerUserFileHandler(logging.Handler):
 
     def emit(self, record: logging.LogRecord) -> None:
         try:
+            # Child loggers can bypass parent-logger filters; guarantee formatter safety.
+            if not hasattr(record, "user_id"):
+                record.user_id = None
             self._get_handler(self._resolve_path(record)).emit(record)
         except Exception:
             self.handleError(record)
@@ -160,10 +163,12 @@ def _setup_rf_logger():
     rf_root.setLevel(getattr(logging, rf_config.RF_LOG_LEVEL, logging.INFO))
     rf_root.propagate = False  # ← isolate from multiplier bot logs
     
-    # Add context filter for user_id injection
+    # Add context filter for user_id injection.
+    # IMPORTANT: attach to handlers too, because ancestor logger filters are not
+    # applied to records emitted by child loggers.
     try:
         from app.core.logging import ContextInjectingFilter
-        rf_root.addFilter(ContextInjectingFilter())
+        user_filter = ContextInjectingFilter()
     except Exception:
         class _DefaultUserFilter(logging.Filter):
             def filter(self, record):
@@ -171,7 +176,9 @@ def _setup_rf_logger():
                     record.user_id = None
                 return True
 
-        rf_root.addFilter(_DefaultUserFilter())
+        user_filter = _DefaultUserFilter()
+
+    rf_root.addFilter(user_filter)
 
     formatter = logging.Formatter(
         "%(asctime)s | %(name)s | %(levelname)s | [%(user_id)s] %(message)s",
@@ -179,11 +186,14 @@ def _setup_rf_logger():
     )
 
     # Per-user file handler to prevent cross-user log mixing.
-    rf_root.addHandler(_RFPerUserFileHandler(formatter))
+    per_user_handler = _RFPerUserFileHandler(formatter)
+    per_user_handler.addFilter(user_filter)
+    rf_root.addHandler(per_user_handler)
 
     # Console handler (optional — useful during development)
     ch = logging.StreamHandler()
     ch.setFormatter(formatter)
+    ch.addFilter(user_filter)
     rf_root.addHandler(ch)
     
     # WebSocket handler (for live dashboard streaming) — added early
@@ -191,6 +201,7 @@ def _setup_rf_logger():
         from app.core.logging import WebSocketLoggingHandler
         ws_handler = WebSocketLoggingHandler()
         ws_handler.setFormatter(formatter)
+        ws_handler.addFilter(user_filter)
         rf_root.addHandler(ws_handler)
     except Exception as e:
         # If WebSocket handler is not available, continue without it

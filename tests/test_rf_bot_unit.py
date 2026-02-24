@@ -1,5 +1,6 @@
 import pytest
 import asyncio
+import logging
 from unittest.mock import patch, AsyncMock, MagicMock
 from datetime import datetime
 from types import SimpleNamespace
@@ -234,3 +235,28 @@ async def test_process_symbol_no_signal():
         for p in payloads
     )
     assert not rm.is_halted()
+
+
+def test_rf_per_user_file_handler_injects_missing_user_id():
+    formatter = logging.Formatter(
+        "%(asctime)s | %(name)s | %(levelname)s | [%(user_id)s] %(message)s"
+    )
+    handler = rf_bot._RFPerUserFileHandler(formatter)
+    logger = logging.getLogger("risefallbot.strategy")
+    logger.setLevel(logging.INFO)
+
+    record = logger.makeRecord(
+        name="risefallbot.strategy",
+        level=logging.INFO,
+        fn=__file__,
+        lno=1,
+        msg="[RF][R_50] test log line",
+        args=(),
+        exc_info=None,
+    )
+    # Simulate problematic records from child logger paths with no user_id attribute.
+    assert not hasattr(record, "user_id")
+
+    # Should not raise formatting/key errors.
+    handler.emit(record)
+    handler.close()
