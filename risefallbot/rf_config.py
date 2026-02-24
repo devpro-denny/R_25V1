@@ -20,30 +20,31 @@ RF_EMA_SLOW = 13
 
 # RSI (momentum oscillator)
 RF_RSI_PERIOD = 7
-RF_RSI_OVERSOLD = 30    # Below this -> CALL opportunity
-RF_RSI_OVERBOUGHT = 70  # Above this -> PUT opportunity
+RF_RSI_OVERSOLD = 35    # Below this -> CALL opportunity (balanced preset)
+RF_RSI_OVERBOUGHT = 65  # Above this -> PUT opportunity (balanced preset)
 
 # Stochastic %K (momentum confirmation)
 RF_STOCH_K_PERIOD = 5
 RF_STOCH_D_PERIOD = 3
-RF_STOCH_OVERSOLD = 20    # Below this -> CALL confirmation
-RF_STOCH_OVERBOUGHT = 80  # Above this -> PUT confirmation
+RF_STOCH_OVERSOLD = 25    # Below this -> CALL confirmation (balanced preset)
+RF_STOCH_OVERBOUGHT = 75  # Above this -> PUT confirmation (balanced preset)
 
 # ==================== ZONE ANALYSIS ====================
 # Spatial filter: identify key support/resistance levels and trade only nearby.
 RF_ZONE_LOOKBACK = 50             # Bars to scan for key horizontal zones
-RF_ZONE_TOUCH_TOLERANCE = 0.0003  # Price % tolerance for zone proximity
-RF_ZONE_MIN_TOUCHES = 2           # Minimum touches required for a valid zone
+RF_ZONE_TOUCH_TOLERANCE = 0.0008  # Price % tolerance for zone proximity (balanced preset)
+RF_ZONE_MIN_TOUCHES = 1           # Minimum touches required for a valid zone (balanced preset)
 
 # Candle quality filter: strong body with controlled wick size.
-RF_MOMENTUM_BODY_RATIO = 0.70     # Minimum body/range ratio
-RF_MOMENTUM_WICK_RATIO = 0.25     # Maximum wick/range ratio
-RF_MOMENTUM_AVG_LOOKBACK = 5      # Previous candles used for avg body comparison
+RF_MOMENTUM_BODY_RATIO = 0.60     # Minimum body/range ratio (balanced preset)
+RF_MOMENTUM_WICK_RATIO = 0.35     # Maximum wick/range ratio (balanced preset)
+RF_MOMENTUM_AVG_LOOKBACK = 3      # Previous candles used for avg body comparison (balanced preset)
 
 # Optimization feature flags.
 RF_ENABLE_ZONE_FILTER = True      # Gate signals through zone analysis
 RF_ENABLE_CANDLE_FILTER = True    # Gate signals through momentum candle check
 RF_RETEST_LOOKBACK = 5            # Bars to inspect for retest scenario
+RF_ALLOW_BASIC_SCENARIO = True    # Allow basic scenario when zone filter is enabled (balanced preset)
 
 # ==================== CONTRACT PARAMETERS ====================
 RF_DEFAULT_STAKE = 1.00   # Default stake in USD

@@ -103,6 +103,7 @@ class RiseFallStrategy(BaseStrategy):
         self.enable_zone_filter = _cfg_bool("RF_ENABLE_ZONE_FILTER", False)
         self.enable_candle_filter = _cfg_bool("RF_ENABLE_CANDLE_FILTER", False)
         self.retest_lookback = _cfg_int("RF_RETEST_LOOKBACK", 5)
+        self.allow_basic_scenario = _cfg_bool("RF_ALLOW_BASIC_SCENARIO", False)
         self._last_analysis: Dict[str, Dict[str, Any]] = {}
 
     def _set_analysis(
@@ -307,7 +308,7 @@ class RiseFallStrategy(BaseStrategy):
             retest_lookback=self.retest_lookback,
         )
         logger.debug(f"[RF][{symbol}] Scenario classified: {scenario}")
-        if self.enable_zone_filter and scenario == "basic":
+        if self.enable_zone_filter and not self.allow_basic_scenario and scenario == "basic":
             logger.debug(
                 f"[RF][{symbol}] Basic scenario without structural trigger - waiting"
             )
