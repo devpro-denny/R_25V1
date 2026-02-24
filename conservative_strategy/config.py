@@ -81,7 +81,7 @@ ASSET_CONFIG = {
         "entry_distance_pct": 0.9
     },
     "1HZ30V": {
-        "multiplier": 100,
+        "multiplier": 140,
         "description": "Volatility 30 (1s) Index",
         "tick_size": 0.01,
         "movement_threshold_pct": 1.0,
@@ -164,7 +164,7 @@ TAKE_PROFIT_PERCENT = None
 STOP_LOSS_PERCENT = None
 
 # Valid multipliers for all assets
-VALID_MULTIPLIERS = [40, 45, 50, 80, 100, 160, 200, 400, 800, 1200, 1600]
+VALID_MULTIPLIERS = [40, 45, 50, 80, 100, 140, 160, 200, 400, 800, 1200, 1600]
 
 # ==================== MULTI-ASSET MONITORING ====================
 MONITOR_ALL_ASSETS = True          # Monitor all assets simultaneously
