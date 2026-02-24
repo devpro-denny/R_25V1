@@ -1,4 +1,5 @@
 import asyncio
+import json
 from datetime import datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -91,6 +92,47 @@ async def test_data_fetcher_connection_closed_and_weekly_resample_paths(monkeypa
     got = await f.fetch_timeframe("R_25", "1w", count=2)
     assert got is not None
     assert len(got) <= 2
+
+
+@pytest.mark.asyncio
+async def test_data_fetcher_send_request_serializes_parallel_recv(monkeypatch):
+    f = df_mod.DataFetcher("T")
+    f.ensure_connected = AsyncMock(return_value=True)
+    f.is_connected = True
+    f.rate_limiter.acquire = AsyncMock()
+
+    class ProbeWS:
+        def __init__(self):
+            self.closed = False
+            self._recv_seq = 0
+            self.active_recv = 0
+            self.max_active_recv = 0
+
+        async def send(self, _payload):
+            return None
+
+        async def recv(self):
+            self.active_recv += 1
+            self.max_active_recv = max(self.max_active_recv, self.active_recv)
+            await asyncio.sleep(0.01)
+            self._recv_seq += 1
+            self.active_recv -= 1
+            return json.dumps({"ok": self._recv_seq})
+
+    ws = ProbeWS()
+    f.ws = ws
+
+    monkeypatch.setattr(df_mod.config, "MAX_RETRIES", 1)
+    monkeypatch.setattr(df_mod.config, "RETRY_DELAY", 0)
+
+    r1, r2 = await asyncio.gather(
+        f.send_request({"a": 1}),
+        f.send_request({"b": 2}),
+    )
+
+    assert r1.get("ok") in {1, 2}
+    assert r2.get("ok") in {1, 2}
+    assert ws.max_active_recv == 1
 
 
 @pytest.mark.asyncio

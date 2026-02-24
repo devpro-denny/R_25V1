@@ -37,6 +37,10 @@ class DataFetcher:
         
         # Rate limiting - TokenBucket allows 10 req/s with burst capacity of 20
         self.rate_limiter = TokenBucket(rate=10.0, capacity=20.0)
+        # Protect websocket request/response pairs from concurrent recv() calls.
+        self._ws_request_lock = asyncio.Lock()
+        # Prevent reconnect storms when many tasks detect a dropped socket.
+        self._connection_lock = asyncio.Lock()
         
         # Error tracking
         self.last_error: Optional[str] = None
@@ -100,10 +104,15 @@ class DataFetcher:
     
     async def ensure_connected(self) -> bool:
         """Ensure WebSocket is connected, reconnect if needed"""
-        if not self.is_connected or not self.ws or self.ws.closed:
-            logger.warning("[WARNING] Connection lost, attempting to reconnect...")
+        if self.is_connected and self.ws and not self.ws.closed:
+            return True
+
+        logger.warning("[WARNING] Connection lost, attempting to reconnect...")
+        async with self._connection_lock:
+            # Another waiter may have already re-established connection.
+            if self.is_connected and self.ws and not self.ws.closed:
+                return True
             return await self.reconnect()
-        return True
     
     async def disconnect(self):
         """Disconnect from WebSocket"""
@@ -158,18 +167,33 @@ class DataFetcher:
                 # Ensure connection for this attempt
                 if not self.is_connected or not self.ws or self.ws.closed:
                     logger.warning(f"[RETRY] Connection lost, reconnecting (Attempt {attempt})...")
-                    if not await self.reconnect():
+                    async with self._connection_lock:
+                        # Another waiter may have already restored connection.
+                        if self.is_connected and self.ws and not self.ws.closed:
+                            pass
+                        else:
+                            reconnected = await self.reconnect()
+                            if not reconnected:
+                                if attempt < config.MAX_RETRIES:
+                                    await asyncio.sleep(config.RETRY_DELAY * attempt)
+                                    continue
+                                else:
+                                    return {"error": {"message": "Connection permanently lost"}}
+                    if not self.is_connected or not self.ws or self.ws.closed:
                         if attempt < config.MAX_RETRIES:
                             await asyncio.sleep(config.RETRY_DELAY * attempt)
                             continue
                         else:
                             return {"error": {"message": "Connection permanently lost"}}
 
-                # Acquire token from rate limiter (allows parallel requests)
+                # Acquire token from rate limiter (allows queued parallel producers).
                 await self.rate_limiter.acquire()
-                await self.ws.send(json.dumps(request))
-                response_str = await self.ws.recv()
-                response = json.loads(response_str)
+                # CRITICAL: Deriv websocket uses a single recv stream; concurrent
+                # recv() calls raise runtime errors and can mix responses.
+                async with self._ws_request_lock:
+                    await self.ws.send(json.dumps(request))
+                    response_str = await self.ws.recv()
+                    response = json.loads(response_str)
                 
                 # Check for specific transient API errors to retry
                 if "error" in response:
