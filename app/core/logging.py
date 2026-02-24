@@ -158,9 +158,11 @@ class WebSocketLoggingHandler(logging.Handler):
                 if loop.is_running():
                     try:
                         # Frontend expects ISO-8601 strings for consistent Date parsing.
-                        ts = datetime.fromtimestamp(float(record.created), tz=timezone.utc).isoformat()
+                        ts = datetime.fromtimestamp(float(record.created), tz=timezone.utc).isoformat().replace("+00:00", "Z")
+                        ts_unix_ms = int(float(record.created) * 1000)
                     except Exception:
-                        ts = datetime.now(timezone.utc).isoformat()
+                        ts = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+                        ts_unix_ms = int(time.time() * 1000)
 
                     payload = {
                         "type": "log",
@@ -168,6 +170,7 @@ class WebSocketLoggingHandler(logging.Handler):
                         "level": record.levelname,
                         "message": msg,
                         "timestamp": ts,
+                        "timestamp_unix_ms": ts_unix_ms,
                         "account_id": user_id
                     }
                     loop.create_task(event_manager.broadcast(payload))

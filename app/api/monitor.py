@@ -5,6 +5,7 @@ Get signals, performance metrics, and logs
 
 import os
 import re
+from datetime import datetime, timezone
 
 import psutil
 from fastapi import APIRouter, Depends, Query
@@ -16,6 +17,61 @@ from app.core.serializers import prepare_response
 from app.schemas.common import PerformanceResponse
 
 router = APIRouter()
+
+_LOG_PREFIX_TS_RE = re.compile(
+    r"^(?P<ts>\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})?)\s*\|\s*(?P<rest>.*)$"
+)
+
+
+def _to_iso_utc(ts_text: str) -> str | None:
+    """Convert timestamp text to strict ISO-8601 UTC format with trailing Z."""
+    raw = str(ts_text or "").strip()
+    if not raw:
+        return None
+
+    normalized = raw[:-1] + "+00:00" if raw.endswith("Z") else raw
+
+    try:
+        dt = datetime.fromisoformat(normalized)
+    except ValueError:
+        dt = None
+
+    if dt is None:
+        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S"):
+            try:
+                dt = datetime.strptime(raw, fmt)
+                break
+            except ValueError:
+                continue
+
+    if dt is None:
+        return None
+
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    else:
+        dt = dt.astimezone(timezone.utc)
+    return dt.isoformat().replace("+00:00", "Z")
+
+
+def _normalize_log_timestamp(line: str) -> str:
+    """
+    Ensure every log line starts with a parseable ISO timestamp.
+    This prevents frontend "Invalid Date" rendering for legacy formats.
+    """
+    cleaned = str(line or "").strip()
+    if not cleaned:
+        return cleaned
+
+    match = _LOG_PREFIX_TS_RE.match(cleaned)
+    if match:
+        ts_iso = _to_iso_utc(match.group("ts"))
+        if ts_iso:
+            return f"{ts_iso} | {match.group('rest').strip()}"
+
+    # Fallback for legacy lines without a leading timestamp prefix.
+    now_iso = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    return f"{now_iso} | {cleaned}"
 
 
 def _repair_mojibake_text(text: str) -> str:
@@ -223,6 +279,7 @@ async def get_recent_logs(
                 if not stripped:
                     continue
                 stripped = _repair_mojibake_text(stripped)
+                stripped = _normalize_log_timestamp(stripped)
                 if _is_decorative_log_line(stripped):
                     continue
                 if not _should_include_log_line(stripped, user_id, active_strategy):

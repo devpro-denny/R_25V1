@@ -34,7 +34,7 @@ CONTRACT_TYPE_DOWN = "MULTDOWN"  # Multiplier Down (for DOWN/SELL signals)
 # ==================== MULTI-ASSET CONFIGURATION ====================
 # List of symbols to monitor and trade
 # Removed R_10: 400x multiplier incompatible with 0.5% SL (would exceed stake on Deriv multipliers)
-SYMBOLS = ["R_25", "R_50", "R_75", "R_100", "1HZ100V", "1HZ25V", "1HZ30V", "1HZ50V", "1HZ75V", "1HZ90V", "RB200", "stpRNG5", "stpRNG4"]
+SYMBOLS = ["R_25", "R_50", "R_75", "R_100", "1HZ100V", "1HZ25V", "1HZ30V", "1HZ50V", "1HZ75V", "1HZ90V", "stpRNG5", "stpRNG4"]
 
 # Asset-specific configuration
 ASSET_CONFIG = {
@@ -108,26 +108,19 @@ ASSET_CONFIG = {
         "movement_threshold_pct": 1.3,
         "entry_distance_pct": 1.3
     },
-    "RB200": {
-        "multiplier": 40,
-        "description": "Range Break 200 Index",
-        "tick_size": 0.01,
-        "movement_threshold_pct": 0.8,  # Aligned with medium volatility assets
-        "entry_distance_pct": 0.8  # Max entry distance from level
-    },
     "stpRNG5": {
         "multiplier": 100,
         "description": "Step Index 500",
         "tick_size": 0.1,
-        "movement_threshold_pct": 0.8,  # Aligned with R_75 volatility
-        "entry_distance_pct": 0.8  # Max entry distance from level
+        "movement_threshold_pct": 0.8,
+        "entry_distance_pct": 0.8
     },
     "stpRNG4": {
         "multiplier": 200,
         "description": "Step Index 400",
         "tick_size": 0.1,
-        "movement_threshold_pct": 0.7,  # Aligned with R_50 volatility
-        "entry_distance_pct": 0.7  # Max entry distance from level
+        "movement_threshold_pct": 0.7,
+        "entry_distance_pct": 0.7
     }
 } 
 
