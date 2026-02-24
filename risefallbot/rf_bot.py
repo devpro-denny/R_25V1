@@ -708,30 +708,30 @@ async def run(stake: Optional[float] = None, api_token: Optional[str] = None,
                     min_interval_seconds=0,
                 )
                 
-                for symbol in rf_config.RF_SYMBOLS:
-                    # If a trade became active during this loop iteration, stop immediately
-                    if risk_manager.is_trade_active():
-                        active_info = risk_manager.get_active_trade_info()
-                        logger.info(
-                            f"[RF][{symbol}] Trade opened during symbol loop "
-                            f"({active_info.get('symbol')}#{active_info.get('contract_id')}) — stopping scan"
-                        )
-                        break
-
-                    # If system halted during loop, stop
-                    if risk_manager.is_halted():
-                        logger.error(f"[RF][{symbol}] System halted during scan — stopping")
-                        break
-
+                async def _process_symbol_safe(symbol: str):
                     try:
                         logger.info(f"[RF][{symbol}] SCAN | Checking trading opportunities")
                         await _process_symbol(
-                            symbol, strategy, risk_manager, data_fetcher,
-                            trade_engine, stake, user_id, event_manager,
+                            symbol,
+                            strategy,
+                            risk_manager,
+                            data_fetcher,
+                            trade_engine,
+                            stake,
+                            user_id,
+                            event_manager,
                             UserTradesService,
                         )
                     except Exception as e:
-                        logger.error(f"[RF][{symbol}] ❌ Error: {e}")
+                        logger.error(f"[RF][{symbol}] ERROR: {e}")
+
+                tasks = [
+                    asyncio.create_task(_process_symbol_safe(symbol))
+                    for symbol in rf_config.RF_SYMBOLS
+                ]
+                if tasks:
+                    await asyncio.gather(*tasks)
+
 
             # Log summary
             stats = risk_manager.get_statistics()
@@ -1119,7 +1119,12 @@ async def _process_symbol(
     )
 
     # ── STEP 1: Acquire trade lock ──
-    lock_acquired = await risk_manager.acquire_trade_lock(symbol, "pending", stake=stake_val)
+    lock_acquired = await risk_manager.acquire_trade_lock(
+        symbol,
+        "pending",
+        stake=stake_val,
+        wait_for_lock=False,
+    )
     if not lock_acquired:
         logger.error(f"[RF][{symbol}] ❌ Could not acquire trade lock — system may be halted")
         await _broadcast_rf_decision(

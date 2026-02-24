@@ -4,7 +4,7 @@ All scalping-specific constants and thresholds
 """
 
 # Dedicated symbol universe for scalping (kept local for independence).
-SYMBOLS = ["R_25", "R_50", "R_75", "R_100"]
+SYMBOLS = ["R_25", "R_50", "R_75", "R_100", "1HZ100V", "1HZ25V", "1HZ30V", "1HZ50V", "1HZ75V", "1HZ90V", "RB200", "stpRNG5", "stpRNG4"]
 
 # Dedicated asset config for scalping (duplicated intentionally for isolation).
 ASSET_CONFIG = {
@@ -35,6 +35,69 @@ ASSET_CONFIG = {
         "tick_size": 0.01,
         "movement_threshold_pct": 1.0,
         "entry_distance_pct": 1.0,
+    },
+    "1HZ100V": {
+        "multiplier": 40,
+        "description": "Volatility 100 (1s) Index",
+        "tick_size": 0.01,
+        "movement_threshold_pct": 1.5,
+        "entry_distance_pct": 1.5,
+    },
+    "1HZ25V": {
+        "multiplier": 160,
+        "description": "Volatility 25 (1s) Index",
+        "tick_size": 0.01,
+        "movement_threshold_pct": 0.9,
+        "entry_distance_pct": 0.9,
+    },
+    "1HZ30V": {
+        "multiplier": 140,
+        "description": "Volatility 30 (1s) Index",
+        "tick_size": 0.01,
+        "movement_threshold_pct": 1.0,
+        "entry_distance_pct": 1.0,
+    },
+    "1HZ50V": {
+        "multiplier": 80,
+        "description": "Volatility 50 (1s) Index",
+        "tick_size": 0.01,
+        "movement_threshold_pct": 1.1,
+        "entry_distance_pct": 1.1,
+    },
+    "1HZ75V": {
+        "multiplier": 50,
+        "description": "Volatility 75 (1s) Index",
+        "tick_size": 0.01,
+        "movement_threshold_pct": 1.2,
+        "entry_distance_pct": 1.2,
+    },
+    "1HZ90V": {
+        "multiplier": 45,
+        "description": "Volatility 90 (1s) Index",
+        "tick_size": 0.01,
+        "movement_threshold_pct": 1.3,
+        "entry_distance_pct": 1.3,
+    },
+    "RB200": {
+        "multiplier": 40,
+        "description": "Range Break 200 Index",
+        "tick_size": 0.01,
+        "movement_threshold_pct": 0.8,
+        "entry_distance_pct": 0.8,
+    },
+    "stpRNG5": {
+        "multiplier": 100,
+        "description": "Step Index 500",
+        "tick_size": 0.1,
+        "movement_threshold_pct": 0.8,
+        "entry_distance_pct": 0.8,
+    },
+    "stpRNG4": {
+        "multiplier": 200,
+        "description": "Step Index 400",
+        "tick_size": 0.1,
+        "movement_threshold_pct": 0.7,
+        "entry_distance_pct": 0.7,
     },
 }
 
