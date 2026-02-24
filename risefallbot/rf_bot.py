@@ -14,6 +14,7 @@ import asyncio
 import os
 import logging
 import re
+import sys
 import threading
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any
@@ -191,7 +192,7 @@ def _setup_rf_logger():
     rf_root.addHandler(per_user_handler)
 
     # Console handler (optional — useful during development)
-    ch = logging.StreamHandler()
+    ch = logging.StreamHandler(sys.stdout)
     ch.setFormatter(formatter)
     ch.addFilter(user_filter)
     rf_root.addHandler(ch)

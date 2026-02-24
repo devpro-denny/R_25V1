@@ -203,6 +203,14 @@ def setup_api_logger():
     console_handler.setFormatter(formatter)
     logger.addHandler(console_handler)
 
+    # Route uvicorn logs to stdout so transport doesn't classify INFO as stderr errors.
+    for uvicorn_logger_name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
+        uvicorn_logger = logging.getLogger(uvicorn_logger_name)
+        uvicorn_logger.handlers.clear()
+        uvicorn_logger.setLevel(logging.INFO)
+        uvicorn_logger.propagate = False
+        uvicorn_logger.addHandler(console_handler)
+
     # 2. Context Filter (Injects user_id)
     context_filter = ContextInjectingFilter()
     logger.addFilter(context_filter)
