@@ -8,6 +8,7 @@ from typing import Optional
 from datetime import datetime
 import asyncio
 import logging
+import jwt
 import time
 
 from app.bot.events import event_manager
@@ -59,8 +60,22 @@ def _log_unauth_rejection(websocket: WebSocket, reason: str) -> None:
 
 def extract_user_id_from_token(token: str) -> Optional[str]:
     """
-    Validate Supabase JWT access token and return user_id.
-    This rejects revoked sessions (for example after logout in another tab/device).
+    Decode user_id from Supabase JWT access token without remote validation.
+    Kept for backward compatibility and lightweight parsing.
+    """
+    try:
+        payload = jwt.decode(token, options={"verify_signature": False})
+        user_id = payload.get("sub")
+        return user_id
+    except Exception as e:
+        logger.warning(f"Failed to decode token: {e}")
+        return None
+
+
+def _validate_token_session(token: str) -> Optional[str]:
+    """
+    Validate token against Supabase session state.
+    Returns user_id only when the session is still active.
     """
     try:
         user_response = supabase.auth.get_user(token)
@@ -73,7 +88,7 @@ def extract_user_id_from_token(token: str) -> Optional[str]:
         if "session from session_id claim in jwt does not exist" in message:
             logger.debug("Rejected WebSocket token for revoked/non-existent session")
         else:
-            logger.warning(f"Failed to validate WebSocket token: {e}")
+            logger.warning(f"Failed to validate WebSocket token session: {e}")
         return None
 
 @router.websocket("/live")
@@ -100,11 +115,18 @@ async def websocket_live(websocket: WebSocket, token: Optional[str] = Query(None
             token_candidate = protocols[0]
 
     if token_candidate:
-        # Extract user_id from JWT token
-        user_id = extract_user_id_from_token(token_candidate)
-        if user_id:
+        # Decode + session-validate to avoid accepting revoked/stale tokens.
+        decoded_user_id = extract_user_id_from_token(token_candidate)
+        validated_user_id = _validate_token_session(token_candidate)
+        if validated_user_id:
+            user_id = validated_user_id
             subprotocol = token_candidate  # Return the token as subprotocol to client
             logger.info(f"WebSocket authenticated for user: {user_id}")
+        elif decoded_user_id:
+            logger.debug(
+                "Token decoded for user %s but session validation failed",
+                decoded_user_id,
+            )
         else:
             logger.debug("Failed to extract user_id from token")
 
