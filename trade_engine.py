@@ -45,7 +45,11 @@ class TradeEngine:
         
         # Load asset configurations
         self.asset_configs = config.ASSET_CONFIG
-        self.valid_symbols = list(self.asset_configs.keys())
+        self.blocked_symbols = set(getattr(config, "BLOCKED_SYMBOLS", set()))
+        self.valid_symbols = [
+            symbol for symbol in self.asset_configs.keys()
+            if symbol not in self.blocked_symbols
+        ]
         
         logger.info(f"ðŸŽ¯ Trade Engine initialized")
         logger.info(f"   Risk Mode: {self.risk_mode}")
@@ -185,6 +189,10 @@ class TradeEngine:
             Multiplier value for that asset
         """
         try:
+            if symbol in self.blocked_symbols:
+                logger.error(f"❌ Symbol blocked from trading: {symbol}")
+                return getattr(config, 'MULTIPLIER', 160)
+
             if symbol not in self.asset_configs:
                 logger.error(f"âŒ Unknown symbol: {symbol}")
                 logger.warning(f"   Valid symbols: {', '.join(self.valid_symbols)}")
@@ -209,6 +217,10 @@ class TradeEngine:
         Returns:
             True if valid, False otherwise
         """
+        if symbol in self.blocked_symbols:
+            logger.error(f"❌ Symbol blocked from trading: {symbol}")
+            return False
+
         if symbol not in self.valid_symbols:
             logger.error(f"âŒ Invalid symbol: {symbol}")
             logger.info(f"   Valid symbols: {', '.join(self.valid_symbols)}")

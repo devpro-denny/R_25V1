@@ -377,6 +377,16 @@ class RFTradeEngine:
                 'ghost':       bool  # True only when recovered from ghost
             }
         """
+        blocked_symbols = set(getattr(rf_config, "RF_BLOCKED_SYMBOLS", set()))
+        if symbol in blocked_symbols:
+            logger.error(f"[RF-Engine] Symbol blocked from trading: {symbol}")
+            return None
+
+        allowed_symbols = set(getattr(rf_config, "RF_SYMBOLS", []))
+        if symbol not in allowed_symbols:
+            logger.error(f"[RF-Engine] Unsupported symbol: {symbol}")
+            return None
+
         if not await self.ensure_connected():
             return None
 

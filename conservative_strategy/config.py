@@ -33,8 +33,11 @@ CONTRACT_TYPE_DOWN = "MULTDOWN"  # Multiplier Down (for DOWN/SELL signals)
 
 # ==================== MULTI-ASSET CONFIGURATION ====================
 # List of symbols to monitor and trade
+# 1HZ100V is intentionally blocked and must never be traded.
+BLOCKED_SYMBOLS = {"1HZ100V"}
+
 # Removed R_10: 400x multiplier incompatible with 0.5% SL (would exceed stake on Deriv multipliers)
-SYMBOLS = ["R_25", "R_50", "R_75", "R_100", "1HZ100V", "1HZ25V", "1HZ30V", "1HZ50V", "1HZ75V", "1HZ90V", "stpRNG5", "stpRNG4"]
+SYMBOLS = ["R_25", "R_50", "R_75", "R_100", "1HZ25V", "1HZ30V", "1HZ50V", "1HZ75V", "1HZ90V", "stpRNG5", "stpRNG4"]
 
 # Asset-specific configuration
 ASSET_CONFIG = {
@@ -65,13 +68,6 @@ ASSET_CONFIG = {
         "tick_size": 0.01,
         "movement_threshold_pct": 1.0,  # Observed rejections at 0.66-0.77%
         "entry_distance_pct": 1.0  # Max entry distance from level
-    },
-    "1HZ100V": {
-        "multiplier": 40,
-        "description": "Volatility 100 (1s) Index",
-        "tick_size": 0.01,
-        "movement_threshold_pct": 1.5,
-        "entry_distance_pct": 1.5
     },
     "1HZ25V": {
         "multiplier": 160,
@@ -343,6 +339,8 @@ MIN_CONFLUENCE_SCORE = 3.0         # Minimum score to consider level valid
 # ==================== UTILITY FUNCTIONS ====================
 def get_multiplier(symbol):
     """Get multiplier for a specific symbol"""
+    if symbol in BLOCKED_SYMBOLS:
+        raise ValueError(f"Symbol '{symbol}' is blocked from trading")
     if symbol not in ASSET_CONFIG:
         raise ValueError(f"Unknown symbol: {symbol}. Valid symbols: {list(ASSET_CONFIG.keys())}")
     return ASSET_CONFIG[symbol]["multiplier"]
@@ -350,6 +348,8 @@ def get_multiplier(symbol):
 
 def get_asset_info(symbol):
     """Get complete configuration for a specific symbol"""
+    if symbol in BLOCKED_SYMBOLS:
+        raise ValueError(f"Symbol '{symbol}' is blocked from trading")
     if symbol not in ASSET_CONFIG:
         raise ValueError(f"Unknown symbol: {symbol}. Valid symbols: {list(ASSET_CONFIG.keys())}")
     return ASSET_CONFIG[symbol]
@@ -393,6 +393,12 @@ def validate_config():
     # Validate multi-asset configuration
     if not SYMBOLS:
         errors.append("SYMBOLS list cannot be empty")
+
+    for blocked_symbol in BLOCKED_SYMBOLS:
+        if blocked_symbol in SYMBOLS:
+            errors.append(f"Blocked symbol '{blocked_symbol}' must not appear in SYMBOLS")
+        if blocked_symbol in ASSET_CONFIG:
+            errors.append(f"Blocked symbol '{blocked_symbol}' must not appear in ASSET_CONFIG")
     
     for symbol in SYMBOLS:
         if symbol not in ASSET_CONFIG:
