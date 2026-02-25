@@ -148,8 +148,8 @@ SCALPING_RUNAWAY_WINDOW_MINUTES = 10
 SCALPING_RUNAWAY_TRADE_COUNT = 10
 
 # ==================== STAGNATION EXIT ====================
-SCALPING_STAGNATION_EXIT_TIME = 180  # seconds (3 minutes)
-SCALPING_STAGNATION_LOSS_PCT = 7.0  # percentage of stake
+SCALPING_STAGNATION_EXIT_TIME = 120  # seconds (2 minutes)
+SCALPING_STAGNATION_LOSS_PCT = 5.0  # percentage of stake
 
 # ==================== TRAILING PROFIT ====================
 SCALPING_TRAIL_ACTIVATION_PCT = 12.0   # Trail activates at 12% profit of stake

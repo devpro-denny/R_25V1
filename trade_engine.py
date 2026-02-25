@@ -424,7 +424,23 @@ class TradeEngine:
             response = await self.send_request(cancel_tp_request)
             
             if "error" in response:
-                logger.error(f"âŒ Failed to remove TP: {response['error']['message']}")
+                error_msg = str(response["error"].get("message", "Unknown error"))
+                benign_markers = (
+                    "expired",
+                    "already sold",
+                    "already closed",
+                    "is sold",
+                    "not open",
+                )
+                if any(marker in error_msg.lower() for marker in benign_markers):
+                    # Contract is no longer mutable; trailing can continue with local checks
+                    # and close detection will reconcile final state on next poll.
+                    logger.info(
+                        f"â„¹ï¸ Skipping TP removal for {contract_id}: {error_msg}"
+                    )
+                    return True
+
+                logger.error(f"âŒ Failed to remove TP: {error_msg}")
                 return False
             
             if "contract_update" in response:
@@ -675,8 +691,11 @@ class TradeEngine:
                     await asyncio.sleep(monitor_interval)
                     continue
                 
-                # Check if risk manager wants to close
-                if risk_manager:
+                status_name = str(status.get('status', '')).lower()
+                is_closed = bool(status.get('is_sold')) or status_name in {'sold', 'won', 'lost'}
+
+                # Check if risk manager wants to close (open contracts only)
+                if risk_manager and not is_closed:
                     # Strategy-specific exits are capability-driven to avoid hard
                     # coupling to any specific strategy module.
                     if (
@@ -747,7 +766,7 @@ class TradeEngine:
                     previous_spot = status['current_spot']
                 
                 # Check if trade has closed (TP/SL hit)
-                if status['is_sold'] or status['status'] in ['sold', 'won', 'lost']:
+                if is_closed:
                     trade_status = status.get('status', 'closed')
                     final_pnl = status.get('profit', 0)
                     
