@@ -242,6 +242,18 @@ class ScalpingStrategy(BaseStrategy):
                 "details": {"reason": f"No 5m zone rejection confirmed at {zone_level:.5f}"},
             }
 
+        sequence_candles = int(
+            getattr(scalping_config, "SCALPING_1M_DIRECTIONAL_SEQUENCE_CANDLES", 3)
+        )
+        if not self._confirm_1m_directional_sequence(data_1m, direction, sequence_candles):
+            _step_log(4, f"No {sequence_candles}-candle 1m directional sequence for {direction}")
+            return {
+                "can_trade": False,
+                "details": {
+                    "reason": f"No {sequence_candles}-candle 1m directional sequence for {direction}"
+                },
+            }
+
         pattern = self._detect_1m_pattern(data_1m, direction)
         confidence = 7.0
         if pattern in ("engulfing", "pin_bar"):
@@ -635,6 +647,30 @@ class ScalpingStrategy(BaseStrategy):
             return touched_zone and rejected
 
         return True
+
+    def _confirm_1m_directional_sequence(
+        self,
+        df_1m: pd.DataFrame,
+        direction: str,
+        sequence_candles: int = 3,
+    ) -> bool:
+        """
+        Require directional close progression on recent closed 1m candles.
+        """
+        steps = max(int(sequence_candles), 1)
+        needed_closes = steps + 1
+        if df_1m is None or len(df_1m) < needed_closes + 1:
+            return False
+
+        closes = [float(df_1m["close"].iloc[-2 - i]) for i in range(needed_closes)]
+        # closes[0] is most recent closed candle; iterate oldest -> newest
+        closes = list(reversed(closes))
+
+        if direction == "DOWN":
+            return all(curr < prev for prev, curr in zip(closes, closes[1:]))
+        if direction == "UP":
+            return all(curr > prev for prev, curr in zip(closes, closes[1:]))
+        return False
 
     def _detect_1m_pattern(self, df_1m: pd.DataFrame, direction: str) -> str:
         """

@@ -111,12 +111,16 @@ SCALPING_TP_ATR_MULTIPLIER = 2.25
 SCALPING_BODY_RATIO_MIN = 0.65
 SCALPING_ADX_SLOPE_MIN = -2.0
 SCALPING_ZONE_TOLERANCE_PCT = 0.0015
+SCALPING_1M_DIRECTIONAL_SEQUENCE_CANDLES = 3
 # 5m EMA fallback minimum slope (percent change per closed candle) used when
 # there is no recent fresh crossover.
 SCALPING_5M_EMA_SLOPE_MIN_PCT = 0.005
 
 # Asset-specific movement thresholds (conservative × 1.7)
 SCALPING_ASSET_MOVEMENT_MULTIPLIER = 1.7
+
+# Temporary directional guard for R_50 DOWN setups.
+SCALPING_R50_DOWN_MIN_CONFIDENCE = 9.0
 
 # ==================== SCALPING RISK MANAGEMENT ====================
 # Portfolio-wide concurrent cap across all symbols.
@@ -126,7 +130,18 @@ SCALPING_MAX_CONCURRENT_PER_SYMBOL = 1
 SCALPING_COOLDOWN_SECONDS = 30
 SCALPING_MAX_TRADES_PER_DAY = 80
 SCALPING_MAX_CONSECUTIVE_LOSSES = 3
+SCALPING_GLOBAL_LOSS_COOLDOWN_SECONDS = 3 * 60 * 60
 SCALPING_DAILY_LOSS_MULTIPLIER = 2.0
+
+# Symbol-level cooldown after repeated losses on the same symbol.
+SCALPING_SYMBOL_MAX_CONSECUTIVE_LOSSES = 2
+SCALPING_SYMBOL_LOSS_COOLDOWN_SECONDS = 45 * 60
+
+# Fast-loss suppression: if losses close too quickly, pause that symbol.
+SCALPING_SHORT_LOSS_DURATION_SECONDS = 60
+SCALPING_SHORT_LOSS_LOOKBACK_SECONDS = 2 * 60 * 60
+SCALPING_SHORT_LOSS_COUNT_THRESHOLD = 2
+SCALPING_SHORT_LOSS_COOLDOWN_SECONDS = 30 * 60
 
 # ==================== RUNAWAY TRADE PROTECTION ====================
 SCALPING_RUNAWAY_WINDOW_MINUTES = 10

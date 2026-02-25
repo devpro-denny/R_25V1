@@ -203,6 +203,7 @@ class BotRunner:
             ("not in down range", "gate_3_indicators:rsi_out_of_range"),
             ("adverse pre-entry move", "gate_4_momentum:adverse_pre_entry_move"),
             ("no momentum breakout", "gate_4_momentum:no_momentum_breakout"),
+            ("1m directional sequence", "gate_4_momentum:one_minute_directional_sequence"),
             ("weak body ratio", "gate_4_momentum:weak_body_ratio"),
             ("candle direction mismatch", "gate_4_momentum:candle_direction_mismatch"),
             ("parabolic spike detected", "gate_4_momentum:parabolic_spike"),
@@ -827,7 +828,7 @@ class BotRunner:
             logger.error(f"Fatal error in bot: {e}")
             self.status = BotStatus.ERROR
             self.error_message = str(e)
-            bot_state.update_status("error", error=str(e))
+            self.state.update_status("error", error=str(e))
             
             try:
                 await self.telegram_bridge.notify_error(f"Fatal error: {e}")
@@ -1164,7 +1165,7 @@ class BotRunner:
         # The stake passed to Deriv API (amount) is the user's risk amount (cost), 
         # not the total exposure.
         stake = base_stake
-        
+
         # Debug: Log signal structure before validation
         logger.debug(f"Signal structure - Entry: {signal.get('entry_price')}, TP: {signal.get('take_profit')}, SL: {signal.get('stop_loss')}")
         

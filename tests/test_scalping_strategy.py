@@ -297,6 +297,9 @@ class TestScalpingStrategyAnalyze:
             mock_ohlc.iloc[-2, mock_ohlc.columns.get_loc("close")] = 100.8
             mock_ohlc.iloc[-2, mock_ohlc.columns.get_loc("high")] = 100.9
             mock_ohlc.iloc[-2, mock_ohlc.columns.get_loc("low")] = 100.0
+            mock_ohlc.iloc[-5, mock_ohlc.columns.get_loc("close")] = 99.9
+            mock_ohlc.iloc[-4, mock_ohlc.columns.get_loc("close")] = 100.1
+            mock_ohlc.iloc[-3, mock_ohlc.columns.get_loc("close")] = 100.4
             mock_ohlc.iloc[-1, mock_ohlc.columns.get_loc("close")] = 100.9
 
             result = strategy.analyze(data_1h=mock_ohlc, data_5m=mock_ohlc, data_1m=mock_ohlc)
@@ -310,6 +313,20 @@ class TestScalpingStrategyAnalyze:
 
 
 class TestScalpingStrategyEdgeCases:
+    def test_confirm_1m_directional_sequence_up(self, strategy, mock_ohlc):
+        mock_ohlc.iloc[-5, mock_ohlc.columns.get_loc("close")] = 99.8
+        mock_ohlc.iloc[-4, mock_ohlc.columns.get_loc("close")] = 100.0
+        mock_ohlc.iloc[-3, mock_ohlc.columns.get_loc("close")] = 100.2
+        mock_ohlc.iloc[-2, mock_ohlc.columns.get_loc("close")] = 100.4
+        assert strategy._confirm_1m_directional_sequence(mock_ohlc, "UP", 3) is True
+
+    def test_confirm_1m_directional_sequence_rejects_flat(self, strategy, mock_ohlc):
+        mock_ohlc.iloc[-5, mock_ohlc.columns.get_loc("close")] = 100.0
+        mock_ohlc.iloc[-4, mock_ohlc.columns.get_loc("close")] = 100.0
+        mock_ohlc.iloc[-3, mock_ohlc.columns.get_loc("close")] = 100.1
+        mock_ohlc.iloc[-2, mock_ohlc.columns.get_loc("close")] = 100.2
+        assert strategy._confirm_1m_directional_sequence(mock_ohlc, "UP", 3) is False
+
     def test_is_parabolic_spike_true_three_large_closed_candles(self, strategy, mock_ohlc):
         atr = 1.0
         mock_ohlc.iloc[-4:-1, mock_ohlc.columns.get_loc("open")] = 100.0
