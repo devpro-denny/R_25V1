@@ -238,8 +238,6 @@ class ScalpingRiskManager(BaseRiskManager):
             blocked_symbols = set(getattr(scalping_config, "BLOCKED_SYMBOLS", set()))
             if symbol in blocked_symbols:
                 return False, f"{symbol}: blocked from trading"
-            if symbol not in scalping_config.SYMBOLS:
-                return False, f"{symbol}: unsupported symbol"
 
         if now < self.loss_cooldown_until:
             remaining = int((self.loss_cooldown_until - now).total_seconds())

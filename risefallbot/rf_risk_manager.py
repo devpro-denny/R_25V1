@@ -390,12 +390,6 @@ class RiseFallRiskManager(BaseRiskManager):
                     logger.info(f"[RF-Risk] [STOP] {msg}")
                 return False, msg
 
-            if symbol not in rf_config.RF_SYMBOLS:
-                msg = f"{symbol}: unsupported symbol"
-                if verbose:
-                    logger.info(f"[RF-Risk] [STOP] {msg}")
-                return False, msg
-
             # 6a. Concurrent limit per symbol
             active_for_symbol = sum(
                 1 for t in self.active_trades.values()
