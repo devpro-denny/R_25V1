@@ -383,6 +383,13 @@ class RiseFallRiskManager(BaseRiskManager):
 
         # 6. Per-symbol checks (if symbol provided)
         if symbol:
+            blocked_symbols = set(getattr(rf_config, "RF_BLOCKED_SYMBOLS", set()))
+            if symbol in blocked_symbols:
+                msg = f"{symbol}: blocked from trading"
+                if verbose:
+                    logger.info(f"[RF-Risk] [STOP] {msg}")
+                return False, msg
+
             # 6a. Concurrent limit per symbol
             active_for_symbol = sum(
                 1 for t in self.active_trades.values()

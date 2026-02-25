@@ -40,7 +40,6 @@ Monitors and trades the following Deriv Synthetic Indices simultaneously:
 | `R_50` | Volatility 50 Index | 100× |
 | `R_75` | Volatility 75 Index | 80× |
 | `R_100` | Volatility 100 Index | 60× |
-| `1HZ100V` | Volatility 100 (1s) Index | 40× |
 | `1HZ75V` | Volatility 75 (1s) Index | 50× |
 | `1HZ90V` | Volatility 90 (1s) Index | 45× |
 

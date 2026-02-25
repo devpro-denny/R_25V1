@@ -4,7 +4,9 @@ All scalping-specific constants and thresholds
 """
 
 # Dedicated symbol universe for scalping (kept local for independence).
-SYMBOLS = ["R_25", "R_50", "R_75", "R_100", "1HZ100V", "1HZ25V", "1HZ30V", "1HZ50V", "1HZ75V", "1HZ90V", "stpRNG5", "stpRNG4"]
+# 1HZ100V is intentionally blocked and must never be traded.
+BLOCKED_SYMBOLS = {"1HZ100V"}
+SYMBOLS = ["R_25", "R_50", "R_75", "R_100", "1HZ25V", "1HZ30V", "1HZ50V", "1HZ75V", "1HZ90V", "stpRNG5", "stpRNG4"]
 
 # Dedicated asset config for scalping (duplicated intentionally for isolation).
 ASSET_CONFIG = {
@@ -35,13 +37,6 @@ ASSET_CONFIG = {
         "tick_size": 0.01,
         "movement_threshold_pct": 1.0,
         "entry_distance_pct": 1.0,
-    },
-    "1HZ100V": {
-        "multiplier": 40,
-        "description": "Volatility 100 (1s) Index",
-        "tick_size": 0.01,
-        "movement_threshold_pct": 1.5,
-        "entry_distance_pct": 1.5,
     },
     "1HZ25V": {
         "multiplier": 160,

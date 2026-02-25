@@ -1,7 +1,7 @@
 """
 Risk Manager for Deriv Multi-Asset Trading Bot
 ENHANCED VERSION - Multi-Asset Scanner with Configurable Concurrent Trades
-✅ Scans: R_25, R_50, R_75, R_100, 1HZ100V, RB200, stpRNG5, stpRNG4
+✅ Scans: R_25, R_50, R_75, R_100, 1HZ25V, 1HZ30V, 1HZ50V, 1HZ75V, 1HZ90V, stpRNG5, stpRNG4
 ✅ CONFIGURABLE limit: MAX_CONCURRENT_TRADES (default 2) active trades across ALL assets
 ✅ Slot-based system: Trades compete for available slots
 ✅ Top-Down strategy with dynamic TP/SL
@@ -188,6 +188,13 @@ class RiskManager:
             (can_trade, reason) - False if any global limit hit
         """
         self.reset_daily_stats()
+
+        blocked_symbols = set(getattr(config, "BLOCKED_SYMBOLS", set()))
+        if symbol and symbol in blocked_symbols:
+            reason = f"Symbol blocked from trading: {symbol}"
+            if verbose:
+                print(f"[RISK] [STOP] {reason}")
+            return False, reason
         
         # CRITICAL: Global concurrent trades check
         if len(self.active_trades) >= self.max_concurrent_trades:
@@ -260,6 +267,10 @@ class RiskManager:
         Returns:
             (can_open, reason) - True only if ALL checks pass
         """
+        blocked_symbols = set(getattr(config, "BLOCKED_SYMBOLS", set()))
+        if symbol in blocked_symbols:
+            return False, f"Symbol blocked from trading: {symbol}"
+
         # Step 1: Check GLOBAL trade permission
         # Use verbose=True here as we are in the trade execution flow
         can_trade_global, reason = self.can_trade(symbol, verbose=True)

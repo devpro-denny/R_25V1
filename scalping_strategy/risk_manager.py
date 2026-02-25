@@ -234,6 +234,11 @@ class ScalpingRiskManager(BaseRiskManager):
         now = datetime.now()
         self._refresh_global_loss_cooldown(now)
 
+        if symbol:
+            blocked_symbols = set(getattr(scalping_config, "BLOCKED_SYMBOLS", set()))
+            if symbol in blocked_symbols:
+                return False, f"{symbol}: blocked from trading"
+
         if now < self.loss_cooldown_until:
             remaining = int((self.loss_cooldown_until - now).total_seconds())
             return False, f"Circuit breaker cooldown active ({remaining}s remaining)"
