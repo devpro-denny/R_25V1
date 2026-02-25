@@ -9,6 +9,7 @@ import json
 import sys
 import re
 import threading
+import os
 from datetime import datetime
 from typing import Dict, Any, Optional
 from pathlib import Path
@@ -86,6 +87,41 @@ class MojibakeRepairFilter(logging.Filter):
             pass
 
         return True
+
+
+def _ensure_utf8_stdio() -> None:
+    """
+    Force UTF-8 text encoding on stdio streams when supported.
+    This prevents platform-dependent default encodings from corrupting logs.
+    """
+    for stream_name in ("stdout", "stderr"):
+        stream = getattr(sys, stream_name, None)
+        if stream is None:
+            continue
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            # Some runtimes wrap/replace stdio without reconfigure support.
+            pass
+
+
+class SafeConsoleFormatter(logging.Formatter):
+    """
+    Console formatter that repairs mojibake and can emit ASCII-only output.
+    ASCII mode avoids unknown-symbol artifacts in external log pipelines.
+    """
+
+    def __init__(self, fmt: str, datefmt: Optional[str] = None, ascii_only: bool = True):
+        super().__init__(fmt=fmt, datefmt=datefmt)
+        self._ascii_only = ascii_only
+
+    def format(self, record: logging.LogRecord) -> str:
+        rendered = super().format(record)
+        repaired = _repair_mojibake_text(rendered)
+        rendered = repaired if repaired is not None else rendered
+        if self._ascii_only:
+            rendered = rendered.encode("ascii", "ignore").decode("ascii")
+        return rendered
 
 
 def _safe_log_component(value: Optional[str]) -> str:
@@ -179,25 +215,32 @@ def setup_logger(
     if getattr(logger, "_r50_configured", False):
         return logger
     
-    # Create formatters
-    # Create formatters with User ID support
-    # We include user_id in the message string so it's written to file
+    # Ensure stream encoding is deterministic before attaching handlers.
+    _ensure_utf8_stdio()
+
+    # Create formatters with User ID support.
+    # We include user_id in the message string so it's written to file.
     detailed_formatter = logging.Formatter(
         '%(asctime)s | %(levelname)s | [%(bot_type)s] [%(user_id)s] %(message)s',
         datefmt='%Y-%m-%d %H:%M:%S'
+    )
+
+    console_ascii_only = str(os.getenv("R50_CONSOLE_ASCII_ONLY", "1")).strip().lower() not in {
+        "0",
+        "false",
+        "no",
+        "off",
+    }
+    console_formatter = SafeConsoleFormatter(
+        '%(asctime)s | %(levelname)s | [%(bot_type)s] [%(user_id)s] %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S',
+        ascii_only=console_ascii_only,
     )
     
     # Console handler with UTF-8 encoding
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setLevel(getattr(logging, level))
-    console_handler.setFormatter(detailed_formatter)
-    
-    # Set UTF-8 encoding for console on Windows
-    if sys.platform == 'win32':
-        try:
-            sys.stdout.reconfigure(encoding='utf-8')
-        except AttributeError:
-            pass  # Python < 3.7
+    console_handler.setFormatter(console_formatter)
     
     # Utilities logger also needs context filter
     context_filter = ContextInjectingFilter()

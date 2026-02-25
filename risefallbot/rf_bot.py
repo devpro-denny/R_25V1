@@ -148,6 +148,32 @@ class _RFPerUserFileHandler(logging.Handler):
         super().close()
 
 
+def _ensure_utf8_stdio() -> None:
+    """Force UTF-8 encoding on stdio when supported by the runtime."""
+    for stream_name in ("stdout", "stderr"):
+        stream = getattr(sys, stream_name, None)
+        if stream is None:
+            continue
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+
+
+class _SafeConsoleFormatter(logging.Formatter):
+    """Console formatter with optional ASCII-only output for stable log sinks."""
+
+    def __init__(self, fmt: str, datefmt: Optional[str] = None, ascii_only: bool = True):
+        super().__init__(fmt=fmt, datefmt=datefmt)
+        self._ascii_only = ascii_only
+
+    def format(self, record: logging.LogRecord) -> str:
+        rendered = super().format(record)
+        if self._ascii_only:
+            rendered = rendered.encode("ascii", "ignore").decode("ascii")
+        return rendered
+
+
 def _setup_rf_logger():
     """
     Configure the risefallbot logger hierarchy so all RF modules
@@ -160,6 +186,8 @@ def _setup_rf_logger():
     # Prevent double-handler on re-import
     if rf_root.handlers:
         return
+
+    _ensure_utf8_stdio()
 
     rf_root.setLevel(getattr(logging, rf_config.RF_LOG_LEVEL, logging.INFO))
     rf_root.propagate = False  # ← isolate from multiplier bot logs
@@ -192,8 +220,19 @@ def _setup_rf_logger():
     rf_root.addHandler(per_user_handler)
 
     # Console handler (optional — useful during development)
+    console_ascii_only = str(os.getenv("R50_CONSOLE_ASCII_ONLY", "1")).strip().lower() not in {
+        "0",
+        "false",
+        "no",
+        "off",
+    }
+    console_formatter = _SafeConsoleFormatter(
+        "%(asctime)s | %(name)s | %(levelname)s | [%(user_id)s] %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+        ascii_only=console_ascii_only,
+    )
     ch = logging.StreamHandler(sys.stdout)
-    ch.setFormatter(formatter)
+    ch.setFormatter(console_formatter)
     ch.addFilter(user_filter)
     rf_root.addHandler(ch)
     

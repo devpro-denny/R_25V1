@@ -3,6 +3,7 @@ import sys
 import asyncio
 import time
 import re
+import os
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -26,6 +27,39 @@ def _repair_mojibake_text(text: Optional[str]) -> Optional[str]:
         except (UnicodeEncodeError, UnicodeDecodeError):
             continue
     return text
+
+
+def _ensure_utf8_stdio() -> None:
+    """
+    Force UTF-8 encoding for stdio streams when runtime supports reconfigure().
+    """
+    for stream_name in ("stdout", "stderr"):
+        stream = getattr(sys, stream_name, None)
+        if stream is None:
+            continue
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+
+
+class SafeConsoleFormatter(logging.Formatter):
+    """
+    Console formatter that repairs mojibake and can emit ASCII-only lines.
+    ASCII mode avoids broken glyphs in external log collectors.
+    """
+
+    def __init__(self, fmt: str, datefmt: Optional[str] = None, ascii_only: bool = True):
+        super().__init__(fmt=fmt, datefmt=datefmt)
+        self._ascii_only = ascii_only
+
+    def format(self, record: logging.LogRecord) -> str:
+        rendered = super().format(record)
+        repaired = _repair_mojibake_text(rendered)
+        rendered = repaired if repaired is not None else rendered
+        if self._ascii_only:
+            rendered = rendered.encode("ascii", "ignore").decode("ascii")
+        return rendered
 
 class ContextInjectingFilter(logging.Filter):
     """
@@ -195,6 +229,9 @@ def setup_api_logger():
     logger.handlers.clear()
     logger.filters.clear()
 
+    # Ensure output streams are UTF-8 before binding handlers.
+    _ensure_utf8_stdio()
+
     # 1. Console Handler (Standard Output)
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setLevel(logging.INFO)
@@ -203,7 +240,18 @@ def setup_api_logger():
         '%(asctime)s | %(levelname)s | %(name)s | %(message)s',
         datefmt='%Y-%m-%d %H:%M:%S'
     )
-    console_handler.setFormatter(formatter)
+    console_ascii_only = str(os.getenv("R50_CONSOLE_ASCII_ONLY", "1")).strip().lower() not in {
+        "0",
+        "false",
+        "no",
+        "off",
+    }
+    console_formatter = SafeConsoleFormatter(
+        '%(asctime)s | %(levelname)s | %(name)s | %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S',
+        ascii_only=console_ascii_only,
+    )
+    console_handler.setFormatter(console_formatter)
     logger.addHandler(console_handler)
 
     # Route uvicorn logs to stdout so transport doesn't classify INFO as stderr errors.
