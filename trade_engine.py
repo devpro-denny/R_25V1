@@ -465,10 +465,33 @@ class TradeEngine:
             logger.error(f"âŒ Error removing TP: {e}")
             return False
     
+    @staticmethod
+    def _compute_rr_ratio(entry_spot: float, tp_price: float, sl_price: float) -> Optional[float]:
+        """
+        Compute risk:reward from absolute distances.
+        Returns None when inputs are invalid.
+        """
+        try:
+            entry = float(entry_spot)
+            tp = float(tp_price)
+            sl = float(sl_price)
+        except (TypeError, ValueError):
+            return None
+
+        if entry <= 0:
+            return None
+
+        risk = abs(entry - sl)
+        reward = abs(tp - entry)
+        if risk <= 0:
+            return None
+        return reward / risk
+
     async def open_trade(self, direction: str, stake: float, symbol: str,
                         tp_price: Optional[float] = None,
                         sl_price: Optional[float] = None,
-                        max_retries: int = 3) -> Optional[Dict]:
+                        max_retries: int = 3,
+                        min_rr_ratio: Optional[float] = None) -> Optional[Dict]:
         """
         Open a multiplier trade on any configured asset
         
@@ -479,6 +502,7 @@ class TradeEngine:
             tp_price: Take Profit price level
             sl_price: Stop Loss price level
             max_retries: Max retries on price changes
+            min_rr_ratio: Optional minimum R:R ratio guard at execution time
         
         Returns:
             Trade info dict or None if failed
@@ -525,8 +549,37 @@ class TradeEngine:
                 proposal_id = proposal["id"]
                 ask_price = proposal["ask_price"]
                 multiplier = proposal["multiplier"]
+                proposal_spot = float(proposal.get("spot", 0) or 0.0)
                 
                 logger.info(f"âœ… Got proposal for {symbol}: ID={proposal_id}, Multiplier={multiplier}x, Price={format_currency(ask_price)}")
+
+                if min_rr_ratio is not None and tp_price is not None and sl_price is not None:
+                    projected_rr = self._compute_rr_ratio(proposal_spot, tp_price, sl_price)
+                    if projected_rr is None:
+                        logger.warning(
+                            "âš ï¸ Could not validate projected R:R for %s (spot=%s, TP=%s, SL=%s)",
+                            symbol,
+                            proposal_spot,
+                            tp_price,
+                            sl_price,
+                        )
+                        if attempt < max_retries - 1:
+                            await asyncio.sleep(0.5)
+                            continue
+                        return None
+
+                    if projected_rr < float(min_rr_ratio):
+                        logger.warning(
+                            "ðŸ›‘ Projected R:R %.2f below minimum %.2f for %s at proposal spot %.5f - skipping entry",
+                            projected_rr,
+                            float(min_rr_ratio),
+                            symbol,
+                            proposal_spot,
+                        )
+                        if attempt < max_retries - 1:
+                            await asyncio.sleep(0.5)
+                            continue
+                        return None
                 
                 # Buy using proposal ID
                 buy_info = await self.buy_with_proposal(proposal_id, ask_price)
@@ -550,12 +603,15 @@ class TradeEngine:
 
                 # Fallback to proposal spot if entry_spot is invalid (failed to fetch on buy)
                 if entry_spot == 0:
-                   logger.warning(f"âš ï¸ Zero entry_spot in buy response, falling back to proposal spot: {proposal.get('spot', 0)}")
-                   entry_spot = float(proposal.get('spot', 0))
+                   logger.warning(f"âš ï¸ Zero entry_spot in buy response, falling back to proposal spot: {proposal_spot}")
+                   entry_spot = proposal_spot
                 
                 longcode = buy_info.get("longcode", "")
                 
                 self.active_contract_id = contract_id
+                entry_rr_ratio = None
+                if tp_price and sl_price:
+                    entry_rr_ratio = self._compute_rr_ratio(entry_spot, tp_price, sl_price)
                 
                 # Build trade info
                 trade_info = {
@@ -572,7 +628,9 @@ class TradeEngine:
                     'open_time': datetime.now(),
                     'status': 'open',
                     'longcode': longcode,
-                    'risk_mode': self.risk_mode
+                    'risk_mode': self.risk_mode,
+                    'risk_reward_ratio': entry_rr_ratio,
+                    'min_rr_required': float(min_rr_ratio) if min_rr_ratio is not None else None,
                 }
                 
                 logger.info(f"âœ… Trade opened: {symbol} {direction} @ {entry_spot:.4f} | Contract: {contract_id}")
@@ -593,8 +651,13 @@ class TradeEngine:
                     
                     if distance_to_sl > 0:
                         rr_ratio = distance_to_tp / distance_to_sl
-                        if rr_ratio < config.MIN_RR_RATIO:
-                            logger.warning(f"âš ï¸ R:R ratio {rr_ratio:.2f} below minimum {config.MIN_RR_RATIO}")
+                        rr_floor = (
+                            float(min_rr_ratio)
+                            if min_rr_ratio is not None
+                            else float(getattr(config, "MIN_RR_RATIO", 0.0) or 0.0)
+                        )
+                        if rr_floor > 0 and rr_ratio < rr_floor:
+                            logger.warning(f"âš ï¸ R:R ratio {rr_ratio:.2f} below minimum {rr_floor:.2f}")
                     
                     # Apply the limits with proper parameter conversion
                     await self.apply_tp_sl_limits(
@@ -917,6 +980,42 @@ class TradeEngine:
             if not tp_price or not sl_price:
                 logger.error("âŒ Missing TP/SL - trades require both")
                 return None
+
+            min_rr_ratio = signal.get("min_rr_required", signal.get("min_rr_ratio"))
+            if min_rr_ratio is None:
+                min_rr_ratio = getattr(config, "MIN_RR_RATIO", None)
+            try:
+                min_rr_ratio = float(min_rr_ratio) if min_rr_ratio is not None else None
+            except (TypeError, ValueError):
+                min_rr_ratio = None
+
+            signal_rr = signal.get("risk_reward_ratio")
+            try:
+                signal_rr = float(signal_rr) if signal_rr is not None else None
+            except (TypeError, ValueError):
+                signal_rr = None
+
+            if min_rr_ratio is not None:
+                planned_entry = signal.get("entry_price")
+                planned_rr = self._compute_rr_ratio(planned_entry, tp_price, sl_price)
+                logger.info(
+                    "[RR_CHECK][%s] signal_rr=%s planned_rr=%s min_rr=%.2f entry=%s tp=%s sl=%s",
+                    symbol,
+                    f"{signal_rr:.2f}" if signal_rr is not None else "n/a",
+                    f"{planned_rr:.2f}" if planned_rr is not None else "n/a",
+                    min_rr_ratio,
+                    planned_entry,
+                    tp_price,
+                    sl_price,
+                )
+                if planned_rr is not None and planned_rr < min_rr_ratio:
+                    logger.warning(
+                        "🛑 Signal R:R %.2f below minimum %.2f for %s - blocking trade before execution",
+                        planned_rr,
+                        min_rr_ratio,
+                        symbol,
+                    )
+                    return None
             
             # Open trade on specified asset
             # CRITICAL: Use stake from signal if available (passed from BotRunner)
@@ -932,7 +1031,8 @@ class TradeEngine:
                 stake=trade_stake,
                 symbol=symbol,
                 tp_price=tp_price,
-                sl_price=sl_price
+                sl_price=sl_price,
+                min_rr_ratio=min_rr_ratio,
             )
             
             if not trade_info:
@@ -940,6 +1040,17 @@ class TradeEngine:
                 return None
 
             contract_id = trade_info.get("contract_id")
+            open_rr = self._compute_rr_ratio(trade_info.get("entry_spot"), tp_price, sl_price)
+            logger.info(
+                "[RR_CHECK][%s] open_rr=%s signal_rr=%s min_rr=%s entry_spot=%s tp=%s sl=%s",
+                symbol,
+                f"{open_rr:.2f}" if open_rr is not None else "n/a",
+                f"{signal_rr:.2f}" if signal_rr is not None else "n/a",
+                f"{min_rr_ratio:.2f}" if min_rr_ratio is not None else "n/a",
+                trade_info.get("entry_spot"),
+                tp_price,
+                sl_price,
+            )
             
             # Record with risk manager
             risk_manager.record_trade_open(trade_info)

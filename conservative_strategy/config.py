@@ -33,11 +33,11 @@ CONTRACT_TYPE_DOWN = "MULTDOWN"  # Multiplier Down (for DOWN/SELL signals)
 
 # ==================== MULTI-ASSET CONFIGURATION ====================
 # List of symbols to monitor and trade
-# 1HZ100V is intentionally blocked and must never be traded.
-BLOCKED_SYMBOLS = {"1HZ100V"}
+# 1HZ100V and 1HZ30V are intentionally blocked and must never be traded.
+BLOCKED_SYMBOLS = {"1HZ100V", "1HZ30V"}
 
 # Removed R_10: 400x multiplier incompatible with 0.5% SL (would exceed stake on Deriv multipliers)
-SYMBOLS = ["R_25", "R_50", "R_75", "R_100", "1HZ25V", "1HZ30V", "1HZ50V", "1HZ75V", "1HZ90V", "stpRNG5", "stpRNG4"]
+SYMBOLS = ["R_25", "R_50", "R_75", "R_100", "1HZ25V", "1HZ50V", "1HZ75V", "1HZ90V", "stpRNG5", "stpRNG4"]
 
 # Asset-specific configuration
 ASSET_CONFIG = {
@@ -75,13 +75,6 @@ ASSET_CONFIG = {
         "tick_size": 0.01,
         "movement_threshold_pct": 0.9,
         "entry_distance_pct": 0.9
-    },
-    "1HZ30V": {
-        "multiplier": 140,
-        "description": "Volatility 30 (1s) Index",
-        "tick_size": 0.01,
-        "movement_threshold_pct": 1.0,
-        "entry_distance_pct": 1.0
     },
     "1HZ50V": {
         "multiplier": 80,

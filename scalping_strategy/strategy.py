@@ -129,6 +129,29 @@ class ScalpingStrategy(BaseStrategy):
                 },
             }
 
+        adx_max_threshold = float(getattr(scalping_config, "SCALPING_ADX_MAX_THRESHOLD", 0.0) or 0.0)
+        if adx_max_threshold > 0 and adx_1m > adx_max_threshold:
+            _step_log(3, f"ADX exhaustion ({adx_1m:.1f} > {adx_max_threshold:.1f})")
+            return {
+                "can_trade": False,
+                "details": {"reason": f"ADX exhaustion ({adx_1m:.1f} > {adx_max_threshold:.1f})"},
+            }
+
+        if symbol == "stpRNG4":
+            stprng4_min_adx = float(
+                getattr(scalping_config, "SCALPING_STPRNG4_MIN_ADX", scalping_config.SCALPING_ADX_THRESHOLD)
+            )
+            if adx_1m < stprng4_min_adx:
+                _step_log(3, f"stpRNG4 requires stronger ADX ({adx_1m:.1f} < {stprng4_min_adx:.1f})")
+                return {
+                    "can_trade": False,
+                    "details": {
+                        "reason": (
+                            f"stpRNG4 requires stronger ADX ({adx_1m:.1f} < {stprng4_min_adx:.1f})"
+                        )
+                    },
+                }
+
         adx_slope = 0.0
         if adx_series is not None and len(adx_series) >= 3:
             adx_prev = float(adx_series.iloc[-3])
@@ -165,6 +188,30 @@ class ScalpingStrategy(BaseStrategy):
         atr_1m = self._calculate_atr(data_1m.iloc[:-1], period=14)
         base_threshold = scalping_config.ASSET_CONFIG.get(symbol, {}).get("movement_threshold_pct", 0.7)
         movement_threshold = base_threshold * scalping_config.SCALPING_ASSET_MOVEMENT_MULTIPLIER
+
+        max_entry_drift_atr = float(getattr(scalping_config, "SCALPING_MAX_ENTRY_DRIFT_ATR", 0.0) or 0.0)
+        if atr_1m > 0 and max_entry_drift_atr > 0:
+            directional_drift = (
+                current_price - signal_close if direction == "UP" else signal_close - current_price
+            )
+            max_drift = atr_1m * max_entry_drift_atr
+            if directional_drift > max_drift:
+                _step_log(
+                    4,
+                    (
+                        f"Entry drift too high ({directional_drift:.5f} > {max_drift:.5f}) "
+                        f"[{max_entry_drift_atr:.2f} ATR]"
+                    ),
+                )
+                return {
+                    "can_trade": False,
+                    "details": {
+                        "reason": (
+                            f"Entry drift too high ({directional_drift:.5f} > {max_drift:.5f}) "
+                            f"[{max_entry_drift_atr:.2f} ATR]"
+                        )
+                    },
+                }
 
         price_5_candles_ago = float(data_1m["close"].iloc[-7])
         if price_5_candles_ago == 0:
@@ -305,6 +352,7 @@ class ScalpingStrategy(BaseStrategy):
             "take_profit": tp_price,
             "stop_loss": sl_price,
             "risk_reward_ratio": rr_ratio,
+            "min_rr_required": scalping_config.SCALPING_MIN_RR_RATIO,
             "score": confidence,
             "confidence": confidence,
             "entry_price": current_price,
@@ -719,7 +767,10 @@ class ScalpingStrategy(BaseStrategy):
 
     def get_symbols(self) -> List[str]:
         """Return scalping symbol universe from local scalping config."""
-        return list(scalping_config.SYMBOLS)
+        blocked = set(getattr(scalping_config, "BLOCKED_SYMBOLS", set()))
+        rollout_symbols = list(getattr(scalping_config, "SCALPING_ROLLOUT_SYMBOLS", []) or [])
+        symbols = rollout_symbols if rollout_symbols else list(scalping_config.SYMBOLS)
+        return [symbol for symbol in symbols if symbol not in blocked]
 
     def get_asset_config(self) -> Dict:
         """Return scalping asset configuration."""

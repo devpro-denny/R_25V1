@@ -4,9 +4,12 @@ All scalping-specific constants and thresholds
 """
 
 # Dedicated symbol universe for scalping (kept local for independence).
-# 1HZ100V is intentionally blocked and must never be traded.
-BLOCKED_SYMBOLS = {"1HZ100V"}
-SYMBOLS = ["R_25", "R_50", "R_75", "R_100", "1HZ25V", "1HZ30V", "1HZ50V", "1HZ75V", "1HZ90V", "stpRNG5", "stpRNG4"]
+# 1HZ100V and 1HZ30V are intentionally blocked and must never be traded.
+BLOCKED_SYMBOLS = {"1HZ100V", "1HZ30V"}
+SYMBOLS = ["R_25", "R_50", "R_75", "R_100", "1HZ25V", "1HZ50V", "1HZ75V", "1HZ90V", "stpRNG5", "stpRNG4"]
+
+# Empty rollout list means: trade full scalping symbol universe.
+SCALPING_ROLLOUT_SYMBOLS = []
 
 # Dedicated asset config for scalping (duplicated intentionally for isolation).
 ASSET_CONFIG = {
@@ -44,13 +47,6 @@ ASSET_CONFIG = {
         "tick_size": 0.01,
         "movement_threshold_pct": 0.9,
         "entry_distance_pct": 0.9,
-    },
-    "1HZ30V": {
-        "multiplier": 140,
-        "description": "Volatility 30 (1s) Index",
-        "tick_size": 0.01,
-        "movement_threshold_pct": 1.0,
-        "entry_distance_pct": 1.0,
     },
     "1HZ50V": {
         "multiplier": 80,
@@ -94,19 +90,24 @@ ASSET_CONFIG = {
 
 SCALPING_TIMEFRAMES = ["1h", "5m", "1m"]
 SCALPING_ADX_THRESHOLD = 18
-SCALPING_RSI_UP_MIN = 55
-SCALPING_RSI_UP_MAX = 75
-SCALPING_RSI_DOWN_MIN = 22
-SCALPING_RSI_DOWN_MAX = 45
+SCALPING_ADX_MAX_THRESHOLD = 34
+SCALPING_STPRNG4_MIN_ADX = 25
+SCALPING_RSI_UP_MIN = 54
+SCALPING_RSI_UP_MAX = 72
+SCALPING_RSI_DOWN_MIN = 28
+SCALPING_RSI_DOWN_MAX = 48
 SCALPING_MAX_PRICE_MOVEMENT_PCT = 1.2
 SCALPING_MOMENTUM_THRESHOLD = 1.0  # ATR multiplier
 SCALPING_MIN_RR_RATIO = 1.5
-SCALPING_SL_ATR_MULTIPLIER = 1.5
-SCALPING_TP_ATR_MULTIPLIER = 2.25
+# Final report recommendation (Feb 25-27, 2026):
+# widen both SL/TP proportionally to preserve 1.5 R:R while reducing premature stop-outs.
+SCALPING_SL_ATR_MULTIPLIER = 2.0
+SCALPING_TP_ATR_MULTIPLIER = 3.0
 SCALPING_BODY_RATIO_MIN = 0.65
 SCALPING_ADX_SLOPE_MIN = -2.0
 SCALPING_ZONE_TOLERANCE_PCT = 0.0015
 SCALPING_1M_DIRECTIONAL_SEQUENCE_CANDLES = 3
+SCALPING_MAX_ENTRY_DRIFT_ATR = 0.35
 # 5m EMA fallback minimum slope (percent change per closed candle) used when
 # there is no recent fresh crossover.
 SCALPING_5M_EMA_SLOPE_MIN_PCT = 0.005
@@ -131,6 +132,7 @@ SCALPING_DAILY_LOSS_MULTIPLIER = 2.0
 # Symbol-level cooldown after repeated losses on the same symbol.
 SCALPING_SYMBOL_MAX_CONSECUTIVE_LOSSES = 2
 SCALPING_SYMBOL_LOSS_COOLDOWN_SECONDS = 45 * 60
+SCALPING_SINGLE_LOSS_COOLDOWN_SECONDS = 10 * 60
 
 # Fast-loss suppression: if losses close too quickly, pause that symbol.
 SCALPING_SHORT_LOSS_DURATION_SECONDS = 60
@@ -143,11 +145,15 @@ SCALPING_RUNAWAY_WINDOW_MINUTES = 10
 SCALPING_RUNAWAY_TRADE_COUNT = 10
 
 # ==================== STAGNATION EXIT ====================
-SCALPING_STAGNATION_EXIT_TIME = 120  # seconds (2 minutes)
-SCALPING_STAGNATION_LOSS_PCT = 5.0  # percentage of stake
+# Final report recommendation (Feb 25-27, 2026):
+# cut stagnation losers earlier without touching winners (which are positive early).
+SCALPING_STAGNATION_EXIT_TIME = 75  # seconds
+SCALPING_STAGNATION_LOSS_PCT = 3.0  # percentage of stake
+SCALPING_STAGNATION_RR_GRACE_THRESHOLD = 2.5
+SCALPING_STAGNATION_EXTRA_TIME = 0  # disabled by default for strict 75s/3.0% behavior
 
 # ==================== TRAILING PROFIT ====================
-SCALPING_TRAIL_ACTIVATION_PCT = 12.0   # Trail activates at 12% profit of stake
+SCALPING_TRAIL_ACTIVATION_PCT = 8.0   # Final report recommendation: protect gains earlier
 
 # Dynamic trailing distance tiers: (min_profit_pct, trail_distance_pct)
 # As profit grows, the trail widens to give big winners room to breathe.

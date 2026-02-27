@@ -1,7 +1,7 @@
 """
 Risk Manager for Deriv Multi-Asset Trading Bot
 ENHANCED VERSION - Multi-Asset Scanner with Configurable Concurrent Trades
-✅ Scans: R_25, R_50, R_75, R_100, 1HZ25V, 1HZ30V, 1HZ50V, 1HZ75V, 1HZ90V, stpRNG5, stpRNG4
+✅ Scans: R_25, R_50, R_75, R_100, 1HZ25V, 1HZ50V, 1HZ75V, 1HZ90V, stpRNG5, stpRNG4
 ✅ CONFIGURABLE limit: MAX_CONCURRENT_TRADES (default 2) active trades across ALL assets
 ✅ Slot-based system: Trades compete for available slots
 ✅ Top-Down strategy with dynamic TP/SL
