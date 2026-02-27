@@ -91,6 +91,7 @@ def test_load_daily_stats_reengages_circuit_breaker_when_streak_already_breached
 def test_global_consecutive_loss_cooldown_and_recovery_reset(srm):
     srm.max_consecutive_losses = 3
     srm.loss_cooldown_seconds = 60
+    srm.single_loss_cooldown_seconds = 0
 
     _open_trade(srm, "L1", "R_25")
     srm.record_trade_close("L1", -1.0, "loss")
@@ -165,6 +166,40 @@ def test_r50_down_requires_high_confidence(srm):
     assert allowed is True
 
 
+def test_can_open_trade_blocks_rr_below_minimum(srm):
+    allowed, reason = srm.can_open_trade(
+        symbol="R_25",
+        stake=10.0,
+        take_profit=101.0,
+        stop_loss=99.5,
+        signal_dict={
+            "signal": "UP",
+            "entry_price": 100.0,
+            "min_rr_required": 2.5,
+            "confidence": 9.5,
+        },
+    )
+    assert allowed is False
+    assert "rr gate blocked" in reason.lower()
+
+
+def test_can_open_trade_allows_rr_at_or_above_minimum(srm):
+    allowed, reason = srm.can_open_trade(
+        symbol="R_25",
+        stake=10.0,
+        take_profit=102.0,
+        stop_loss=99.5,
+        signal_dict={
+            "signal": "UP",
+            "entry_price": 100.0,
+            "min_rr_required": 2.0,
+            "confidence": 9.5,
+        },
+    )
+    assert allowed is True
+    assert reason == "OK"
+
+
 def test_scalping_rm_stagnation_exit(srm):
     trade_info = {
         "open_time": datetime.now() - timedelta(seconds=200),
@@ -176,6 +211,28 @@ def test_scalping_rm_stagnation_exit(srm):
         "scalping_config.SCALPING_STAGNATION_LOSS_PCT", 10.0
     ):
         should_exit, reason = srm.check_stagnation_exit(trade_info, -2.0)
+        assert should_exit is True
+        assert reason == "stagnation_exit"
+
+
+def test_scalping_rm_stagnation_exit_adds_time_for_high_rr(srm):
+    trade_info = {
+        "open_time": datetime.now() - timedelta(seconds=170),
+        "stake": 10.0,
+        "symbol": "R_25",
+        "risk_reward_ratio": 3.0,
+    }
+
+    with patch("scalping_config.SCALPING_STAGNATION_EXIT_TIME", 120), patch(
+        "scalping_config.SCALPING_STAGNATION_RR_GRACE_THRESHOLD", 2.5
+    ), patch("scalping_config.SCALPING_STAGNATION_EXTRA_TIME", 60), patch(
+        "scalping_config.SCALPING_STAGNATION_LOSS_PCT", 5.0
+    ):
+        should_exit, _ = srm.check_stagnation_exit(trade_info, -1.0)
+        assert should_exit is False
+
+        trade_info["open_time"] = datetime.now() - timedelta(seconds=190)
+        should_exit, reason = srm.check_stagnation_exit(trade_info, -1.0)
         assert should_exit is True
         assert reason == "stagnation_exit"
 

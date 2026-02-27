@@ -42,6 +42,9 @@ class ScalpingRiskManager(BaseRiskManager):
         self.symbol_loss_cooldown_seconds = getattr(
             scalping_config, "SCALPING_SYMBOL_LOSS_COOLDOWN_SECONDS", 45 * 60
         )
+        self.single_loss_cooldown_seconds = getattr(
+            scalping_config, "SCALPING_SINGLE_LOSS_COOLDOWN_SECONDS", 10 * 60
+        )
         self.short_loss_duration_seconds = getattr(
             scalping_config, "SCALPING_SHORT_LOSS_DURATION_SECONDS", 60
         )
@@ -327,6 +330,42 @@ class ScalpingRiskManager(BaseRiskManager):
             return False, "Stake must be positive"
 
         signal_dict = signal_dict or {}
+        entry_price = signal_dict.get("entry_price")
+        tp_price = take_profit if take_profit is not None else signal_dict.get("take_profit")
+        sl_price = stop_loss if stop_loss is not None else signal_dict.get("stop_loss")
+
+        rr_ratio = None
+        try:
+            entry_price = float(entry_price) if entry_price is not None else 0.0
+            tp_price = float(tp_price) if tp_price is not None else 0.0
+            sl_price = float(sl_price) if sl_price is not None else 0.0
+            if entry_price > 0 and tp_price > 0 and sl_price > 0:
+                risk = abs(entry_price - sl_price)
+                reward = abs(tp_price - entry_price)
+                if risk <= 0:
+                    return False, "Invalid stop loss distance (risk=0)"
+                rr_ratio = reward / risk
+        except Exception:
+            rr_ratio = None
+
+        if rr_ratio is not None:
+            default_min_rr = float(getattr(scalping_config, "SCALPING_MIN_RR_RATIO", 1.5))
+            try:
+                min_rr_required = float(
+                    signal_dict.get(
+                        "min_rr_required",
+                        default_min_rr,
+                    )
+                    or default_min_rr
+                )
+            except Exception:
+                min_rr_required = default_min_rr
+            if rr_ratio < min_rr_required:
+                return (
+                    False,
+                    f"RR gate blocked: {rr_ratio:.2f} < {min_rr_required:.2f}",
+                )
+
         direction = str(signal_dict.get("signal", "")).upper()
         confidence = float(signal_dict.get("confidence", signal_dict.get("score", 0.0)) or 0.0)
 
@@ -405,6 +444,8 @@ class ScalpingRiskManager(BaseRiskManager):
                 "direction": direction,
                 "entry_price": trade_info.get("entry_price"),
                 "multiplier": trade_info.get("multiplier"),
+                "risk_reward_ratio": trade_info.get("risk_reward_ratio"),
+                "min_rr_required": trade_info.get("min_rr_required"),
             }
 
         self.daily_trade_count += 1
@@ -483,6 +524,14 @@ class ScalpingRiskManager(BaseRiskManager):
                 self.consecutive_losses,
                 self.max_consecutive_losses,
             )
+
+            if self.single_loss_cooldown_seconds > 0:
+                until = now + timedelta(seconds=self.single_loss_cooldown_seconds)
+                self._apply_symbol_cooldown(
+                    symbol,
+                    until,
+                    f"single-loss cooldown ({self.single_loss_cooldown_seconds}s)",
+                )
 
             if (
                 self.consecutive_losses == self.max_consecutive_losses - 1
@@ -651,7 +700,21 @@ class ScalpingRiskManager(BaseRiskManager):
             return False, ""
 
         time_open = (datetime.now() - open_time).total_seconds()
-        if time_open < scalping_config.SCALPING_STAGNATION_EXIT_TIME:
+        rr_ratio = 0.0
+        try:
+            rr_ratio = float(trade_info.get("risk_reward_ratio", 0.0) or 0.0)
+        except Exception:
+            rr_ratio = 0.0
+
+        stagnation_time_limit = int(getattr(scalping_config, "SCALPING_STAGNATION_EXIT_TIME", 120))
+        rr_grace_threshold = float(
+            getattr(scalping_config, "SCALPING_STAGNATION_RR_GRACE_THRESHOLD", 2.5)
+        )
+        rr_extra_time = int(getattr(scalping_config, "SCALPING_STAGNATION_EXTRA_TIME", 0))
+        if rr_ratio >= rr_grace_threshold and rr_extra_time > 0:
+            stagnation_time_limit += rr_extra_time
+
+        if time_open < stagnation_time_limit:
             return False, ""
 
         if current_pnl >= 0:
@@ -660,9 +723,11 @@ class ScalpingRiskManager(BaseRiskManager):
         loss_pct = abs((current_pnl / stake) * 100) if stake > 0 else 0
         if loss_pct > scalping_config.SCALPING_STAGNATION_LOSS_PCT:
             logger.warning(
-                "[SCALP] Stagnation exit: %s open %ss, losing %.1f%% of stake",
+                "[SCALP] Stagnation exit: %s open %ss (limit %ss, RR %.2f), losing %.1f%% of stake",
                 symbol,
                 int(time_open),
+                stagnation_time_limit,
+                rr_ratio,
                 loss_pct,
             )
             return True, "stagnation_exit"
