@@ -277,61 +277,70 @@ class TelegramNotifier:
         
         return False
     
-    async def notify_bot_started(self, balance: float, stake: float = None, strategy_name: str = None, 
-                                 symbol_count: int = None, risk_text: str = None):
-        """Notify that bot has started"""
+    async def notify_bot_started(
+        self,
+        balance: float,
+        stake: float = None,
+        strategy_name: str = None,
+        symbol_count: int = None,
+        risk_text: str = None,
+    ):
+        """Notify that bot has started."""
         if strategy_name:
-            strategy_mode = f"ðŸ“Š {strategy_name}"
+            strategy_mode = f"📊 {strategy_name}"
         else:
-            strategy_mode = "ðŸ›¡ï¸ Top-Down Structure" if getattr(config, 'USE_TOPDOWN_STRATEGY', False) else "âš¡ Classic Scalping"
-        
+            strategy_mode = (
+                "🛡️ Top-Down Structure"
+                if getattr(config, "USE_TOPDOWN_STRATEGY", False)
+                else "⚡ Classic Scalping"
+            )
+
         if symbol_count is None:
-            symbol_count = len(getattr(config, 'SYMBOLS', []))
-        
+            symbol_count = len(getattr(config, "SYMBOLS", []))
+
         if risk_text is None:
-            use_topdown = getattr(config, 'USE_TOPDOWN_STRATEGY', False)
-            enable_cancellation = getattr(config, 'ENABLE_CANCELLATION', False)
-            
+            use_topdown = getattr(config, "USE_TOPDOWN_STRATEGY", False)
+            enable_cancellation = getattr(config, "ENABLE_CANCELLATION", False)
+
             if enable_cancellation and not use_topdown:
                 risk_text = (
-                    f"ðŸ›¡ï¸ <b>Cancellation Protection</b>\n"
-                    f"   â€¢ Duration: {getattr(config, 'CANCELLATION_DURATION', 'N/A')}s\n"
-                    f"   â€¢ Fee: {format_currency(getattr(config, 'CANCELLATION_FEE', 0))}"
+                    f"🛡️ <b>Cancellation Protection</b>\n"
+                    f"   • Duration: {getattr(config, 'CANCELLATION_DURATION', 'N/A')}s\n"
+                    f"   • Fee: {format_currency(getattr(config, 'CANCELLATION_FEE', 0))}"
                 )
             elif use_topdown:
                 risk_text = (
-                    f"ðŸ›¡ï¸ <b>Risk Management</b>\n"
-                    f"   â€¢ TP/SL: Dynamic (Structure)\n"
-                    f"   â€¢ Min R:R: 1:{getattr(config, 'TOPDOWN_MIN_RR_RATIO', 'N/A')}"
+                    "🛡️ <b>Risk Management</b>\n"
+                    "   • TP/SL: Dynamic (Structure)\n"
+                    f"   • Min R:R: 1:{getattr(config, 'TOPDOWN_MIN_RR_RATIO', 'N/A')}"
                 )
             else:
-                # FIX: Use getattr â€” TAKE_PROFIT_PERCENT / STOP_LOSS_PERCENT may not exist
-                # (e.g. when running Rise/Fall strategy which doesn't use these values)
-                tp_pct = getattr(config, 'TAKE_PROFIT_PERCENT', None)
-                sl_pct = getattr(config, 'STOP_LOSS_PERCENT', None)
+                # TAKE_PROFIT_PERCENT / STOP_LOSS_PERCENT may not exist for all strategies.
+                tp_pct = getattr(config, "TAKE_PROFIT_PERCENT", None)
+                sl_pct = getattr(config, "STOP_LOSS_PERCENT", None)
                 if tp_pct is not None and sl_pct is not None:
                     risk_text = (
-                        f"ðŸ›¡ï¸ <b>Risk Management</b>\n"
-                        f"   â€¢ TP: {tp_pct}%\n"
-                        f"   â€¢ SL: {sl_pct}%"
+                        "🛡️ <b>Risk Management</b>\n"
+                        f"   • TP: {tp_pct}%\n"
+                        f"   • SL: {sl_pct}%"
                     )
                 else:
-                    risk_text = "ðŸ›¡ï¸ <b>Risk Management</b>\n   â€¢ TP/SL: Configured per strategy"
+                    risk_text = "🛡️ <b>Risk Management</b>\n   • TP/SL: Configured per strategy"
 
         message = (
-            "ðŸš€ <b>BOT STARTED</b>\n"
-            "â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”\n"
-            f"ðŸ‘¤ Account: <b>{config.DERIV_APP_ID}</b>\n"
-            f"ðŸ’° Balance: <b>{format_currency(balance)}</b>\n\n"
-            f"âš™ï¸ <b>Configuration</b>\n"
-            f"   â€¢ Strategy: {strategy_mode}\n"
-            f"   â€¢ Symbols: {symbol_count} Active\n"
-            f"   â€¢ Stake: {format_currency(stake) if stake else 'USER_DEFINED'}\n\n"
+            "🚀 <b>BOT STARTED</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            f"👤 Account: <b>{config.DERIV_APP_ID}</b>\n"
+            f"💰 Balance: <b>{format_currency(balance)}</b>\n\n"
+            "⚙️ <b>Configuration</b>\n"
+            f"   • Strategy: {strategy_mode}\n"
+            f"   • Symbols: {symbol_count} Active\n"
+            f"   • Stake: {format_currency(stake) if stake else 'USER_DEFINED'}\n\n"
             f"{risk_text}\n\n"
-            f"â° {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+            f"⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
         )
         await self.send_message(message)
-    
+
     async def notify_signal(self, signal: Dict):
         """Notify about trading signal (enriched context)."""
         direction = str(signal.get("signal", "UNKNOWN")).upper()

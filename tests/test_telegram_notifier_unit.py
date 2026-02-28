@@ -63,3 +63,26 @@ def test_telegram_logging_handler(mock_bot):
         
         # Since it's fire-and-forget with create_task, we might need to wait or check something else
         # But we can at least check if it didn't crash
+
+
+@pytest.mark.asyncio
+async def test_notify_bot_started_uses_clean_unicode(mock_bot):
+    with patch.dict("os.environ", {"TELEGRAM_BOT_TOKEN": "test_token", "TELEGRAM_CHAT_ID": "test_chat"}):
+        notifier = TelegramNotifier()
+        notifier.bot.send_message = AsyncMock()
+
+        await notifier.notify_bot_started(
+            balance=10374.20,
+            stake=20.0,
+            strategy_name="Scalping",
+            symbol_count=10,
+        )
+
+        assert notifier.bot.send_message.called
+        sent = notifier.bot.send_message.call_args.kwargs["text"]
+        assert "🚀 <b>BOT STARTED</b>" in sent
+        assert "⚙️ <b>Configuration</b>" in sent
+        assert "   • Strategy: 📊 Scalping" in sent
+        assert "ðŸ" not in sent
+        assert "â€¢" not in sent
+        assert "â”" not in sent
