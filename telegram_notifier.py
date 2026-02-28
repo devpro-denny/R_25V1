@@ -178,6 +178,26 @@ class TelegramNotifier:
         except (TypeError, ValueError):
             return default
 
+    @staticmethod
+    def _direction_badge(direction: str) -> str:
+        """Return a consistent direction badge for signal/open notifications."""
+        direction = str(direction).upper()
+        if direction in {"BUY", "UP", "CALL", "LONG"}:
+            return "📈 [LONG]"
+        if direction in {"SELL", "DOWN", "PUT", "SHORT"}:
+            return "📉 [SHORT]"
+        return "📊 [SIGNAL]"
+
+    @staticmethod
+    def _direction_label(direction: str) -> str:
+        """Return human-friendly direction label with arrow."""
+        direction = str(direction).upper()
+        if direction in {"BUY", "UP", "CALL", "LONG"}:
+            return f"⬆️ {direction}"
+        if direction in {"SELL", "DOWN", "PUT", "SHORT"}:
+            return f"⬇️ {direction}"
+        return direction
+
     def _normalize_strategy_name(
         self,
         strategy_value: Optional[str] = None,
@@ -423,7 +443,8 @@ class TelegramNotifier:
         )
         risk_summary = self._format_risk_summary(signal, strategy_type)
 
-        emoji = "[LONG]" if direction in {"BUY", "UP", "CALL"} else "[SHORT]"
+        badge = self._direction_badge(direction)
+        direction_label = self._direction_label(direction)
         min_strength = int(getattr(config, "MIN_SIGNAL_STRENGTH", 6) or 6)
         strength_bar = self._create_strength_bar(score, min_strength + 4)
 
@@ -434,11 +455,11 @@ class TelegramNotifier:
         )
 
         message = (
-            f"{emoji} <b>SIGNAL DETECTED: {symbol}</b>\n"
+            f"{badge} <b>SIGNAL DETECTED: {symbol}</b>\n"
             "--------------------\n"
             f"Strategy: <b>{strategy_type}</b>\n"
             f"User ID: <code>{user_id}</code>\n"
-            f"Direction: <b>{direction}</b>\n"
+            f"Direction: <b>{direction_label}</b>\n"
             f"Strength: {strength_bar} ({score:.1f})\n\n"
             f"Why Executed: {execution_reason}\n"
             f"Risk: {risk_summary}\n\n"
@@ -458,7 +479,8 @@ class TelegramNotifier:
         strategy_name = self._normalize_strategy_name(strategy_type, trade_info)
         prefix = "[SCALP] " if strategy_name == "Scalping" else ("[RF] " if strategy_name == "RiseFall" else "")
         direction = str(trade_info.get("direction", "UNKNOWN")).upper()
-        emoji = "[LONG]" if direction in ("BUY", "UP", "CALL") else "[SHORT]"
+        badge = self._direction_badge(direction)
+        direction_label = self._direction_label(direction)
         symbol = trade_info.get("symbol", "UNKNOWN")
         stake = self._to_float(trade_info.get("stake", 0), 0.0)
         user_id = self._extract_user_id(trade_info)
@@ -477,11 +499,11 @@ class TelegramNotifier:
             payout = self._to_float(trade_info.get("payout", 0), 0.0)
 
             message = (
-                f"{prefix}{emoji} <b>TRADE OPENED: {symbol}</b>\n"
+                f"{prefix}{badge} 🚀 <b>TRADE OPENED: {symbol}</b>\n"
                 "--------------------\n"
                 f"Strategy: <b>{strategy_name}</b>\n"
                 f"User ID: <code>{user_id}</code>\n"
-                f"Direction: <b>{direction}</b>\n"
+                f"Direction: <b>{direction_label}</b>\n"
                 f"Stake: {format_currency(stake)}\n"
                 f"Duration: {duration}{duration_unit}\n"
                 f"Max Payout: {format_currency(payout) if payout else 'N/A'}\n"
@@ -529,11 +551,11 @@ class TelegramNotifier:
         mult_display = int(multiplier) if multiplier.is_integer() else multiplier
 
         message = (
-            f"{prefix}{emoji} <b>TRADE OPENED: {symbol}</b>\n"
+            f"{prefix}{badge} 🚀 <b>TRADE OPENED: {symbol}</b>\n"
             "--------------------\n"
             f"Strategy: <b>{strategy_name}</b>\n"
             f"User ID: <code>{user_id}</code>\n"
-            f"Direction: <b>{direction}</b>\n"
+            f"Direction: <b>{direction_label}</b>\n"
             f"Stake: {format_currency(stake)} (x{mult_display if multiplier else 0})\n"
             f"Entry: {self._to_float(trade_info.get('entry_price', 0), 0.0):.2f}\n"
             f"Why Executed: {execution_reason}\n\n"
@@ -596,13 +618,13 @@ class TelegramNotifier:
                 stake = 1.0
 
         if profit > 0:
-            emoji = "[WIN]"
+            badge = "🟢 [WIN]"
             outcome = "WON"
         elif profit < 0:
-            emoji = "[LOSS]"
+            badge = "🔴 [LOSS]"
             outcome = "LOST"
         else:
-            emoji = "[FLAT]"
+            badge = "⚪ [FLAT]"
             outcome = "BREAK EVEN"
 
         roi = (profit / stake) * 100
@@ -614,7 +636,7 @@ class TelegramNotifier:
             close_reason = "stagnation_exit"
 
         message = (
-            f"{prefix}{emoji} <b>TRADE CLOSED ({outcome}): {symbol}</b>\n"
+            f"{prefix}{badge} 🏁 <b>TRADE CLOSED ({outcome}): {symbol}</b>\n"
             "--------------------\n"
             f"Strategy: <b>{strategy_name}</b>\n"
             f"User ID: <code>{user_id}</code>\n"
@@ -633,92 +655,92 @@ class TelegramNotifier:
 
     async def notify_daily_summary(self, stats: Dict):
         """Send daily trading summary"""
-        win_rate = stats.get('win_rate', 0)
-        total_pnl = stats.get('total_pnl', 0)
-        
-        if win_rate >= 80 and stats.get('total_trades', 0) > 3:
-            badge = "ðŸ”¥ CRUSHING IT"
+        win_rate = stats.get("win_rate", 0)
+        total_pnl = stats.get("total_pnl", 0)
+
+        if win_rate >= 80 and stats.get("total_trades", 0) > 3:
+            badge = "🔥 CRUSHING IT"
         elif total_pnl > 0:
-            badge = "âœ… PROFITABLE"
+            badge = "✅ PROFITABLE"
         else:
-            badge = "ðŸ“‰ RECOVERY NEEDED"
-        
+            badge = "📉 RECOVERY NEEDED"
+
         message = (
-            f"ðŸ“… <b>DAILY REPORT: {datetime.now().strftime('%Y-%m-%d')}</b>\n"
-            "â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”\n"
-            f"ðŸ’µ <b>Total P&L: {format_currency(total_pnl)}</b>\n"
-            f"ðŸ“Š Status: {badge}\n\n"
-            f"ðŸ“ˆ <b>Statistics</b>\n"
-            f"   â€¢ Trades: {stats.get('total_trades', 0)}\n"
-            f"   â€¢ Win Rate: {win_rate:.1f}%\n"
-            f"   â€¢ Wins: {stats.get('winning_trades', 0)}\n"
-            f"   â€¢ Losses: {stats.get('losing_trades', 0)}\n\n"
-            f"â° {datetime.now().strftime('%H:%M:%S')}"
+            f"🗓️ <b>DAILY REPORT: {datetime.now().strftime('%Y-%m-%d')}</b>\n"
+            "--------------------\n"
+            f"💵 <b>Total P&L: {format_currency(total_pnl)}</b>\n"
+            f"📊 Status: {badge}\n\n"
+            "📈 <b>Statistics</b>\n"
+            f"   - Trades: {stats.get('total_trades', 0)}\n"
+            f"   - Win Rate: {win_rate:.1f}%\n"
+            f"   - Wins: {stats.get('winning_trades', 0)}\n"
+            f"   - Losses: {stats.get('losing_trades', 0)}\n\n"
+            f"⏰ {datetime.now().strftime('%H:%M:%S')}"
         )
-        
+
         await self.send_message(message)
     
     async def notify_error(self, error_msg: str):
         """Notify about errors"""
         message = (
-            f"âš ï¸ <b>SYSTEM ALERT</b>\n"
-            "â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”\n"
-            f"âŒ <b>Error Detected</b>\n{error_msg}\n\n"
-            f"â° {datetime.now().strftime('%H:%M:%S')}"
+            "⚠️ <b>SYSTEM ALERT</b>\n"
+            "--------------------\n"
+            f"❌ <b>Error Detected</b>\n{error_msg}\n\n"
+            f"⏰ {datetime.now().strftime('%H:%M:%S')}"
         )
         await self.send_message(message)
     
     async def notify_connection_lost(self):
         """Notify that connection was lost"""
         message = (
-            "ðŸ”Œ <b>CONNECTION LOST</b>\n"
-            "â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”\n"
-            "âš ï¸ The bot has lost connection to the server.\n"
-            "ðŸ”„ Reconnecting...\n\n"
-            f"â° {datetime.now().strftime('%H:%M:%S')}"
+            "🔌 <b>CONNECTION LOST</b>\n"
+            "--------------------\n"
+            "⚠️ The bot has lost connection to the server.\n"
+            "🔄 Reconnecting...\n\n"
+            f"⏰ {datetime.now().strftime('%H:%M:%S')}"
         )
         await self.send_message(message)
     
     async def notify_connection_restored(self):
         """Notify that connection was restored"""
         message = (
-            "âš¡ <b>ONLINE</b>\n"
-            "â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”\n"
-            "âœ… Connection has been restored.\n"
-            "ðŸ¤– Resuming trading operations.\n\n"
-            f"â° {datetime.now().strftime('%H:%M:%S')}"
+            "⚡ <b>ONLINE</b>\n"
+            "--------------------\n"
+            "✅ Connection has been restored.\n"
+            "🤖 Resuming trading operations.\n\n"
+            f"⏰ {datetime.now().strftime('%H:%M:%S')}"
         )
         await self.send_message(message)
     
     async def notify_bot_stopped(self, stats: Dict):
         """Notify that bot has stopped"""
-        total_pnl = stats.get('total_pnl', 0)
-        
+        total_pnl = stats.get("total_pnl", 0)
+
         message = (
-            f"ðŸ›‘ <b>BOT STOPPED</b>\n"
-            "â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”\n"
-            f"ðŸ’µ Final P&L: <b>{format_currency(total_pnl)}</b>\n"
-            f"ðŸ“Š Total Trades: {stats.get('total_trades', 0)}\n"
-            f"ðŸŽ¯ Win Rate: {stats.get('win_rate', 0):.1f}%\n\n"
-            f"â° {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+            "🛑 <b>BOT STOPPED</b>\n"
+            "--------------------\n"
+            f"💵 Final P&L: <b>{format_currency(total_pnl)}</b>\n"
+            f"📊 Total Trades: {stats.get('total_trades', 0)}\n"
+            f"🎯 Win Rate: {stats.get('win_rate', 0):.1f}%\n\n"
+            f"⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
         )
-        
+
         await self.send_message(message)
 
     async def notify_approval_request(self, user_info: Dict):
         """Notify admin about a new user approval request"""
-        email = user_info.get('email', 'Unknown')
-        user_id = user_info.get('id', 'Unknown')
-        
+        email = user_info.get("email", "Unknown")
+        user_id = user_info.get("id", "Unknown")
+
         message = (
-            "ðŸ‘¤ <b>NEW USER REQUEST</b>\n"
-            "â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”\n"
-            f"ðŸ“§ Email: <code>{email}</code>\n"
-            f"ðŸ†” ID: <code>{user_id}</code>\n\n"
-            "âš ï¸ <b>Action Required</b>\n"
+            "👤 <b>NEW USER REQUEST</b>\n"
+            "--------------------\n"
+            f"📧 Email: <code>{email}</code>\n"
+            f"🆔 ID: <code>{user_id}</code>\n\n"
+            "⚠️ <b>Action Required</b>\n"
             "This user has requested access to the dashboard.\n"
             "Please review and approve via Supabase or Admin API.\n\n"
-            f"â° {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+            f"⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
         )
         await self.send_message(message)
         
