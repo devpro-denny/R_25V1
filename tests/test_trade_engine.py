@@ -360,3 +360,40 @@ async def test_apply_tp_sl_limits_fails_when_disconnected():
         contract_id="1", tp_price=101.0, sl_price=99.0, entry_spot=100.0, multiplier=100, stake=1.0
     )
     assert ok is False
+
+
+@pytest.mark.asyncio
+async def test_open_trade_sets_buy_failed_reason_when_buy_never_succeeds():
+    engine = TradeEngine(api_token="TEST", app_id="1089")
+    engine.is_connected = True
+    engine.ws = MagicMock(closed=False)
+
+    async def fake_prop(direction, stake, symbol):
+        return {"id": "PID", "ask_price": 1.0, "spot": 100.0, "multiplier": 80, "symbol": symbol}
+
+    engine.get_proposal = fake_prop
+    engine.buy_with_proposal = AsyncMock(return_value=None)
+
+    trade = await engine.open_trade("UP", 1.0, symbol="R_50", max_retries=1)
+    assert trade is None
+    assert engine.last_execution_reason == "buy_failed"
+
+
+@pytest.mark.asyncio
+async def test_execute_trade_sets_reason_when_signal_rr_below_minimum():
+    engine = TradeEngine(api_token="TEST", app_id="1089")
+    rm = DummyRiskManager()
+
+    signal = {
+        "signal": "UP",
+        "symbol": "R_25",
+        "entry_price": 100.0,
+        "take_profit": 100.5,
+        "stop_loss": 99.5,
+        "min_rr_ratio": 2.0,
+        "stake": 1.0,
+    }
+
+    out = await engine.execute_trade(signal, rm)
+    assert out is None
+    assert engine.last_execution_reason == "signal_rr_below_minimum"

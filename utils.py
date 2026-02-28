@@ -47,14 +47,14 @@ def _repair_mojibake_text(text: Optional[str]) -> Optional[str]:
     Repair common UTF-8-as-Latin-1 mojibake sequences in log messages.
 
     Example:
-        "âœ…" -> "✅"
-        "ðŸŽ¯" -> "🎯"
+        "\u00e2\u0153\u2026" -> "✅"
+        "\u00f0\u0178\u017d\u00af" -> "🎯"
     """
     if not isinstance(text, str) or not text:
         return text
 
     # Fast pre-check to avoid unnecessary work on normal ASCII text.
-    if not any(marker in text for marker in ("â", "ð", "Ã", "ï")):
+    if not any(marker in text for marker in ("\u00e2", "\u00f0", "\u00c3", "\u00ef")):
         return text
 
     for source_encoding in ("cp1252", "latin-1"):

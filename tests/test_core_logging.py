@@ -97,7 +97,7 @@ async def test_ws_logging_handler_repairs_mojibake_message():
 
     with patch("app.bot.manager.bot_manager.get_status", return_value={"is_running": True, "active_strategy": "scalping"}), \
          patch("app.core.logging.event_manager.broadcast", new=AsyncMock()) as mock_broadcast:
-        handler.emit(_record("TradingBot", "u1", "âœ… Trade Engine connected", bot_type="scalping"))
+        handler.emit(_record("TradingBot", "u1", "\u00e2\u0153\u2026 Trade Engine connected", bot_type="scalping"))
         await asyncio.sleep(0)
 
         assert mock_broadcast.await_count == 1

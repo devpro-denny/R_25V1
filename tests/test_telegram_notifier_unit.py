@@ -41,8 +41,8 @@ async def test_notify_trade_opened(mock_bot):
             sent = notifier.bot.send_message.call_args.kwargs["text"]
             assert "TRADE OPENED: R_25" in sent
             assert "Direction: <b>⬆️ UP</b>" in sent
-            assert "â–" not in sent
-            assert "â€¢" not in sent
+            assert "\u00e2\u2013" not in sent
+            assert "\u00e2\u20ac\u00a2" not in sent
 
 @pytest.mark.asyncio
 async def test_notify_error(mock_bot):
@@ -88,19 +88,19 @@ async def test_notify_bot_started_uses_clean_unicode(mock_bot):
         assert "🚀 <b>BOT STARTED</b>" in sent
         assert "⚙️ <b>Configuration</b>" in sent
         assert "   • Strategy: 📊 Scalping" in sent
-        assert "ðŸ" not in sent
-        assert "â€¢" not in sent
-        assert "â”" not in sent
+        assert "\u00f0\u0178" not in sent
+        assert "\u00e2\u20ac\u00a2" not in sent
+        assert "\u00e2\u201d" not in sent
 
 
 def test_repair_mojibake_text_handles_mixed_tokens(mock_bot):
     with patch.dict("os.environ", {"TELEGRAM_BOT_TOKEN": "test_token", "TELEGRAM_CHAT_ID": "test_chat"}):
         notifier = TelegramNotifier()
-        mixed = "🚀 Strength: â–®â–®â–®â–¯â–¯"
+        mixed = "🚀 Strength: \u00e2\u2013\u00ae\u00e2\u2013\u00ae\u00e2\u2013\u00ae\u00e2\u2013\u00af\u00e2\u2013\u00af"
         repaired = notifier._repair_mojibake_text(mixed)
 
         assert repaired == "🚀 Strength: ▮▮▮▯▯"
-        assert "â–" not in repaired
+        assert "\u00e2\u2013" not in repaired
 
 
 @pytest.mark.asyncio
@@ -124,7 +124,7 @@ async def test_notify_signal_strength_bar_uses_clean_blocks(mock_bot):
         assert "SIGNAL DETECTED: R_75" in sent
         assert "Direction: <b>⬇️ DOWN</b>" in sent
         assert "Strength: ▮▮▮▯▯ (7.0)" in sent
-        assert "â–" not in sent
+        assert "\u00e2\u2013" not in sent
 
 
 @pytest.mark.asyncio
@@ -138,7 +138,7 @@ async def test_notify_bot_stopped_uses_clean_separator(mock_bot):
         sent = notifier.bot.send_message.call_args.kwargs["text"]
         assert "🛑 <b>BOT STOPPED</b>" in sent
         assert "--------------------" in sent
-        assert "â”" not in sent
+        assert "\u00e2\u201d" not in sent
 
 
 @pytest.mark.asyncio
@@ -154,6 +154,6 @@ async def test_notify_trade_closed_uses_clean_outcome_emoji(mock_bot):
 
         sent = notifier.bot.send_message.call_args.kwargs["text"]
         assert "TRADE CLOSED (WON): R_25" in sent
-        assert "â–" not in sent
-        assert "â€¢" not in sent
+        assert "\u00e2\u2013" not in sent
+        assert "\u00e2\u20ac\u00a2" not in sent
 
