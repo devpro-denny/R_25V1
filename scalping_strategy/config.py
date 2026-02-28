@@ -99,6 +99,8 @@ SCALPING_RSI_DOWN_MAX = 48
 SCALPING_MAX_PRICE_MOVEMENT_PCT = 1.2
 SCALPING_MOMENTUM_THRESHOLD = 1.0  # ATR multiplier
 SCALPING_MIN_RR_RATIO = 1.5
+# Floating-point guard so values effectively equal to min R:R are not rejected.
+SCALPING_RR_TOLERANCE = 1e-6
 # Final report recommendation (Feb 25-27, 2026):
 # widen both SL/TP proportionally to preserve 1.5 R:R while reducing premature stop-outs.
 SCALPING_SL_ATR_MULTIPLIER = 2.0

@@ -327,11 +327,13 @@ class ScalpingStrategy(BaseStrategy):
             return {"can_trade": False, "details": {"reason": "Invalid Stop Loss (Risk=0)"}}
 
         rr_ratio = reward / risk
-        if rr_ratio < scalping_config.SCALPING_MIN_RR_RATIO:
-            _step_log(5, f"Low R:R ({rr_ratio:.2f} < {scalping_config.SCALPING_MIN_RR_RATIO})")
+        min_rr_ratio = float(getattr(scalping_config, "SCALPING_MIN_RR_RATIO", 1.5))
+        rr_tolerance = float(getattr(scalping_config, "SCALPING_RR_TOLERANCE", 1e-6) or 0.0)
+        if rr_ratio + rr_tolerance < min_rr_ratio:
+            _step_log(5, f"Low R:R ({rr_ratio:.2f} < {min_rr_ratio})")
             return {
                 "can_trade": False,
-                "details": {"reason": f"Low R:R ({rr_ratio:.2f} < {scalping_config.SCALPING_MIN_RR_RATIO})"},
+                "details": {"reason": f"Low R:R ({rr_ratio:.2f} < {min_rr_ratio})"},
             }
 
         _step_log(
@@ -352,7 +354,7 @@ class ScalpingStrategy(BaseStrategy):
             "take_profit": tp_price,
             "stop_loss": sl_price,
             "risk_reward_ratio": rr_ratio,
-            "min_rr_required": scalping_config.SCALPING_MIN_RR_RATIO,
+            "min_rr_required": min_rr_ratio,
             "score": confidence,
             "confidence": confidence,
             "entry_price": current_price,

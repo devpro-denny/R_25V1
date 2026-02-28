@@ -200,6 +200,23 @@ def test_can_open_trade_allows_rr_at_or_above_minimum(srm):
     assert reason == "OK"
 
 
+def test_can_open_trade_allows_rr_within_tolerance(srm):
+    allowed, reason = srm.can_open_trade(
+        symbol="R_25",
+        stake=10.0,
+        take_profit=101.4999995,
+        stop_loss=99.0,
+        signal_dict={
+            "signal": "UP",
+            "entry_price": 100.0,
+            "min_rr_required": 1.5,
+            "confidence": 9.5,
+        },
+    )
+    assert allowed is True
+    assert reason == "OK"
+
+
 def test_scalping_rm_stagnation_exit(srm):
     trade_info = {
         "open_time": datetime.now() - timedelta(seconds=200),
