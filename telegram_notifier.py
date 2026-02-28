@@ -85,12 +85,12 @@ class TelegramNotifier:
             try:
                 self.bot = Bot(token=self.bot_token)
                 self.enabled = True
-                logger.info("âœ… Telegram notifications enabled")
+                logger.info("✅ Telegram notifications enabled")
             except Exception as e:
-                logger.warning(f"âš ï¸ Failed to initialize Telegram bot: {e}")
+                logger.warning(f"⚠️ Failed to initialize Telegram bot: {e}")
                 self.enabled = False
         else:
-            logger.info("â„¹ï¸ Telegram notifications disabled (no credentials)")
+            logger.info("ℹ️ Telegram notifications disabled (no credentials)")
     
     def _safe_format(self, value, default: str = "N/A") -> str:
         """Safely format a value, handling None cases"""
@@ -120,7 +120,7 @@ class TelegramNotifier:
         if not isinstance(text, str) or not text:
             return text
 
-        markers = ("Ã", "Â", "â", "ð", "ï", "Å")
+        markers = ("\u00c3", "\u00c2", "\u00e2", "\u00f0", "\u00ef", "\u00c5")
 
         def marker_count(value: str) -> int:
             return sum(value.count(m) for m in markers)
@@ -348,23 +348,23 @@ class TelegramNotifier:
             except asyncio.TimeoutError:
                 if attempt < retries - 1:
                     wait_time = 2 ** attempt
-                    logger.warning(f"âš ï¸ Telegram timeout (attempt {attempt + 1}/{retries}), retrying in {wait_time}s...")
+                    logger.warning(f"⚠️ Telegram timeout (attempt {attempt + 1}/{retries}), retrying in {wait_time}s...")
                     await asyncio.sleep(wait_time)
                 else:
-                    logger.error(f"âŒ Failed to send Telegram message: Timed out after {retries} attempts")
+                    logger.error(f"❌ Failed to send Telegram message: Timed out after {retries} attempts")
                     return False
                     
             except TelegramError as e:
                 if attempt < retries - 1 and "timeout" in str(e).lower():
                     wait_time = 2 ** attempt
-                    logger.warning(f"âš ï¸ Telegram error (attempt {attempt + 1}/{retries}): {e}, retrying in {wait_time}s...")
+                    logger.warning(f"⚠️ Telegram error (attempt {attempt + 1}/{retries}): {e}, retrying in {wait_time}s...")
                     await asyncio.sleep(wait_time)
                 else:
-                    logger.error(f"âŒ Failed to send Telegram message: {e}")
+                    logger.error(f"❌ Failed to send Telegram message: {e}")
                     return False
                     
             except Exception as e:
-                logger.error(f"âŒ Telegram error: {e}")
+                logger.error(f"❌ Telegram error: {e}")
                 return False
         
         return False

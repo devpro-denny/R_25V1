@@ -29,13 +29,13 @@ try:
         try:
             telegram_handler = TelegramLoggingHandler(notifier)
             logging.getLogger().addHandler(telegram_handler)
-            logger.info("âœ… Telegram error logging enabled")
+            logger.info("✅ Telegram error logging enabled")
         except Exception as e:
-            logger.warning(f"âš ï¸ Failed to setup Telegram logging: {e}")
+            logger.warning(f"⚠️ Failed to setup Telegram logging: {e}")
             
 except ImportError:
     TELEGRAM_ENABLED = False
-    logger.warning("âš ï¸ Telegram notifier not available")
+    logger.warning("⚠️ Telegram notifier not available")
 
 class TradingBot:
     """Main trading bot controller with multi-asset support"""
@@ -58,7 +58,7 @@ class TradingBot:
     
     def _signal_handler(self, signum, frame):
         """Handle shutdown signals"""
-        logger.warning("\nâš ï¸ Shutdown signal received")
+        logger.warning("\n⚠️ Shutdown signal received")
         self.running = False
     
     async def initialize(self) -> bool:
@@ -70,16 +70,16 @@ class TradingBot:
         """
         try:
             logger.info("="*60)
-            logger.info("ðŸš€ Initializing Deriv Multi-Asset Multipliers Trading Bot")
+            logger.info("🚀 Initializing Deriv Multi-Asset Multipliers Trading Bot")
             logger.info("="*60)
             
             # Validate configuration
-            logger.info("ðŸ“‹ Validating configuration...")
+            logger.info("📋 Validating configuration...")
             config.validate_config()
-            logger.info("âœ… Configuration valid")
+            logger.info("✅ Configuration valid")
             
             # Initialize components
-            logger.info("ðŸ”§ Initializing components...")
+            logger.info("🔧 Initializing components...")
             
             self.data_fetcher = DataFetcher(
                 config.DERIV_API_TOKEN,
@@ -95,25 +95,25 @@ class TradingBot:
             self.risk_manager = RiskManager()
             
             # Connect to API
-            logger.info("ðŸ”Œ Connecting to Deriv API...")
+            logger.info("🔌 Connecting to Deriv API...")
             
             data_connected = await self.data_fetcher.connect()
             trade_connected = await self.trade_engine.connect()
             
             if not data_connected or not trade_connected:
-                logger.error("âŒ Failed to connect to API")
+                logger.error("❌ Failed to connect to API")
                 return False
             
             # Get and log account balance
             balance = await self.data_fetcher.get_balance()
             if balance:
-                logger.info(f"ðŸ’° Account Balance: {format_currency(balance)}")
+                logger.info(f"💰 Account Balance: {format_currency(balance)}")
                 if TELEGRAM_ENABLED:
                     try:
                         strategy_mode = "Top-Down Multi-Timeframe" if config.USE_TOPDOWN_STRATEGY else "Two-Phase Scalping"
                         await notifier.notify_bot_started(balance, config.FIXED_STAKE, strategy_mode)
                     except Exception as e:
-                        logger.error(f"âŒ Telegram notification failed: {e}")
+                        logger.error(f"❌ Telegram notification failed: {e}")
             
             # Log trading parameters
             logger.info("="*60)
@@ -121,48 +121,48 @@ class TradingBot:
             strategy_mode = "TOP-DOWN MULTI-TIMEFRAME" if config.USE_TOPDOWN_STRATEGY else "TWO-PHASE SCALPING"
             logger.info(f"TRADING PARAMETERS - {strategy_mode}")
             logger.info("="*60)
-            logger.info(f"ðŸ“Š Assets Monitored: {len(self.symbols)}")
+            logger.info(f"📊 Assets Monitored: {len(self.symbols)}")
             for symbol in self.symbols:
                 asset_info = config.get_asset_info(symbol)
-                logger.info(f"   â€¢ {symbol}: {asset_info['multiplier']}x ({asset_info['description']})")
+                logger.info(f"   • {symbol}: {asset_info['multiplier']}x ({asset_info['description']})")
             
             stake_display = format_currency(config.FIXED_STAKE) if config.FIXED_STAKE else "USER_DEFINED"
-            logger.info(f"ðŸ’µ Stake: {stake_display}")
-            logger.info(f"ðŸŽ¯ Max Concurrent Trades: {config.MAX_CONCURRENT_TRADES}")
+            logger.info(f"💵 Stake: {stake_display}")
+            logger.info(f"🎯 Max Concurrent Trades: {config.MAX_CONCURRENT_TRADES}")
             
             if config.USE_TOPDOWN_STRATEGY:
-                logger.info(f"ðŸ“ˆ Strategy: Top-Down Multi-Timeframe Analysis")
-                logger.info(f"ðŸ“Š Timeframes: 1w, 1d, 4h, 1h, 5m, 1m")
-                logger.info(f"ðŸŽ¯ Min R:R Ratio: 1:{config.TOPDOWN_MIN_RR_RATIO}")
-                logger.info(f"ðŸ’° Dynamic TP/SL: Based on market structure")
+                logger.info(f"📈 Strategy: Top-Down Multi-Timeframe Analysis")
+                logger.info(f"📊 Timeframes: 1w, 1d, 4h, 1h, 5m, 1m")
+                logger.info(f"🎯 Min R:R Ratio: 1:{config.TOPDOWN_MIN_RR_RATIO}")
+                logger.info(f"💰 Dynamic TP/SL: Based on market structure")
             else:
                 tp_pct = getattr(config, 'TAKE_PROFIT_PERCENT', None)
                 sl_pct = getattr(config, 'STOP_LOSS_PERCENT', None)
                 if tp_pct is not None and sl_pct is not None:
-                    logger.info(f"ðŸŽ¯ Take Profit: {tp_pct}%")
-                    logger.info(f"ðŸ›‘ Stop Loss: {sl_pct}%")
+                    logger.info(f"🎯 Take Profit: {tp_pct}%")
+                    logger.info(f"🛑 Stop Loss: {sl_pct}%")
                 else:
-                    logger.info("ðŸŽ¯ Take Profit: Strategy-defined")
-                    logger.info("ðŸ›‘ Stop Loss: Strategy-defined")
+                    logger.info("🎯 Take Profit: Strategy-defined")
+                    logger.info("🛑 Stop Loss: Strategy-defined")
             
-            logger.info(f"â° Cooldown: {config.COOLDOWN_SECONDS}s")
-            logger.info(f"ðŸ”¢ Max Daily Trades: {config.MAX_TRADES_PER_DAY}")
+            logger.info(f"⏰ Cooldown: {config.COOLDOWN_SECONDS}s")
+            logger.info(f"🔢 Max Daily Trades: {config.MAX_TRADES_PER_DAY}")
             daily_loss_display = format_currency(config.MAX_DAILY_LOSS) if config.MAX_DAILY_LOSS else "DYNAMIC (3x Stake)"
-            logger.info(f"ðŸ’¸ Max Daily Loss: {daily_loss_display}")
+            logger.info(f"💸 Max Daily Loss: {daily_loss_display}")
             logger.info("="*60)
             
-            logger.info("âœ… Bot initialized successfully!")
+            logger.info("✅ Bot initialized successfully!")
             return True
             
         except Exception as e:
-            logger.error(f"âŒ Initialization failed: {e}")
+            logger.error(f"❌ Initialization failed: {e}")
             import traceback
             logger.error(traceback.format_exc())
             return False
     
     async def shutdown(self):
         """Gracefully shutdown the bot"""
-        logger.info("ðŸ›‘ Shutting down bot...")
+        logger.info("🛑 Shutting down bot...")
         
         try:
             # Disconnect from API
@@ -184,12 +184,12 @@ class TradingBot:
                     try:
                         await notifier.notify_bot_stopped(stats)
                     except Exception as e:
-                        logger.error(f"âŒ Telegram notification failed: {e}")
+                        logger.error(f"❌ Telegram notification failed: {e}")
             
-            logger.info("âœ… Bot shutdown complete")
+            logger.info("✅ Bot shutdown complete")
             
         except Exception as e:
-            logger.error(f"âŒ Error during shutdown: {e}")
+            logger.error(f"❌ Error during shutdown: {e}")
     
     async def analyze_asset(self, symbol: str) -> Optional[Dict]:
         """
@@ -202,14 +202,14 @@ class TradingBot:
             Signal dictionary or None if analysis failed
         """
         try:
-            logger.info(f"ðŸ“Š Analyzing {symbol}...")
+            logger.info(f"📊 Analyzing {symbol}...")
             
             if config.USE_TOPDOWN_STRATEGY:
                 # Fetch all timeframes for Top-Down analysis
                 all_timeframes = await self.data_fetcher.fetch_all_timeframes(symbol)
                 
                 if not all_timeframes:
-                    logger.warning(f"âš ï¸ Failed to fetch data for {symbol}")
+                    logger.warning(f"⚠️ Failed to fetch data for {symbol}")
                     return None
                 
                 fetched_tfs = list(all_timeframes.keys())
@@ -230,7 +230,7 @@ class TradingBot:
                 market_data = await self.data_fetcher.fetch_multi_timeframe_data(symbol)
                 
                 if '1m' not in market_data or '5m' not in market_data:
-                    logger.warning(f"âš ï¸ Failed to fetch complete data for {symbol}")
+                    logger.warning(f"⚠️ Failed to fetch complete data for {symbol}")
                     return None
                 
                 # Legacy mode: analyze with 1m+5m (pass None for missing timeframes)
@@ -252,7 +252,7 @@ class TradingBot:
             return signal
             
         except Exception as e:
-            logger.error(f"âŒ Error analyzing {symbol}: {e}")
+            logger.error(f"❌ Error analyzing {symbol}: {e}")
             return None
     
     async def scan_all_assets(self) -> List[Dict]:
@@ -262,7 +262,7 @@ class TradingBot:
         Returns:
             List of valid signals sorted by strength (if prioritization enabled)
         """
-        logger.info(f"ðŸ” Scanning {len(self.symbols)} assets for trading opportunities...")
+        logger.info(f"🔍 Scanning {len(self.symbols)} assets for trading opportunities...")
         
         # Create semaphore to limit concurrent asset analysis (prevent CPU/memory overload)
         max_concurrent = min(10, len(self.symbols))  # Max 10 concurrent analyses
@@ -277,7 +277,7 @@ class TradingBot:
         tasks = [analyze_with_semaphore(symbol) for symbol in self.symbols]
         
         # Execute all analyses in parallel
-        logger.debug(f"âš¡ Running {len(tasks)} analyses in parallel (max {max_concurrent} concurrent)...")
+        logger.debug(f"⚡ Running {len(tasks)} analyses in parallel (max {max_concurrent} concurrent)...")
         results = await asyncio.gather(*tasks, return_exceptions=True)
         
         # Process results
@@ -285,7 +285,7 @@ class TradingBot:
         for symbol, result in zip(self.symbols, results):
             # Handle exceptions
             if isinstance(result, Exception):
-                logger.error(f"âŒ {symbol}: Analysis failed with exception: {result}")
+                logger.error(f"❌ {symbol}: Analysis failed with exception: {result}")
                 self.asset_signals[symbol] = None
                 continue
             
@@ -295,19 +295,19 @@ class TradingBot:
             # Check if signal is valid for trading
             if result and result.get('can_trade'):
                 valid_signals.append(result)
-                logger.info(f"âœ… {symbol}: Valid {result['signal']} signal (score: {result.get('score', 0)})")
+                logger.info(f"✅ {symbol}: Valid {result['signal']} signal (score: {result.get('score', 0)})")
             else:
                 reason = result['details'].get('reason', 'Unknown') if result else 'Analysis failed'
-                logger.debug(f"âšª {symbol}: {reason}")
+                logger.debug(f"⚪ {symbol}: {reason}")
         
         if not valid_signals:
-            logger.info("ðŸ“­ No valid signals found across all assets")
+            logger.info("📭 No valid signals found across all assets")
             return []
         
         # Prioritize by signal strength if enabled
         if config.PRIORITIZE_BY_SIGNAL_STRENGTH:
             valid_signals.sort(key=lambda s: s.get('score', 0), reverse=True)
-            logger.info(f"ðŸ“Š Prioritized {len(valid_signals)} signals by strength")
+            logger.info(f"📊 Prioritized {len(valid_signals)} signals by strength")
         
         return valid_signals
     
@@ -318,7 +318,7 @@ class TradingBot:
             can_trade, reason = self.risk_manager.can_trade()
             
             if not can_trade:
-                logger.debug(f"â¸ï¸ Cannot trade: {reason}")
+                logger.debug(f"⏸️ Cannot trade: {reason}")
                 return
             
             # Scan all assets for trading opportunities
@@ -331,14 +331,14 @@ class TradingBot:
             signal = valid_signals[0]
             symbol = signal['symbol']
             
-            logger.info(f"ðŸŽ¯ Selected {symbol} for trading (strongest signal)")
+            logger.info(f"🎯 Selected {symbol} for trading (strongest signal)")
             
             # Notify signal detected
             if TELEGRAM_ENABLED:
                 try:
                     await notifier.notify_signal(signal)
                 except Exception as e:
-                    logger.error(f"âŒ Telegram notification failed: {e}")
+                    logger.error(f"❌ Telegram notification failed: {e}")
             
             # Validate trade parameters
             if config.USE_TOPDOWN_STRATEGY:
@@ -347,7 +347,7 @@ class TradingBot:
                 sl_price = signal.get('stop_loss')
                 
                 if not tp_price or not sl_price:
-                    logger.warning(f"âš ï¸ {symbol}: Strategy did not provide TP/SL levels")
+                    logger.warning(f"⚠️ {symbol}: Strategy did not provide TP/SL levels")
                     return
                 
                 # Validate risk/reward ratio
@@ -355,7 +355,7 @@ class TradingBot:
                 if entry_price > 0:
                     rr_ratio = signal.get('risk_reward_ratio', 0)
                     if rr_ratio < config.TOPDOWN_MIN_RR_RATIO:
-                        logger.warning(f"âš ï¸ {symbol}: R:R ratio {rr_ratio:.2f} below minimum {config.TOPDOWN_MIN_RR_RATIO}")
+                        logger.warning(f"⚠️ {symbol}: R:R ratio {rr_ratio:.2f} below minimum {config.TOPDOWN_MIN_RR_RATIO}")
                         return
                 
                 valid = True
@@ -367,18 +367,18 @@ class TradingBot:
                 )
             
             if not valid:
-                logger.warning(f"âš ï¸ {symbol}: Invalid trade parameters: {msg}")
+                logger.warning(f"⚠️ {symbol}: Invalid trade parameters: {msg}")
                 return
             
             # Execute trade
-            logger.info(f"ðŸš€ Executing {signal['signal']} trade on {symbol}...")
+            logger.info(f"🚀 Executing {signal['signal']} trade on {symbol}...")
             
             # Log trade details if using Top-Down
             if config.USE_TOPDOWN_STRATEGY:
-                logger.info(f"   ðŸ“ Entry: {signal.get('entry_price', 0):.4f}")
-                logger.info(f"   ðŸŽ¯ TP: {signal.get('take_profit', 0):.4f}")
-                logger.info(f"   ðŸ›¡ï¸ SL: {signal.get('stop_loss', 0):.4f}")
-                logger.info(f"   ðŸ“Š R:R: 1:{signal.get('risk_reward_ratio', 0):.2f}")
+                logger.info(f"   📍 Entry: {signal.get('entry_price', 0):.4f}")
+                logger.info(f"   🎯 TP: {signal.get('take_profit', 0):.4f}")
+                logger.info(f"   🛡️ SL: {signal.get('stop_loss', 0):.4f}")
+                logger.info(f"   📊 R:R: 1:{signal.get('risk_reward_ratio', 0):.2f}")
             
             # Execute trade with monitoring
             result = await self.trade_engine.execute_trade(signal, self.risk_manager)
@@ -398,9 +398,9 @@ class TradingBot:
                 
                 # Log statistics
                 stats = self.risk_manager.get_statistics()
-                logger.info(f"ðŸ“ˆ Win Rate: {stats['win_rate']:.1f}%")
-                logger.info(f"ðŸ’° Total P&L: {format_currency(stats['total_pnl'])}")
-                logger.info(f"ðŸ“Š Trades Today: {stats['trades_today']}/{config.MAX_TRADES_PER_DAY}")
+                logger.info(f"📈 Win Rate: {stats['win_rate']:.1f}%")
+                logger.info(f"💰 Total P&L: {format_currency(stats['total_pnl'])}")
+                logger.info(f"📊 Trades Today: {stats['trades_today']}/{config.MAX_TRADES_PER_DAY}")
                 
                 # Send Telegram notification
                 if TELEGRAM_ENABLED:
@@ -414,12 +414,12 @@ class TradingBot:
                         try:
                             await notifier.notify_trade_closed(result, trade_info)
                         except Exception as e:
-                            logger.error(f"âŒ Telegram notification failed: {e}")
+                            logger.error(f"❌ Telegram notification failed: {e}")
             else:
-                logger.error(f"âŒ {symbol}: Trade execution failed")
+                logger.error(f"❌ {symbol}: Trade execution failed")
             
         except Exception as e:
-            logger.error(f"âŒ Error in trading cycle: {e}")
+            logger.error(f"❌ Error in trading cycle: {e}")
             import traceback
             logger.error(traceback.format_exc())
     
@@ -428,12 +428,12 @@ class TradingBot:
         try:
             # Initialize
             if not await self.initialize():
-                logger.error("âŒ Failed to initialize bot")
+                logger.error("❌ Failed to initialize bot")
                 return
             
             self.running = True
-            logger.info("\nðŸš€ Starting main trading loop")
-            logger.info(f"ðŸ“Š Monitoring {len(self.symbols)} assets: {', '.join(self.symbols)}")
+            logger.info("\n🚀 Starting main trading loop")
+            logger.info(f"📊 Monitoring {len(self.symbols)} assets: {', '.join(self.symbols)}")
             logger.info("Press Ctrl+C to stop\n")
             
             cycle_count = 0
@@ -452,11 +452,11 @@ class TradingBot:
                     # Check cooldown
                     cooldown = self.risk_manager.get_cooldown_remaining()
                     if cooldown > 0:
-                        logger.info(f"â° Cooldown: {cooldown:.0f}s remaining")
+                        logger.info(f"⏰ Cooldown: {cooldown:.0f}s remaining")
                     
                     # Wait before next cycle
                     wait_time = max(cooldown, 30)  # At least 30 seconds between cycles
-                    logger.info(f"â³ Next cycle in {wait_time:.0f}s...")
+                    logger.info(f"⏳ Next cycle in {wait_time:.0f}s...")
                     
                     # Sleep with interrupt check
                     for _ in range(int(wait_time)):
@@ -465,18 +465,18 @@ class TradingBot:
                         await asyncio.sleep(1)
                     
                 except KeyboardInterrupt:
-                    logger.warning("\nâš ï¸ Keyboard interrupt received")
+                    logger.warning("\n⚠️ Keyboard interrupt received")
                     self.running = False
                     break
                     
                 except Exception as e:
-                    logger.error(f"âŒ Error in main loop: {e}")
+                    logger.error(f"❌ Error in main loop: {e}")
                     import traceback
                     logger.error(traceback.format_exc())
                     await asyncio.sleep(30)  # Wait before retry
             
         except Exception as e:
-            logger.error(f"âŒ Fatal error: {e}")
+            logger.error(f"❌ Fatal error: {e}")
             import traceback
             logger.error(traceback.format_exc())
             
@@ -507,9 +507,9 @@ def main():
         asyncio.run(bot.run())
         
     except KeyboardInterrupt:
-        print("\n\nâœ… Bot stopped by user")
+        print("\n\n✅ Bot stopped by user")
     except Exception as e:
-        print(f"\nâŒ Fatal error: {e}")
+        print(f"\n❌ Fatal error: {e}")
         import traceback
         traceback.print_exc()
         sys.exit(1)

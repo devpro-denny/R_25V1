@@ -390,8 +390,8 @@ def test_monitor_logs_repairs_mojibake_lines(mock_auth):
          patch("app.api.monitor.bot_manager") as mock_manager:
         mock_file = MagicMock()
         mock_file.__enter__.return_value.readlines.return_value = [
-            "2026-02-23 08:21:34 | INFO | [u123] âœ… Trade Engine connected to Deriv API\n",
-            "2026-02-23 08:21:34 | INFO | [u123] â€¢ R_25: 160x\n",
+            "2026-02-23 08:21:34 | INFO | [u123] \u00e2\u0153\u2026 Trade Engine connected to Deriv API\n",
+            "2026-02-23 08:21:34 | INFO | [u123] \u00e2\u20ac\u00a2 R_25: 160x\n",
         ]
         mock_open.return_value = mock_file
         mock_manager.get_status.return_value = {

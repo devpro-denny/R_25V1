@@ -18,7 +18,7 @@ def _repair_mojibake_text(text: Optional[str]) -> Optional[str]:
     if not isinstance(text, str) or not text:
         return text
 
-    if not any(marker in text for marker in ("â", "ð", "Ã", "ï")):
+    if not any(marker in text for marker in ("\u00e2", "\u00f0", "\u00c3", "\u00ef")):
         return text
 
     for source_encoding in ("cp1252", "latin-1"):

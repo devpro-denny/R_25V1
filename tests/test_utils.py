@@ -153,7 +153,7 @@ def test_setup_logger_reuse_and_filter(monkeypatch):
         h = Capture()
         logger.addHandler(h)
         logger.info("hello")
-        logger.info("âœ… repaired")
+        logger.info("\u00e2\u0153\u2026 repaired")
         logger.removeHandler(h)
 
         assert captured["user_id"] == "user-1"
