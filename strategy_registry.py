@@ -11,14 +11,15 @@ logger = logging.getLogger(__name__)
 
 # Import strategy classes from isolated packages
 from conservative_strategy import ConservativeStrategy, ConservativeRiskManager
-from scalping_strategy import ScalpingStrategy, ScalpingRiskManager
+from scalping_strategy.strategy_external import ScalpingStrategy as ExternalScalpingStrategy
+from scalping_strategy.risk_manager import ScalpingRiskManager
 from risefallbot import RiseFallStrategy, RiseFallRiskManager
 
 
 # Strategy registry mapping name -> (Strategy class, RiskManager class)
 STRATEGY_REGISTRY = {
     "Conservative": (ConservativeStrategy, ConservativeRiskManager),
-    "Scalping": (ScalpingStrategy, ScalpingRiskManager),
+    "Scalping": (ExternalScalpingStrategy, ScalpingRiskManager),
     "RiseFall": (RiseFallStrategy, RiseFallRiskManager),
 }
 
