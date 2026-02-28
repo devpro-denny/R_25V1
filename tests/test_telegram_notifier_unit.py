@@ -38,6 +38,11 @@ async def test_notify_trade_opened(mock_bot):
         if hasattr(notifier, "notify_trade_opened"):
             await notifier.notify_trade_opened(trade_info)
             assert notifier.bot.send_message.called
+            sent = notifier.bot.send_message.call_args.kwargs["text"]
+            assert "📈 [LONG] 🚀 <b>TRADE OPENED: R_25</b>" in sent
+            assert "Direction: <b>⬆️ UP</b>" in sent
+            assert "â–" not in sent
+            assert "â€¢" not in sent
 
 @pytest.mark.asyncio
 async def test_notify_error(mock_bot):
@@ -116,6 +121,8 @@ async def test_notify_signal_strength_bar_uses_clean_blocks(mock_bot):
         )
 
         sent = notifier.bot.send_message.call_args.kwargs["text"]
+        assert "📉 [SHORT] <b>SIGNAL DETECTED: R_75</b>" in sent
+        assert "Direction: <b>⬇️ DOWN</b>" in sent
         assert "Strength: ▮▮▮▯▯ (7.0)" in sent
         assert "â–" not in sent
 
@@ -132,3 +139,20 @@ async def test_notify_bot_stopped_uses_clean_separator(mock_bot):
         assert "🛑 <b>BOT STOPPED</b>" in sent
         assert "--------------------" in sent
         assert "â”" not in sent
+
+
+@pytest.mark.asyncio
+async def test_notify_trade_closed_uses_clean_outcome_emoji(mock_bot):
+    with patch.dict("os.environ", {"TELEGRAM_BOT_TOKEN": "test_token", "TELEGRAM_CHAT_ID": "test_chat"}):
+        notifier = TelegramNotifier()
+        notifier.bot.send_message = AsyncMock()
+
+        result = {"status": "won", "profit": 5.0, "current_price": 102.0, "contract_id": "123"}
+        trade_info = {"symbol": "R_25", "direction": "UP", "entry_price": 100.0, "stake": 10.0}
+
+        await notifier.notify_trade_closed(result, trade_info)
+
+        sent = notifier.bot.send_message.call_args.kwargs["text"]
+        assert "🟢 [WIN] 🏁 <b>TRADE CLOSED (WON): R_25</b>" in sent
+        assert "â–" not in sent
+        assert "â€¢" not in sent
