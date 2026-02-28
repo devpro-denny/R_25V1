@@ -25,6 +25,11 @@ from risefallbot import rf_config
 from risefallbot.rf_strategy import RiseFallStrategy
 from risefallbot.rf_risk_manager import RiseFallRiskManager
 from risefallbot.rf_trade_engine import RFTradeEngine
+from app.core.deriv_api_key_crypto import (
+    decrypt_deriv_api_key,
+    encrypt_deriv_api_key,
+    is_encrypted_deriv_api_key,
+)
 
 # Try to import telegram notifier
 try:
@@ -266,7 +271,7 @@ async def _fetch_user_config(user_id: Optional[str] = None) -> dict:
 
     try:
         from app.core.supabase import supabase
-        base_query = supabase.table("profiles").select("deriv_api_key, stake_amount")
+        base_query = supabase.table("profiles").select("id, deriv_api_key, stake_amount")
         if user_id:
             result = base_query.eq("id", user_id).single().execute()
             row = result.data if isinstance(result.data, dict) else None
@@ -276,7 +281,20 @@ async def _fetch_user_config(user_id: Optional[str] = None) -> dict:
 
         if row:
             if row.get("deriv_api_key"):
-                result_config["api_token"] = row["deriv_api_key"]
+                stored_key = row["deriv_api_key"]
+                result_config["api_token"] = decrypt_deriv_api_key(stored_key)
+                if not is_encrypted_deriv_api_key(stored_key):
+                    profile_id = row.get("id") or user_id
+                    if profile_id:
+                        try:
+                            supabase.table("profiles").update(
+                                {"deriv_api_key": encrypt_deriv_api_key(result_config["api_token"])}
+                            ).eq("id", profile_id).execute()
+                        except Exception as migration_error:
+                            logger.warning(
+                                f"Failed to auto-migrate plaintext Deriv API key for "
+                                f"user {profile_id}: {migration_error}"
+                            )
                 logger.info("🔑 API token loaded from user profile")
             if row.get("stake_amount") is not None:
                 result_config["stake"] = float(row["stake_amount"])

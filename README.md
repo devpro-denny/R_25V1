@@ -156,6 +156,7 @@ Key variables:
 | `SUPABASE_URL` | ✅ | Supabase project URL |
 | `SUPABASE_SERVICE_ROLE_KEY` | ✅ | Supabase service role key |
 | `SUPABASE_ANON_KEY` | ✅ | Supabase anonymous key |
+| `DERIV_API_KEY_ENCRYPTION_SECRET` | ✅ | Secret used to encrypt Deriv API keys before storing in Supabase |
 | `TELEGRAM_BOT_TOKEN` | ❌ | Telegram bot token for notifications |
 | `TELEGRAM_CHAT_ID` | ❌ | Telegram chat ID |
 | `SCALPING_BOT_ENABLED` | ❌ | Set `true` to enable the scalping strategy |

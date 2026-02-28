@@ -17,6 +17,11 @@ router = APIRouter()
 from app.core.cache import cache
 
 from app.core.supabase import supabase
+from app.core.deriv_api_key_crypto import (
+    encrypt_deriv_api_key,
+    decrypt_deriv_api_key,
+    is_encrypted_deriv_api_key,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -47,12 +52,28 @@ async def get_current_config(current_user: dict = Depends(get_current_active_use
         if data:
             # API Key
             if data.get('deriv_api_key'):
-                key = data['deriv_api_key']
+                stored_key = data["deriv_api_key"]
+                key = decrypt_deriv_api_key(stored_key)
                 # Mask the key (show last 4 chars if long enough)
                 if len(key) > 4:
                     deriv_api_key = f"*****{key[-4:]}"
                 else:
                     deriv_api_key = "*****"
+
+                # Backward-compatible migration: auto-encrypt legacy plaintext keys.
+                if not is_encrypted_deriv_api_key(stored_key):
+                    try:
+                        encrypted_key = encrypt_deriv_api_key(key)
+                        supabase.table("profiles").update(
+                            {"deriv_api_key": encrypted_key}
+                        ).eq("id", current_user["id"]).execute()
+                        data["deriv_api_key"] = encrypted_key
+                        cache.set(cache_key, data, ttl=600)
+                    except Exception as migration_error:
+                        logger.warning(
+                            f"Failed to auto-migrate plaintext Deriv API key for "
+                            f"user {current_user.get('id')}: {migration_error}"
+                        )
             
             # Stake & Strategy
             if data.get('stake_amount') is not None:
@@ -108,7 +129,7 @@ async def update_config(
         user_updates = {}
         
         if updates.deriv_api_key is not None:
-            user_updates["deriv_api_key"] = updates.deriv_api_key
+            user_updates["deriv_api_key"] = encrypt_deriv_api_key(updates.deriv_api_key)
             updated_fields.append("deriv_api_key")
             
         if updates.stake_amount is not None:
