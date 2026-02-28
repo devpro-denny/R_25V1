@@ -1,4 +1,4 @@
-﻿"""
+"""
 Trade Engine for Deriv Multi-Asset Trading Bot
 Handles trade execution with dynamic multiplier selection per asset
 trade_engine.py - MULTI-ASSET VERSION
@@ -487,11 +487,26 @@ class TradeEngine:
             return None
         return reward / risk
 
+    @staticmethod
+    def _normalize_strategy_name(strategy_value: Optional[str]) -> str:
+        """Normalize strategy label for notification payloads."""
+        if strategy_value is None:
+            return "Conservative"
+        normalized = str(strategy_value).strip().lower().replace("_", "").replace("/", "")
+        if normalized in {"scalping", "scalp"}:
+            return "Scalping"
+        if normalized in {"risefall", "rf"}:
+            return "RiseFall"
+        return "Conservative"
+
     async def open_trade(self, direction: str, stake: float, symbol: str,
                         tp_price: Optional[float] = None,
                         sl_price: Optional[float] = None,
                         max_retries: int = 3,
-                        min_rr_ratio: Optional[float] = None) -> Optional[Dict]:
+                        min_rr_ratio: Optional[float] = None,
+                        strategy_type: Optional[str] = None,
+                        user_id: Optional[str] = None,
+                        execution_reason: Optional[str] = None) -> Optional[Dict]:
         """
         Open a multiplier trade on any configured asset
         
@@ -631,6 +646,9 @@ class TradeEngine:
                     'risk_mode': self.risk_mode,
                     'risk_reward_ratio': entry_rr_ratio,
                     'min_rr_required': float(min_rr_ratio) if min_rr_ratio is not None else None,
+                    'strategy_type': self._normalize_strategy_name(strategy_type or self.risk_mode),
+                    'user_id': user_id,
+                    'execution_reason': execution_reason or "Signal conditions matched and order sent",
                 }
                 
                 logger.info(f"âœ… Trade opened: {symbol} {direction} @ {entry_spot:.4f} | Contract: {contract_id}")
@@ -673,7 +691,10 @@ class TradeEngine:
                 
                 if notifier is not None:
                     try:
-                        await notifier.notify_trade_opened(trade_info)
+                        await notifier.notify_trade_opened(
+                            trade_info,
+                            strategy_type=trade_info.get("strategy_type", "Conservative"),
+                        )
                     except Exception as e:
                         logger.error(f"âŒ Telegram notification failed: {e}")
                 
@@ -1021,6 +1042,15 @@ class TradeEngine:
             # CRITICAL: Use stake from signal if available (passed from BotRunner)
             # Fallback to config.FIXED_STAKE only if signal doesn't provide it
             trade_stake = signal.get('stake', config.FIXED_STAKE)
+            strategy_type = self._normalize_strategy_name(
+                signal.get("strategy_type") or signal.get("risk_mode") or self.risk_mode
+            )
+            user_id = signal.get("user_id") or signal.get("account_id")
+            execution_reason = (
+                signal.get("execution_reason")
+                or signal.get("reason")
+                or "Signal conditions matched and risk checks passed"
+            )
             
             if not trade_stake:
                 logger.error(f"âŒ Missing stake amount for {symbol}")
@@ -1033,6 +1063,9 @@ class TradeEngine:
                 tp_price=tp_price,
                 sl_price=sl_price,
                 min_rr_ratio=min_rr_ratio,
+                strategy_type=strategy_type,
+                user_id=user_id,
+                execution_reason=execution_reason,
             )
             
             if not trade_info:
@@ -1069,6 +1102,9 @@ class TradeEngine:
                 final_status['exit_price'] = final_status.get('current_spot')
                 final_status['direction'] = direction
                 final_status['symbol'] = symbol
+                final_status['strategy_type'] = strategy_type
+                final_status['user_id'] = user_id
+                final_status['execution_reason'] = execution_reason
                 # Duration is already in final_status from monitor_trade
                 # Ensure alias 'signal' is present (DB uses 'signal')
                 final_status['signal'] = direction

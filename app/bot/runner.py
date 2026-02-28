@@ -1222,8 +1222,18 @@ class BotRunner:
                 
             # Notify Telegram about signal (Moved here to ensure all checks passed)
             try:
+                passed_checks = signal.get("details", {}).get("passed_checks", [])
+                if passed_checks:
+                    execution_reason = f"Checks passed: {', '.join(str(item) for item in passed_checks)}"
+                else:
+                    execution_reason = "All strategy checks aligned and risk gate passed"
                 signal_with_symbol = signal.copy()
                 signal_with_symbol['symbol'] = symbol
+                signal_with_symbol['stake'] = stake
+                signal_with_symbol['multiplier'] = multiplier
+                signal_with_symbol['strategy_type'] = self._get_strategy_name()
+                signal_with_symbol['user_id'] = self.account_id
+                signal_with_symbol['execution_reason'] = execution_reason
                 await self.telegram_bridge.notify_signal(signal_with_symbol)
             except:
                 pass
@@ -1322,6 +1332,12 @@ class BotRunner:
                         # MERGE complete trade details into result for notification
                         result_for_notify = result.copy()
                         result_for_notify.update(signal_with_symbol) # Contains direction, stake, symbol
+                        result_for_notify['strategy_type'] = self._get_strategy_name()
+                        result_for_notify['user_id'] = self.account_id
+                        result_for_notify.setdefault(
+                            'execution_reason',
+                            signal_with_symbol.get('execution_reason', 'Signal conditions matched and risk checks passed')
+                        )
                         
                         # Ensure symbol is set (sometimes signal uses 'symbol', result uses 'symbol')
                         if 'symbol' not in result_for_notify:
@@ -1521,6 +1537,12 @@ class BotRunner:
                                     result_for_notify = sell_result.copy()
                                     result_for_notify.update(active_info)
                                     result_for_notify['exit_reason'] = trail_reason
+                                    result_for_notify['strategy_type'] = self._get_strategy_name()
+                                    result_for_notify['user_id'] = self.account_id
+                                    result_for_notify.setdefault(
+                                        'execution_reason',
+                                        'Trade opened by signal alignment; closed by trailing profit rule'
+                                    )
                                     
                                     await self.telegram_bridge.notify_trade_closed(
                                         result_for_notify, pnl, status,
@@ -1579,6 +1601,12 @@ class BotRunner:
                                     result_for_notify = sell_result.copy()
                                     result_for_notify.update(active_info)
                                     result_for_notify['exit_reason'] = exit_reason
+                                    result_for_notify['strategy_type'] = self._get_strategy_name()
+                                    result_for_notify['user_id'] = self.account_id
+                                    result_for_notify.setdefault(
+                                        'execution_reason',
+                                        'Trade opened by signal alignment; closed by stagnation protection'
+                                    )
                                     
                                     await self.telegram_bridge.notify_trade_closed(
                                         result_for_notify, pnl, status, 
@@ -1617,6 +1645,12 @@ class BotRunner:
                     # MERGE complete trade details into result for notification
                     result_for_notify = trade_status.copy()
                     result_for_notify.update(active_info) # Contains direction, stake, symbol from RiskManager
+                    result_for_notify['strategy_type'] = self._get_strategy_name()
+                    result_for_notify['user_id'] = self.account_id
+                    result_for_notify.setdefault(
+                        'execution_reason',
+                        'Trade opened by strategy signal and closed at broker settlement/limits'
+                    )
                     
                     await self.telegram_bridge.notify_trade_closed(result_for_notify, pnl, status, strategy_type=self.strategy.get_strategy_name())
                 except:

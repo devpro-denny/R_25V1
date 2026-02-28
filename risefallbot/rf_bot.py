@@ -1192,13 +1192,25 @@ async def _process_symbol(
         # Notify via Telegram
         if TELEGRAM_ENABLED:
             try:
+                execution_reason = (
+                    f"Triple confirmation aligned; scenario={signal.get('scenario', 'n/a')}, "
+                    f"bias={signal.get('market_bias', 'n/a')}"
+                )
                 signal_info = {
                     "signal": direction,
                     "symbol": symbol,
                     "score": signal.get("confidence", 10),
+                    "stake": stake_val,
+                    "duration": duration,
+                    "duration_unit": duration_unit,
+                    "strategy_type": "RiseFall",
+                    "user_id": user_id,
+                    "execution_reason": execution_reason,
                     "details": {
                         "rsi": signal.get("rsi", 0),
                         "adx": signal.get("stoch", 0),
+                        "scenario": signal.get("scenario"),
+                        "market_bias": signal.get("market_bias"),
                     },
                 }
                 await notifier.notify_signal(signal_info)
@@ -1307,6 +1319,15 @@ async def _process_symbol(
                     "stake": stake_val,
                     "entry_price": result.get("buy_price", 0),
                     "multiplier": 1,
+                    "duration": duration,
+                    "duration_unit": duration_unit,
+                    "payout": result.get("payout"),
+                    "strategy_type": "RiseFall",
+                    "user_id": user_id,
+                    "execution_reason": (
+                        f"Triple confirmation aligned; scenario={signal.get('scenario', 'n/a')}, "
+                        f"bias={signal.get('market_bias', 'n/a')}"
+                    ),
                 }
                 await notifier.notify_trade_opened(trade_info, strategy_type="RiseFall")
             except Exception as e:
@@ -1455,12 +1476,27 @@ async def _process_symbol(
                     "contract_id": contract_id,
                     "current_price": settlement.get("sell_price", 0) if settlement else 0,
                     "duration": signal.get("duration", 0),
+                    "exit_reason": closure_reason,
+                    "strategy_type": "RiseFall",
+                    "user_id": user_id,
+                    "execution_reason": (
+                        f"Triple confirmation aligned; scenario={signal.get('scenario', 'n/a')}, "
+                        f"bias={signal.get('market_bias', 'n/a')}"
+                    ),
                 }
                 await notifier.notify_trade_closed(result_info, {
                     "symbol": symbol,
                     "direction": direction,
                     "stake": stake_val,
                     "duration": signal.get("duration", 0),
+                    "duration_unit": signal.get("duration_unit"),
+                    "strategy_type": "RiseFall",
+                    "user_id": user_id,
+                    "execution_reason": (
+                        f"Triple confirmation aligned; scenario={signal.get('scenario', 'n/a')}, "
+                        f"bias={signal.get('market_bias', 'n/a')}"
+                    ),
+                    "closure_reason": closure_reason,
                 }, strategy_type="RiseFall")
             except Exception as e:
                 logger.error(f"❌ Telegram notification failed: {e}")

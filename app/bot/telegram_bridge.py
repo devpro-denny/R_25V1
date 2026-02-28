@@ -123,6 +123,9 @@ class TelegramBridge:
                 "current_price": trade.get("exit_price", 0),
                 "contract_id": trade.get("contract_id"),
                 "exit_reason": trade.get("exit_reason"),
+                "strategy_type": trade.get("strategy_type", strategy_type),
+                "user_id": trade.get("user_id"),
+                "execution_reason": trade.get("execution_reason"),
             }
 
             trade_info = {
@@ -131,6 +134,16 @@ class TelegramBridge:
                 "stake": trade.get("stake"),
                 "multiplier": trade.get("multiplier"),
                 "symbol": trade.get("symbol"),
+                "take_profit": trade.get("take_profit"),
+                "stop_loss": trade.get("stop_loss"),
+                "duration": trade.get("duration"),
+                "duration_unit": trade.get("duration_unit"),
+                "risk_reward_ratio": trade.get("risk_reward_ratio"),
+                "min_rr_required": trade.get("min_rr_required"),
+                "strategy_type": trade.get("strategy_type", strategy_type),
+                "user_id": trade.get("user_id"),
+                "execution_reason": trade.get("execution_reason"),
+                "closure_reason": trade.get("closure_reason"),
             }
 
             await bound.notify_trade_closed(result, trade_info, strategy_type=strategy_type)
