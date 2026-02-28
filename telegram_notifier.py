@@ -633,92 +633,92 @@ class TelegramNotifier:
 
     async def notify_daily_summary(self, stats: Dict):
         """Send daily trading summary"""
-        win_rate = stats.get('win_rate', 0)
-        total_pnl = stats.get('total_pnl', 0)
-        
-        if win_rate >= 80 and stats.get('total_trades', 0) > 3:
-            badge = "ðŸ”¥ CRUSHING IT"
+        win_rate = stats.get("win_rate", 0)
+        total_pnl = stats.get("total_pnl", 0)
+
+        if win_rate >= 80 and stats.get("total_trades", 0) > 3:
+            badge = "🔥 CRUSHING IT"
         elif total_pnl > 0:
-            badge = "âœ… PROFITABLE"
+            badge = "✅ PROFITABLE"
         else:
-            badge = "ðŸ“‰ RECOVERY NEEDED"
-        
+            badge = "📉 RECOVERY NEEDED"
+
         message = (
-            f"ðŸ“… <b>DAILY REPORT: {datetime.now().strftime('%Y-%m-%d')}</b>\n"
-            "â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”\n"
-            f"ðŸ’µ <b>Total P&L: {format_currency(total_pnl)}</b>\n"
-            f"ðŸ“Š Status: {badge}\n\n"
-            f"ðŸ“ˆ <b>Statistics</b>\n"
-            f"   â€¢ Trades: {stats.get('total_trades', 0)}\n"
-            f"   â€¢ Win Rate: {win_rate:.1f}%\n"
-            f"   â€¢ Wins: {stats.get('winning_trades', 0)}\n"
-            f"   â€¢ Losses: {stats.get('losing_trades', 0)}\n\n"
-            f"â° {datetime.now().strftime('%H:%M:%S')}"
+            f"🗓️ <b>DAILY REPORT: {datetime.now().strftime('%Y-%m-%d')}</b>\n"
+            "--------------------\n"
+            f"💵 <b>Total P&L: {format_currency(total_pnl)}</b>\n"
+            f"📊 Status: {badge}\n\n"
+            "📈 <b>Statistics</b>\n"
+            f"   - Trades: {stats.get('total_trades', 0)}\n"
+            f"   - Win Rate: {win_rate:.1f}%\n"
+            f"   - Wins: {stats.get('winning_trades', 0)}\n"
+            f"   - Losses: {stats.get('losing_trades', 0)}\n\n"
+            f"⏰ {datetime.now().strftime('%H:%M:%S')}"
         )
-        
+
         await self.send_message(message)
     
     async def notify_error(self, error_msg: str):
         """Notify about errors"""
         message = (
-            f"âš ï¸ <b>SYSTEM ALERT</b>\n"
-            "â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”\n"
-            f"âŒ <b>Error Detected</b>\n{error_msg}\n\n"
-            f"â° {datetime.now().strftime('%H:%M:%S')}"
+            "⚠️ <b>SYSTEM ALERT</b>\n"
+            "--------------------\n"
+            f"❌ <b>Error Detected</b>\n{error_msg}\n\n"
+            f"⏰ {datetime.now().strftime('%H:%M:%S')}"
         )
         await self.send_message(message)
     
     async def notify_connection_lost(self):
         """Notify that connection was lost"""
         message = (
-            "ðŸ”Œ <b>CONNECTION LOST</b>\n"
-            "â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”\n"
-            "âš ï¸ The bot has lost connection to the server.\n"
-            "ðŸ”„ Reconnecting...\n\n"
-            f"â° {datetime.now().strftime('%H:%M:%S')}"
+            "🔌 <b>CONNECTION LOST</b>\n"
+            "--------------------\n"
+            "⚠️ The bot has lost connection to the server.\n"
+            "🔄 Reconnecting...\n\n"
+            f"⏰ {datetime.now().strftime('%H:%M:%S')}"
         )
         await self.send_message(message)
     
     async def notify_connection_restored(self):
         """Notify that connection was restored"""
         message = (
-            "âš¡ <b>ONLINE</b>\n"
-            "â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”\n"
-            "âœ… Connection has been restored.\n"
-            "ðŸ¤– Resuming trading operations.\n\n"
-            f"â° {datetime.now().strftime('%H:%M:%S')}"
+            "⚡ <b>ONLINE</b>\n"
+            "--------------------\n"
+            "✅ Connection has been restored.\n"
+            "🤖 Resuming trading operations.\n\n"
+            f"⏰ {datetime.now().strftime('%H:%M:%S')}"
         )
         await self.send_message(message)
     
     async def notify_bot_stopped(self, stats: Dict):
         """Notify that bot has stopped"""
-        total_pnl = stats.get('total_pnl', 0)
-        
+        total_pnl = stats.get("total_pnl", 0)
+
         message = (
-            f"ðŸ›‘ <b>BOT STOPPED</b>\n"
-            "â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”\n"
-            f"ðŸ’µ Final P&L: <b>{format_currency(total_pnl)}</b>\n"
-            f"ðŸ“Š Total Trades: {stats.get('total_trades', 0)}\n"
-            f"ðŸŽ¯ Win Rate: {stats.get('win_rate', 0):.1f}%\n\n"
-            f"â° {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+            "🛑 <b>BOT STOPPED</b>\n"
+            "--------------------\n"
+            f"💵 Final P&L: <b>{format_currency(total_pnl)}</b>\n"
+            f"📊 Total Trades: {stats.get('total_trades', 0)}\n"
+            f"🎯 Win Rate: {stats.get('win_rate', 0):.1f}%\n\n"
+            f"⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
         )
-        
+
         await self.send_message(message)
 
     async def notify_approval_request(self, user_info: Dict):
         """Notify admin about a new user approval request"""
-        email = user_info.get('email', 'Unknown')
-        user_id = user_info.get('id', 'Unknown')
-        
+        email = user_info.get("email", "Unknown")
+        user_id = user_info.get("id", "Unknown")
+
         message = (
-            "ðŸ‘¤ <b>NEW USER REQUEST</b>\n"
-            "â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”\n"
-            f"ðŸ“§ Email: <code>{email}</code>\n"
-            f"ðŸ†” ID: <code>{user_id}</code>\n\n"
-            "âš ï¸ <b>Action Required</b>\n"
+            "👤 <b>NEW USER REQUEST</b>\n"
+            "--------------------\n"
+            f"📧 Email: <code>{email}</code>\n"
+            f"🆔 ID: <code>{user_id}</code>\n\n"
+            "⚠️ <b>Action Required</b>\n"
             "This user has requested access to the dashboard.\n"
             "Please review and approve via Supabase or Admin API.\n\n"
-            f"â° {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+            f"⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
         )
         await self.send_message(message)
         

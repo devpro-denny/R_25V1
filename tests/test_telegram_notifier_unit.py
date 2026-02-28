@@ -118,3 +118,17 @@ async def test_notify_signal_strength_bar_uses_clean_blocks(mock_bot):
         sent = notifier.bot.send_message.call_args.kwargs["text"]
         assert "Strength: ▮▮▮▯▯ (7.0)" in sent
         assert "â–" not in sent
+
+
+@pytest.mark.asyncio
+async def test_notify_bot_stopped_uses_clean_separator(mock_bot):
+    with patch.dict("os.environ", {"TELEGRAM_BOT_TOKEN": "test_token", "TELEGRAM_CHAT_ID": "test_chat"}):
+        notifier = TelegramNotifier()
+        notifier.bot.send_message = AsyncMock()
+
+        await notifier.notify_bot_stopped({"total_pnl": 0.0, "total_trades": 0, "win_rate": 0.0})
+
+        sent = notifier.bot.send_message.call_args.kwargs["text"]
+        assert "🛑 <b>BOT STOPPED</b>" in sent
+        assert "--------------------" in sent
+        assert "â”" not in sent
