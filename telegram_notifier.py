@@ -262,6 +262,14 @@ class TelegramNotifier:
 
         return default_reason
 
+    @staticmethod
+    def _compact_text(value: str, max_len: int = 90) -> str:
+        """Normalize whitespace and trim long text for concise Telegram messages."""
+        text = " ".join(str(value or "").split())
+        if len(text) <= max_len:
+            return text
+        return f"{text[:max_len - 3].rstrip()}..."
+
     def _format_risk_summary(self, payload: Optional[Dict], strategy_type: str) -> str:
         """Build concise risk summary for signal/open/close notifications."""
         if not isinstance(payload, dict):
@@ -453,27 +461,24 @@ class TelegramNotifier:
             details.get("adx", signal.get("adx", signal.get("stoch", 0))),
             0.0,
         )
+        reason_short = self._compact_text(execution_reason, 80)
+        risk_short = self._compact_text(risk_summary, 80)
 
         message = (
             f"{badge} <b>SIGNAL DETECTED: {symbol}</b>\n"
-            "--------------------\n"
-            f"Strategy: <b>{strategy_type}</b>\n"
-            f"User ID: <code>{user_id}</code>\n"
+            f"Strategy: <b>{strategy_type}</b> | User: <code>{user_id}</code>\n"
             f"Direction: <b>{direction_label}</b>\n"
-            f"Strength: {strength_bar} ({score:.1f})\n\n"
-            f"Why Executed: {execution_reason}\n"
-            f"Risk: {risk_summary}\n\n"
-            f"<b>Technical Indicators</b>\n"
-            f"   • RSI: {rsi:.1f}\n"
-            f"   • ADX: {adx:.1f}\n"
+            f"Strength: {strength_bar} ({score:.1f})\n"
+            f"Risk: {risk_short}\n"
+            f"RSI/ADX: {rsi:.1f} / {adx:.1f}\n"
+            f"Reason: {reason_short}\n"
         )
 
         if "proximity" in details:
-            message += f"   • Level Dist: {self._to_float(details['proximity']):.3f}%\n"
+            message += f"Level Dist: {self._to_float(details['proximity']):.3f}%\n"
 
-        message += f"\nTime: {datetime.now().strftime('%H:%M:%S')}"
+        message += f"Time: {datetime.now().strftime('%H:%M:%S')}"
         await self.send_message(message)
-
     async def notify_trade_opened(self, trade_info: Dict, strategy_type: str = "Conservative"):
         """Notify that a trade has been opened"""
         strategy_name = self._normalize_strategy_name(strategy_type, trade_info)
@@ -489,56 +494,42 @@ class TelegramNotifier:
             "Signal conditions matched and order sent",
         )
         risk_summary = self._format_risk_summary(trade_info, strategy_name)
+        reason_short = self._compact_text(execution_reason, 90)
+        risk_short = self._compact_text(risk_summary, 90)
 
-        # ------------------------------------------------------------------ #
-        #  Rise/Fall contracts: show contract duration, not TP/SL percentages #
-        # ------------------------------------------------------------------ #
         if strategy_name == "RiseFall":
             duration = trade_info.get("duration", "N/A")
             duration_unit = trade_info.get("duration_unit", "t")
             payout = self._to_float(trade_info.get("payout", 0), 0.0)
 
             message = (
-                f"{prefix}{badge} 🚀 <b>TRADE OPENED: {symbol}</b>\n"
-                "--------------------\n"
-                f"Strategy: <b>{strategy_name}</b>\n"
-                f"User ID: <code>{user_id}</code>\n"
+                f"{prefix}{badge} [OPEN] <b>TRADE OPENED: {symbol}</b>\n"
+                f"Strategy: <b>{strategy_name}</b> | User: <code>{user_id}</code>\n"
                 f"Direction: <b>{direction_label}</b>\n"
-                f"Stake: {format_currency(stake)}\n"
-                f"Duration: {duration}{duration_unit}\n"
+                f"Stake: {format_currency(stake)} | Duration: {duration}{duration_unit}\n"
                 f"Max Payout: {format_currency(payout) if payout else 'N/A'}\n"
-                f"Why Executed: {execution_reason}\n"
-                f"Risk: {risk_summary}\n"
-                f"\nID: <code>{trade_info.get('contract_id', 'N/A')}</code>\n"
-                f"Time: {datetime.now().strftime('%H:%M:%S')}"
+                f"Risk: {risk_short}\n"
+                f"Reason: {reason_short}\n"
+                f"ID: <code>{trade_info.get('contract_id', 'N/A')}</code> | Time: {datetime.now().strftime('%H:%M:%S')}"
             )
             await self.send_message(message)
             return
 
-        # ------------------------------------------------------------------ #
-        #  Multiplier contracts: calculate projected TP/SL amounts            #
-        # ------------------------------------------------------------------ #
         tp_amount = 0
         sl_risk = 0
 
         entry_spot = self._to_float(trade_info.get("entry_spot") or trade_info.get("entry_price", 0), 0.0)
         multiplier = self._to_float(trade_info.get("multiplier", 0), 0.0)
 
-        # 1. Calculate from exact price levels (Dynamic/Top-Down)
         if entry_spot > 0 and trade_info.get("take_profit") and trade_info.get("stop_loss"):
             tp_price = self._to_float(trade_info["take_profit"], 0.0)
             sl_price = self._to_float(trade_info["stop_loss"], 0.0)
             tp_amount = stake * multiplier * (abs(tp_price - entry_spot) / entry_spot)
             sl_risk = stake * multiplier * (abs(entry_spot - sl_price) / entry_spot)
-
-        # 2. Fallback: Use amount estimates if provided (Legacy)
         elif "take_profit_amount" in trade_info:
             tp_amount = self._to_float(trade_info["take_profit_amount"], 0.0)
             if "stop_loss_amount" in trade_info:
                 sl_risk = self._to_float(trade_info["stop_loss_amount"], 0.0)
-
-        # 3. Fallback: Estimate from config percentages if they exist
-        # FIX: Use getattr — TAKE_PROFIT_PERCENT / STOP_LOSS_PERCENT may not be defined
         else:
             tp_pct = getattr(config, "TAKE_PROFIT_PERCENT", None)
             sl_pct = getattr(config, "STOP_LOSS_PERCENT", None)
@@ -551,32 +542,25 @@ class TelegramNotifier:
         mult_display = int(multiplier) if multiplier.is_integer() else multiplier
 
         message = (
-            f"{prefix}{badge} 🚀 <b>TRADE OPENED: {symbol}</b>\n"
-            "--------------------\n"
-            f"Strategy: <b>{strategy_name}</b>\n"
-            f"User ID: <code>{user_id}</code>\n"
+            f"{prefix}{badge} [OPEN] <b>TRADE OPENED: {symbol}</b>\n"
+            f"Strategy: <b>{strategy_name}</b> | User: <code>{user_id}</code>\n"
             f"Direction: <b>{direction_label}</b>\n"
-            f"Stake: {format_currency(stake)} (x{mult_display if multiplier else 0})\n"
-            f"Entry: {self._to_float(trade_info.get('entry_price', 0), 0.0):.2f}\n"
-            f"Why Executed: {execution_reason}\n\n"
-            f"<b>Targets & Risk</b>\n"
-            f"   • Target: +{format_currency(tp_amount)}\n"
-            f"   • Risk: -{format_currency(sl_risk)}\n"
-            f"   • Ratio: {rr_ratio}\n"
-            f"   • Summary: {risk_summary}\n"
+            f"Stake: {format_currency(stake)} (x{mult_display if multiplier else 0}) | Entry: {self._to_float(trade_info.get('entry_price', 0), 0.0):.2f}\n"
+            f"Target/Risk: +{format_currency(tp_amount)} / -{format_currency(sl_risk)} ({rr_ratio})\n"
+            f"Risk: {risk_short}\n"
+            f"Reason: {reason_short}\n"
         )
 
         if trade_info.get("cancellation_enabled", False):
             cancel_duration = getattr(config, "CANCELLATION_DURATION", "N/A")
-            message += f"\n<b>Cancellation Active</b> ({cancel_duration}s)\n"
+            message += f"Cancel Window: {cancel_duration}s\n"
 
         message += (
-            f"\nID: <code>{trade_info.get('contract_id', 'N/A')}</code>\n"
+            f"ID: <code>{trade_info.get('contract_id', 'N/A')}</code> | "
             f"Time: {datetime.now().strftime('%H:%M:%S')}"
         )
 
         await self.send_message(message)
-
     async def notify_trade_closed(self, result: Dict, trade_info: Dict, strategy_type: str = "Conservative"):
         """Notify that a trade has been closed"""
         strategy_name = self._normalize_strategy_name(strategy_type, trade_info or result)
@@ -590,7 +574,6 @@ class TelegramNotifier:
 
         contract_id = result.get("contract_id") or trade_info.get("contract_id")
 
-        # Deduplication check
         if contract_id:
             dedup_key = f"{contract_id}_{status}"
             if dedup_key in self.processed_closed_trades:
@@ -608,6 +591,8 @@ class TelegramNotifier:
             "Signal conditions matched and risk gate approved",
         )
         risk_summary = self._format_risk_summary(trade_info, strategy_name)
+        reason_short = self._compact_text(execution_reason, 90)
+        risk_short = self._compact_text(risk_summary, 90)
 
         stake = trade_info.get("stake")
         if stake is None:
@@ -618,13 +603,13 @@ class TelegramNotifier:
                 stake = 1.0
 
         if profit > 0:
-            badge = "🟢 [WIN]"
+            badge = "[WIN]"
             outcome = "WON"
         elif profit < 0:
-            badge = "🔴 [LOSS]"
+            badge = "[LOSS]"
             outcome = "LOST"
         else:
-            badge = "⚪ [FLAT]"
+            badge = "[FLAT]"
             outcome = "BREAK EVEN"
 
         roi = (profit / stake) * 100
@@ -636,23 +621,16 @@ class TelegramNotifier:
             close_reason = "stagnation_exit"
 
         message = (
-            f"{prefix}{badge} 🏁 <b>TRADE CLOSED ({outcome}): {symbol}</b>\n"
-            "--------------------\n"
-            f"Strategy: <b>{strategy_name}</b>\n"
-            f"User ID: <code>{user_id}</code>\n"
-            f"<b>Net Result: {format_currency(profit)}</b>\n"
-            f"ROI: {roi:+.1f}%\n"
-            "--------------------\n"
-            f"Direction: {trade_info.get('direction', 'UNKNOWN')}\n"
-            f"Exit Price: {self._to_float(result.get('current_price', 0), 0.0):.2f}\n"
-            f"Why Executed: {execution_reason}\n"
+            f"{prefix}{badge} [CLOSED] <b>TRADE CLOSED ({outcome}): {symbol}</b>\n"
+            f"Strategy: <b>{strategy_name}</b> | User: <code>{user_id}</code>\n"
+            f"Net Result: <b>{format_currency(profit)}</b> | ROI: {roi:+.1f}%\n"
+            f"Direction: {trade_info.get('direction', 'UNKNOWN')} | Exit: {self._to_float(result.get('current_price', 0), 0.0):.2f}\n"
             f"Close Reason: {str(close_reason).upper()}\n"
-            f"Risk: {risk_summary}\n"
-            f"Duration: {trade_info.get('duration', result.get('duration', 'N/A'))}s\n\n"
-            f"Time: {datetime.now().strftime('%H:%M:%S')}"
+            f"Risk: {risk_short}\n"
+            f"Reason: {reason_short}\n"
+            f"Duration: {trade_info.get('duration', result.get('duration', 'N/A'))}s | Time: {datetime.now().strftime('%H:%M:%S')}"
         )
         await self.send_message(message)
-
     async def notify_daily_summary(self, stats: Dict):
         """Send daily trading summary"""
         win_rate = stats.get("win_rate", 0)
@@ -761,5 +739,7 @@ class TelegramNotifier:
 
 # Create global instance
 notifier = TelegramNotifier()
+
+
 
 

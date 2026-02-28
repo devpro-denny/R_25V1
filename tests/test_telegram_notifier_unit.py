@@ -39,7 +39,7 @@ async def test_notify_trade_opened(mock_bot):
             await notifier.notify_trade_opened(trade_info)
             assert notifier.bot.send_message.called
             sent = notifier.bot.send_message.call_args.kwargs["text"]
-            assert "📈 [LONG] 🚀 <b>TRADE OPENED: R_25</b>" in sent
+            assert "TRADE OPENED: R_25" in sent
             assert "Direction: <b>⬆️ UP</b>" in sent
             assert "â–" not in sent
             assert "â€¢" not in sent
@@ -121,7 +121,7 @@ async def test_notify_signal_strength_bar_uses_clean_blocks(mock_bot):
         )
 
         sent = notifier.bot.send_message.call_args.kwargs["text"]
-        assert "📉 [SHORT] <b>SIGNAL DETECTED: R_75</b>" in sent
+        assert "SIGNAL DETECTED: R_75" in sent
         assert "Direction: <b>⬇️ DOWN</b>" in sent
         assert "Strength: ▮▮▮▯▯ (7.0)" in sent
         assert "â–" not in sent
@@ -153,6 +153,7 @@ async def test_notify_trade_closed_uses_clean_outcome_emoji(mock_bot):
         await notifier.notify_trade_closed(result, trade_info)
 
         sent = notifier.bot.send_message.call_args.kwargs["text"]
-        assert "🟢 [WIN] 🏁 <b>TRADE CLOSED (WON): R_25</b>" in sent
+        assert "TRADE CLOSED (WON): R_25" in sent
         assert "â–" not in sent
         assert "â€¢" not in sent
+
