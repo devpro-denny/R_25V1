@@ -14,6 +14,11 @@ from app.bot.manager import bot_manager
 from app.schemas.bot import BotStatusResponse, BotControlResponse
 from app.core.auth import get_current_active_user
 from app.core.supabase import supabase
+from app.core.deriv_api_key_crypto import (
+    decrypt_deriv_api_key,
+    encrypt_deriv_api_key,
+    is_encrypted_deriv_api_key,
+)
 
 router = APIRouter()
 
@@ -35,11 +40,24 @@ async def start_bot(current_user: dict = Depends(get_current_active_user)):
     try:
         profile = supabase.table('profiles').select('deriv_api_key, stake_amount, active_strategy').eq('id', current_user['id']).single().execute()
         if profile.data:
-            api_key = profile.data.get('deriv_api_key')
+            stored_key = profile.data.get("deriv_api_key")
+            api_key = decrypt_deriv_api_key(stored_key)
             if profile.data.get('stake_amount') is not None:
                 stake_amount = float(profile.data['stake_amount'])
             if profile.data.get('active_strategy'):
                 active_strategy = profile.data['active_strategy']
+
+            # Backward-compatible migration: auto-encrypt legacy plaintext keys.
+            if stored_key and not is_encrypted_deriv_api_key(stored_key):
+                try:
+                    supabase.table("profiles").update(
+                        {"deriv_api_key": encrypt_deriv_api_key(api_key)}
+                    ).eq("id", current_user["id"]).execute()
+                except Exception as migration_error:
+                    logger.warning(
+                        f"Failed to auto-migrate plaintext Deriv API key for "
+                        f"user {current_user['id']}: {migration_error}"
+                    )
     except Exception as e:
         logger.error(f"Error fetching profile for user {current_user['id']}: {e}")
 

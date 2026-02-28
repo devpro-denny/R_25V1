@@ -151,4 +151,24 @@ SET active_strategy = 'Conservative'
 WHERE active_strategy NOT IN ('Conservative', 'Scalping', 'RiseFall') 
    OR active_strategy IS NULL;
 
+-- 5. Enforce encrypted Deriv API key format for new/updated rows.
+-- Existing plaintext rows are tolerated until they are updated.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname = 'profiles_deriv_api_key_encrypted_check'
+      AND conrelid = 'public.profiles'::regclass
+  ) THEN
+    ALTER TABLE public.profiles
+      ADD CONSTRAINT profiles_deriv_api_key_encrypted_check
+      CHECK (
+        deriv_api_key IS NULL
+        OR deriv_api_key = ''
+        OR deriv_api_key LIKE 'enc:v1:%'
+      ) NOT VALID;
+  END IF;
+END $$;
+
 

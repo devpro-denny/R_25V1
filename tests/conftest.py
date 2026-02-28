@@ -21,6 +21,7 @@ _TEST_ENV_DEFAULTS = {
         "eyJyb2xlIjoic2VydmljZV9yb2xlIiwiaXNzIjoic3VwYWJhc2UiLCJleHAiOjQ3NjUxMzI4MDB9."
         "testsignature"
     ),
+    "DERIV_API_KEY_ENCRYPTION_SECRET": "test_deriv_api_key_secret",
     "TELEGRAM_BOT_TOKEN": "fake_bot_token",
     "TELEGRAM_CHAT_ID": "12345678",
 }
@@ -41,6 +42,7 @@ def mock_env_vars(monkeypatch):
             "testsignature"
         ),
     )
+    monkeypatch.setenv("DERIV_API_KEY_ENCRYPTION_SECRET", "test_deriv_api_key_secret")
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "fake_bot_token")
     monkeypatch.setenv("TELEGRAM_CHAT_ID", "12345678")
 

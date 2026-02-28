@@ -4,6 +4,7 @@ from unittest.mock import MagicMock, patch, AsyncMock
 from fastapi.testclient import TestClient
 from app.main import app
 from app.core.auth import get_current_active_user, require_login, require_auth
+from app.core.deriv_api_key_crypto import encrypt_deriv_api_key
 
 client = TestClient(app)
 
@@ -80,6 +81,30 @@ async def test_bot_start(mock_auth):
         assert response.status_code == 200
         assert response.json()["success"] is True
         mock_manager.start_bot.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_bot_start_decrypts_encrypted_key(mock_auth):
+    encrypted_key = encrypt_deriv_api_key("fake_key_12345")
+    with patch("app.api.bot.supabase") as mock_supabase, \
+         patch("app.api.bot.bot_manager") as mock_manager:
+
+        mock_supabase.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value.data = {
+            "deriv_api_key": encrypted_key,
+            "stake_amount": 10.0,
+            "active_strategy": "Conservative"
+        }
+        mock_manager.start_bot = AsyncMock(return_value={
+            "success": True,
+            "message": "Bot started",
+            "status": "running"
+        })
+
+        response = client.post("/api/v1/bot/start")
+        assert response.status_code == 200
+        assert response.json()["success"] is True
+        assert mock_manager.start_bot.await_count == 1
+        assert mock_manager.start_bot.await_args.kwargs["api_token"] == "fake_key_12345"
 
 @pytest.mark.asyncio
 async def test_bot_stop(mock_auth):
@@ -183,6 +208,21 @@ def test_config_update(mock_auth):
         assert response.status_code == 200
         assert response.json()["success"] is True
         assert "stake_amount" in response.json()["updated_fields"]
+
+
+def test_config_update_encrypts_deriv_api_key(mock_auth):
+    with patch("app.api.config.supabase") as mock_supabase, \
+         patch("app.api.config.cache") as mock_cache:
+
+        mock_supabase.table.return_value.update.return_value.eq.return_value.execute.return_value = MagicMock()
+
+        updates = {"deriv_api_key": "secret_key_1234"}
+        response = client.put("/api/v1/config/update", json=updates)
+
+        assert response.status_code == 200
+        payload = mock_supabase.table.return_value.update.call_args.args[0]
+        assert payload["deriv_api_key"].startswith("enc:v1:")
+        assert payload["deriv_api_key"] != "secret_key_1234"
 
 # --- MONITOR API TESTS ---
 

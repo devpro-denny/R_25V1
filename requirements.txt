@@ -45,6 +45,9 @@ PyJWT>=2.8.0
 # Async support
 aiofiles==25.1.0
 
+# Encryption
+cryptography>=44.0.0
+
 # Supabase
 supabase==2.6.0
 redis>=4.0.0

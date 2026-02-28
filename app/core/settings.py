@@ -36,6 +36,9 @@ class Settings(BaseSettings):
     SUPABASE_URL: str = Field(..., description="Supabase Project URL")
     SUPABASE_SERVICE_ROLE_KEY: str = Field(..., description="Supabase Service Role Key (for Admin actions)")
     SUPABASE_ANON_KEY: Optional[str] = Field(None, description="Supabase Anon Key (optional, for client-side)")
+    DERIV_API_KEY_ENCRYPTION_SECRET: str = Field(
+        ..., description="Secret used to encrypt Deriv API keys before Supabase storage"
+    )
 
     # Authentication Settings
     ENABLE_AUTHENTICATION: bool = os.getenv("ENABLE_AUTHENTICATION", "true").lower() == "true"
@@ -293,6 +296,7 @@ class Settings(BaseSettings):
         sensitive_fields = [
             "SUPABASE_SERVICE_ROLE_KEY",
             "SUPABASE_ANON_KEY",
+            "DERIV_API_KEY_ENCRYPTION_SECRET",
             "API_KEYS",
             "DATABASE_URL",
             "REDIS_PASSWORD"
