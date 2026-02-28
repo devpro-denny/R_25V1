@@ -6,6 +6,7 @@ Sends trade notifications via Telegram
 
 import os
 import asyncio
+import re
 from typing import Dict, Optional
 from datetime import datetime
 from telegram import Bot
@@ -107,7 +108,67 @@ class TelegramNotifier:
         normalized_score = max(0, min(score, max_score))
         filled = int((normalized_score / max_score) * 5) # 5 bars total
         empty = 5 - filled
-        return "â–®" * filled + "â–¯" * empty
+        return "▮" * filled + "▯" * empty
+
+    @staticmethod
+    def _repair_mojibake_text(text: str) -> str:
+        """
+        Repair common UTF-8 -> cp1252/latin1 mojibake sequences in message text.
+        Handles mixed strings (valid emoji + corrupted tokens) by repairing
+        either the whole message or individual tokens.
+        """
+        if not isinstance(text, str) or not text:
+            return text
+
+        markers = ("Ã", "Â", "â", "ð", "ï", "Å")
+
+        def marker_count(value: str) -> int:
+            return sum(value.count(m) for m in markers)
+
+        def repair_chunk(chunk: str) -> str:
+            repaired = chunk
+            for _ in range(3):
+                base_score = marker_count(repaired)
+                if base_score == 0:
+                    break
+
+                best_value = repaired
+                best_score = base_score
+                for enc in ("cp1252", "latin1"):
+                    try:
+                        candidate = repaired.encode(enc).decode("utf-8")
+                    except UnicodeError:
+                        continue
+
+                    candidate_score = marker_count(candidate)
+                    if candidate != repaired and candidate_score < best_score:
+                        best_value = candidate
+                        best_score = candidate_score
+
+                if best_value == repaired:
+                    break
+                repaired = best_value
+            return repaired
+
+        repaired_full = repair_chunk(text)
+        if repaired_full != text:
+            return repaired_full
+
+        # Whole-string repair can fail when a message mixes valid emoji with
+        # corrupted tokens. Repair non-whitespace chunks independently.
+        parts = re.split(r"(\s+)", text)
+        repaired_parts = []
+        changed = False
+        for part in parts:
+            if not part or part.isspace():
+                repaired_parts.append(part)
+                continue
+            repaired_part = repair_chunk(part)
+            if repaired_part != part:
+                changed = True
+            repaired_parts.append(repaired_part)
+
+        return "".join(repaired_parts) if changed else text
 
     @staticmethod
     def _to_float(value, default: float = 0.0) -> float:
@@ -240,6 +301,9 @@ class TelegramNotifier:
         """
         if not self.enabled:
             return False
+
+        # Normalize corrupted emoji/glyph sequences before sending to Telegram.
+        message = self._repair_mojibake_text(message)
         
         for attempt in range(retries):
             try:

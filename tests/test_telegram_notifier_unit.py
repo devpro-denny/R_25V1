@@ -86,3 +86,35 @@ async def test_notify_bot_started_uses_clean_unicode(mock_bot):
         assert "ðŸ" not in sent
         assert "â€¢" not in sent
         assert "â”" not in sent
+
+
+def test_repair_mojibake_text_handles_mixed_tokens(mock_bot):
+    with patch.dict("os.environ", {"TELEGRAM_BOT_TOKEN": "test_token", "TELEGRAM_CHAT_ID": "test_chat"}):
+        notifier = TelegramNotifier()
+        mixed = "🚀 Strength: â–®â–®â–®â–¯â–¯"
+        repaired = notifier._repair_mojibake_text(mixed)
+
+        assert repaired == "🚀 Strength: ▮▮▮▯▯"
+        assert "â–" not in repaired
+
+
+@pytest.mark.asyncio
+async def test_notify_signal_strength_bar_uses_clean_blocks(mock_bot):
+    with patch.dict("os.environ", {"TELEGRAM_BOT_TOKEN": "test_token", "TELEGRAM_CHAT_ID": "test_chat"}):
+        notifier = TelegramNotifier()
+        notifier.bot.send_message = AsyncMock()
+
+        await notifier.notify_signal(
+            {
+                "signal": "DOWN",
+                "score": 7.0,
+                "symbol": "R_75",
+                "strategy_type": "Scalping",
+                "user_id": "user-1",
+                "details": {"rsi": 41.0, "adx": 28.5},
+            }
+        )
+
+        sent = notifier.bot.send_message.call_args.kwargs["text"]
+        assert "Strength: ▮▮▮▯▯ (7.0)" in sent
+        assert "â–" not in sent
