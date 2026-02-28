@@ -288,6 +288,7 @@ class ScalpingStrategy(BaseStrategy):
             "take_profit": tp_price,
             "stop_loss": sl_price,
             "risk_reward_ratio": rr_ratio,
+            "min_rr_required": scalping_config.SCALPING_MIN_RR_RATIO,
             "score": 7.0,
             "confidence": 7.0,
             "entry_price": current_price,
