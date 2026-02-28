@@ -100,3 +100,4 @@ def test_external_analyze_success_up(monkeypatch):
     assert "take_profit" in result
     assert "stop_loss" in result
     assert result["risk_reward_ratio"] >= 1.5
+    assert result["min_rr_required"] == scalping_pkg.config.SCALPING_MIN_RR_RATIO
