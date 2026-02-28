@@ -350,6 +350,7 @@ class ScalpingRiskManager(BaseRiskManager):
 
         if rr_ratio is not None:
             default_min_rr = float(getattr(scalping_config, "SCALPING_MIN_RR_RATIO", 1.5))
+            rr_tolerance = float(getattr(scalping_config, "SCALPING_RR_TOLERANCE", 1e-6) or 0.0)
             try:
                 min_rr_required = float(
                     signal_dict.get(
@@ -360,7 +361,7 @@ class ScalpingRiskManager(BaseRiskManager):
                 )
             except Exception:
                 min_rr_required = default_min_rr
-            if rr_ratio < min_rr_required:
+            if rr_ratio + rr_tolerance < min_rr_required:
                 return (
                     False,
                     f"RR gate blocked: {rr_ratio:.2f} < {min_rr_required:.2f}",

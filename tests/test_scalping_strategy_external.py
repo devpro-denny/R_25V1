@@ -101,3 +101,37 @@ def test_external_analyze_success_up(monkeypatch):
     assert "stop_loss" in result
     assert result["risk_reward_ratio"] >= 1.5
     assert result["min_rr_required"] == scalping_pkg.config.SCALPING_MIN_RR_RATIO
+
+
+def test_external_analyze_allows_rr_within_tolerance(monkeypatch):
+    strategy = ScalpingStrategy()
+    data = _mock_ohlc()
+
+    data.iloc[-1, data.columns.get_loc("open")] = 100.0
+    data.iloc[-1, data.columns.get_loc("close")] = 100.8
+    data.iloc[-1, data.columns.get_loc("high")] = 101.0
+    data.iloc[-1, data.columns.get_loc("low")] = 99.6
+
+    monkeypatch.setattr(
+        scalping_pkg,
+        "calculate_rsi",
+        lambda _df, period=14: pd.Series([60.0] * len(data), index=data.index),
+    )
+    monkeypatch.setattr(
+        scalping_pkg,
+        "calculate_adx",
+        lambda _df, period=14: pd.Series([25.0] * len(data), index=data.index),
+    )
+    monkeypatch.setattr(scalping_pkg.config, "SCALPING_SL_ATR_MULTIPLIER", 2.0)
+    monkeypatch.setattr(scalping_pkg.config, "SCALPING_TP_ATR_MULTIPLIER", 2.999999)
+    monkeypatch.setattr(scalping_pkg.config, "SCALPING_MIN_RR_RATIO", 1.5)
+    monkeypatch.setattr(scalping_pkg.config, "SCALPING_RR_TOLERANCE", 1e-6)
+
+    with patch.object(ScalpingStrategy, "_determine_trend", side_effect=["UP", "UP"]), patch.object(
+        ScalpingStrategy, "_calculate_atr", return_value=0.5
+    ), patch.object(ScalpingStrategy, "_is_parabolic_spike", return_value=False):
+        result = strategy.analyze(data_1h=data, data_5m=data, data_1m=data, symbol="R_50")
+
+    assert result["can_trade"] is True
+    assert result["risk_reward_ratio"] < 1.5
+    assert result["risk_reward_ratio"] + scalping_pkg.config.SCALPING_RR_TOLERANCE >= 1.5
