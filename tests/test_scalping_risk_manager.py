@@ -226,6 +226,8 @@ def test_scalping_rm_stagnation_exit(srm):
 
     with patch("scalping_config.SCALPING_STAGNATION_EXIT_TIME", 150), patch(
         "scalping_config.SCALPING_STAGNATION_LOSS_PCT", 10.0
+    ), patch(
+        "scalping_config.SCALPING_SYMBOL_STAGNATION_OVERRIDES", {}
     ):
         should_exit, reason = srm.check_stagnation_exit(trade_info, -2.0)
         assert should_exit is True
@@ -392,6 +394,8 @@ def test_stagnation_exit_honors_symbol_override_timeout(srm):
     with patch("scalping_config.SCALPING_STAGNATION_EXIT_TIME", 120), patch(
         "scalping_config.SCALPING_SYMBOL_STAGNATION_OVERRIDES",
         {"stpRNG5": 150, "R_75": 130},
+    ), patch(
+        "scalping_config.SCALPING_STAGNATION_LOSS_PCT", 5.0
     ):
         stp_trade = {
             "open_time": datetime.now() - timedelta(seconds=140),
