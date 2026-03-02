@@ -586,13 +586,6 @@ class TelegramNotifier:
 
         symbol = trade_info.get("symbol", "UNKNOWN")
         user_id = self._extract_user_id(trade_info, result)
-        execution_reason = self._extract_execution_reason(
-            trade_info,
-            "Signal conditions matched and risk gate approved",
-        )
-        risk_summary = self._format_risk_summary(trade_info, strategy_name)
-        reason_short = self._compact_text(execution_reason, 90)
-        risk_short = self._compact_text(risk_summary, 90)
 
         stake = trade_info.get("stake")
         if stake is None:
@@ -620,15 +613,17 @@ class TelegramNotifier:
         elif result.get("exit_reason") == "stagnation_exit":
             close_reason = "stagnation_exit"
 
+        close_reason_label = str(close_reason).replace("_", " ").upper()
+        duration = trade_info.get("duration", result.get("duration", "N/A"))
+
         message = (
             f"{prefix}{badge} [CLOSED] <b>TRADE CLOSED ({outcome}): {symbol}</b>\n"
             f"Strategy: <b>{strategy_name}</b> | User: <code>{user_id}</code>\n"
             f"Net Result: <b>{format_currency(profit)}</b> | ROI: {roi:+.1f}%\n"
-            f"Direction: {trade_info.get('direction', 'UNKNOWN')} | Exit: {self._to_float(result.get('current_price', 0), 0.0):.2f}\n"
-            f"Close Reason: {str(close_reason).upper()}\n"
-            f"Risk: {risk_short}\n"
-            f"Reason: {reason_short}\n"
-            f"Duration: {trade_info.get('duration', result.get('duration', 'N/A'))}s | Time: {datetime.now().strftime('%H:%M:%S')}"
+            f"Direction: {trade_info.get('direction', 'UNKNOWN')}\n"
+            f"Close Reason: {close_reason_label}\n"
+            f"Duration: {duration}s\n"
+            f"ID: <code>{contract_id or 'N/A'}</code> | Time: {datetime.now().strftime('%H:%M:%S')}"
         )
         await self.send_message(message)
     async def notify_daily_summary(self, stats: Dict):
