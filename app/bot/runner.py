@@ -1220,23 +1220,21 @@ class BotRunner:
                 )
                 return False
                 
-            # Notify Telegram about signal (Moved here to ensure all checks passed)
-            try:
-                passed_checks = signal.get("details", {}).get("passed_checks", [])
-                if passed_checks:
-                    execution_reason = f"Checks passed: {', '.join(str(item) for item in passed_checks)}"
-                else:
-                    execution_reason = "All strategy checks aligned and risk gate passed"
-                signal_with_symbol = signal.copy()
-                signal_with_symbol['symbol'] = symbol
-                signal_with_symbol['stake'] = stake
-                signal_with_symbol['multiplier'] = multiplier
-                signal_with_symbol['strategy_type'] = self._get_strategy_name()
-                signal_with_symbol['user_id'] = self.account_id
-                signal_with_symbol['execution_reason'] = execution_reason
-                await self.telegram_bridge.notify_signal(signal_with_symbol)
-            except:
-                pass
+            # Build execution payload once.
+            # Do not send pre-execution signal alerts here because final
+            # proposal-spot RR checks can still reject the entry.
+            passed_checks = signal.get("details", {}).get("passed_checks", [])
+            if passed_checks:
+                execution_reason = f"Checks passed: {', '.join(str(item) for item in passed_checks)}"
+            else:
+                execution_reason = "All strategy checks aligned and risk gate passed"
+            signal_with_symbol = signal.copy()
+            signal_with_symbol['symbol'] = symbol
+            signal_with_symbol['stake'] = stake
+            signal_with_symbol['multiplier'] = multiplier
+            signal_with_symbol['strategy_type'] = self._get_strategy_name()
+            signal_with_symbol['user_id'] = self.account_id
+            signal_with_symbol['execution_reason'] = execution_reason
             
             # Execute trade!
             self._cycle_step(
@@ -1260,11 +1258,6 @@ class BotRunner:
             )
             
             try:
-                # Add symbol to signal data
-                signal_with_symbol = signal.copy()
-                signal_with_symbol['symbol'] = symbol
-                signal_with_symbol['stake'] = stake
-                
                 # Execute trade using TradeEngine
                 result = await self.trade_engine.execute_trade(
                     signal_with_symbol, 
