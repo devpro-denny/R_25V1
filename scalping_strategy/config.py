@@ -124,7 +124,7 @@ SCALPING_R50_DOWN_MIN_CONFIDENCE = 9.0
 # Directional safety gate from the final improvement report:
 # suspend DOWN signals everywhere except explicit allowlist symbols.
 SCALPING_DOWN_DIRECTION_FILTER_ENABLED = True
-SCALPING_DOWN_ALLOWED_SYMBOLS = {"R_75", "stpRNG5"}
+SCALPING_DOWN_ALLOWED_SYMBOLS = {"R_75", "stpRNG5", "stpRNG4"}
 
 # Per-symbol ADX minimum overrides (directional). If no symbol override exists,
 # the global SCALPING_ADX_THRESHOLD is used.
@@ -172,14 +172,14 @@ SCALPING_RUNAWAY_TRADE_COUNT = 10
 # ==================== STAGNATION EXIT ====================
 # Final report recommendation (Feb 25-27, 2026):
 # cut stagnation losers earlier without touching winners (which are positive early).
-SCALPING_STAGNATION_EXIT_TIME = 300  # seconds
-SCALPING_STAGNATION_LOSS_PCT = 10.0  # percentage of stake
+SCALPING_STAGNATION_EXIT_TIME = 120  # seconds
+SCALPING_STAGNATION_LOSS_PCT = 4  # percentage of stake
 SCALPING_STAGNATION_RR_GRACE_THRESHOLD = 2.5
 SCALPING_STAGNATION_EXTRA_TIME = 0  # disabled by default for strict 75s/3.0% behavior
 
 SCALPING_SYMBOL_STAGNATION_OVERRIDES = {
-    "stpRNG5": 220,
-    "R_75": 220,
+    "stpRNG5": 180,
+    "R_75": 150,
 }
 
 # ==================== TRAILING PROFIT ====================
