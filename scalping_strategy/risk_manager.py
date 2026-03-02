@@ -954,19 +954,26 @@ class ScalpingRiskManager(BaseRiskManager):
         if not contract_id or stake <= 0:
             return False, "", False
 
+        now = datetime.now()
         profit_pct = (current_pnl / stake) * 100
         state = self._trailing_state.get(contract_id)
+        activation_pct = self._get_trail_activation_pct(symbol)
 
-        if profit_pct >= scalping_config.SCALPING_TRAIL_ACTIVATION_PCT and state is None:
+        if profit_pct >= activation_pct and state is None:
             self._trailing_state[contract_id] = {
                 "highest_profit_pct": profit_pct,
                 "trailing_active": True,
+                "activated_at": now,
+                "breach_count": 0,
+                "symbol": symbol,
             }
-            trail_distance = self._get_trail_distance(profit_pct)
+            trail_distance = self._get_trail_distance(profit_pct, symbol)
             trail_floor = profit_pct - trail_distance
             logger.info(
-                "[SCALP] Trailing activated at %.1f%%, distance %.1f%%, floor %.1f%%",
+                "[SCALP] Trailing activated %s at %.1f%% (activation %.1f%%), distance %.1f%%, floor %.1f%%",
+                symbol,
                 profit_pct,
+                activation_pct,
                 trail_distance,
                 trail_floor,
             )
@@ -977,13 +984,66 @@ class ScalpingRiskManager(BaseRiskManager):
 
         if profit_pct > state["highest_profit_pct"]:
             state["highest_profit_pct"] = profit_pct
+            state["breach_count"] = 0
 
-        trail_distance = self._get_trail_distance(state["highest_profit_pct"])
+        trail_symbol = str(state.get("symbol") or symbol)
+        breakeven_floor = self._get_trail_breakeven_floor_pct(trail_symbol)
+        if profit_pct <= breakeven_floor:
+            logger.warning(
+                (
+                    "[SCALP] Trailing breakeven EXIT %s: profit %.1f%% <= floor %.1f%% "
+                    "(peak %.1f%%)"
+                ),
+                trail_symbol,
+                profit_pct,
+                breakeven_floor,
+                state["highest_profit_pct"],
+            )
+            return True, "trailing_breakeven_exit", False
+
+        trail_distance = self._get_trail_distance(state["highest_profit_pct"], trail_symbol)
         trail_floor = state["highest_profit_pct"] - trail_distance
+        min_active_seconds = self._get_trail_min_active_seconds(trail_symbol)
+        breach_confirmations = self._get_trail_breach_confirmations(trail_symbol)
+
         if profit_pct < trail_floor:
+            state["breach_count"] = int(state.get("breach_count", 0)) + 1
+            activated_at = state.get("activated_at")
+            active_seconds = 0.0
+            if isinstance(activated_at, datetime):
+                active_seconds = max(0.0, (now - activated_at).total_seconds())
+
+            if active_seconds < min_active_seconds:
+                logger.info(
+                    (
+                        "[SCALP] Trailing hold %s: floor breach %.1f%% < %.1f%% "
+                        "ignored during warmup (%ss/%ss)"
+                    ),
+                    trail_symbol,
+                    profit_pct,
+                    trail_floor,
+                    int(active_seconds),
+                    min_active_seconds,
+                )
+                return False, "", False
+
+            if state["breach_count"] < breach_confirmations:
+                logger.info(
+                    (
+                        "[SCALP] Trailing hold %s: floor breach confirm %s/%s "
+                        "(profit %.1f%%, floor %.1f%%)"
+                    ),
+                    trail_symbol,
+                    state["breach_count"],
+                    breach_confirmations,
+                    profit_pct,
+                    trail_floor,
+                )
+                return False, "", False
+
             logger.warning(
                 "[SCALP] Trailing EXIT %s: profit %.1f%% (peak %.1f%%, distance %.1f%%, floor %.1f%%)",
-                symbol,
+                trail_symbol,
                 profit_pct,
                 state["highest_profit_pct"],
                 trail_distance,
@@ -991,21 +1051,80 @@ class ScalpingRiskManager(BaseRiskManager):
             )
             return True, "trailing_profit_exit", False
 
+        state["breach_count"] = 0
         logger.debug(
-            "[SCALP] Trailing %s: profit %.1f%% (peak %.1f%%, distance %.1f%%, floor %.1f%%)",
-            symbol,
+            (
+                "[SCALP] Trailing %s: profit %.1f%% (peak %.1f%%, distance %.1f%%, floor %.1f%%, "
+                "breach_count %s)"
+            ),
+            trail_symbol,
             profit_pct,
             state["highest_profit_pct"],
             trail_distance,
             trail_floor,
+            state["breach_count"],
         )
         return False, "", False
 
-    def _get_trail_distance(self, profit_pct: float) -> float:
-        for min_pct, distance in scalping_config.SCALPING_TRAIL_TIERS:
+    def _get_trail_overrides(self, symbol: str) -> Dict:
+        overrides = getattr(scalping_config, "SCALPING_SYMBOL_TRAIL_OVERRIDES", {}) or {}
+        if not symbol:
+            return {}
+        candidate = overrides.get(symbol, {})
+        return candidate if isinstance(candidate, dict) else {}
+
+    def _get_trail_activation_pct(self, symbol: str) -> float:
+        symbol_overrides = self._get_trail_overrides(symbol)
+        return float(
+            symbol_overrides.get(
+                "activation_pct",
+                getattr(scalping_config, "SCALPING_TRAIL_ACTIVATION_PCT", 6.0),
+            )
+        )
+
+    def _get_trail_breach_confirmations(self, symbol: str) -> int:
+        symbol_overrides = self._get_trail_overrides(symbol)
+        base = symbol_overrides.get(
+            "breach_confirmations",
+            getattr(scalping_config, "SCALPING_TRAIL_BREACH_CONFIRMATIONS", 1),
+        )
+        try:
+            return max(int(base), 1)
+        except Exception:
+            return 1
+
+    def _get_trail_min_active_seconds(self, symbol: str) -> int:
+        symbol_overrides = self._get_trail_overrides(symbol)
+        base = symbol_overrides.get(
+            "min_active_seconds",
+            getattr(scalping_config, "SCALPING_TRAIL_MIN_ACTIVE_SECONDS", 0),
+        )
+        try:
+            return max(int(base), 0)
+        except Exception:
+            return 0
+
+    def _get_trail_breakeven_floor_pct(self, symbol: str) -> float:
+        symbol_overrides = self._get_trail_overrides(symbol)
+        base = symbol_overrides.get(
+            "breakeven_floor_pct",
+            getattr(scalping_config, "SCALPING_TRAIL_BREAKEVEN_FLOOR_PCT", 0.0),
+        )
+        try:
+            return float(base)
+        except Exception:
+            return 0.0
+
+    def _get_trail_distance(self, profit_pct: float, symbol: str) -> float:
+        symbol_overrides = self._get_trail_overrides(symbol)
+        tiers = symbol_overrides.get("tiers", scalping_config.SCALPING_TRAIL_TIERS)
+        if not isinstance(tiers, list) or not tiers:
+            tiers = list(getattr(scalping_config, "SCALPING_TRAIL_TIERS", []) or [])
+
+        for min_pct, distance in tiers:
             if profit_pct >= min_pct:
                 return distance
-        return scalping_config.SCALPING_TRAIL_TIERS[-1][1]
+        return tiers[-1][1]
 
     def reset_daily_stats(self) -> None:
         """

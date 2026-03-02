@@ -794,7 +794,7 @@ class BotRunner:
                     
                     # If actively monitoring a trade, check more frequently
                     if self.risk_manager.active_trades:
-                        wait_time = max(cooldown, 10)  # Check every 10s when trade active
+                        wait_time = max(cooldown, 3)  # Check every 3s when trade active
                         logger.debug(f"[{self._get_strategy_name()}][SYSTEM] \u23F1\ufe0f Active trade monitor in {wait_time}s")
                     else:
                         wait_time = max(cooldown, 30)  # Standard 30s cycle when scanning

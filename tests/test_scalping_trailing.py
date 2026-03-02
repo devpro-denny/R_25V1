@@ -4,6 +4,7 @@ Tests for ScalpingRiskManager.check_trailing_profit()
 import pytest
 import sys
 import os
+from datetime import datetime, timedelta
 
 # Ensure project root is on sys.path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -63,7 +64,7 @@ class TestTrailingProfitBelowActivation:
 
 
 class TestTrailingProfitActivation:
-    """Trailing activates at 8% but does not close immediately."""
+    """Trailing activates above threshold but does not close immediately."""
     
     def test_activation_at_threshold(self, rm):
         # 12% of $50 = $6
@@ -95,7 +96,7 @@ class TestTrailingProfitRisingProfit:
     """Highest profit should ratchet upward."""
     
     def test_profit_ratchets_up(self, rm):
-        # Activate at 8%
+        # Activate above threshold
         rm.check_trailing_profit(_info(), current_pnl=4.0)  # 8%
         # Rise to 12%
         rm.check_trailing_profit(_info(), current_pnl=6.0)  # 12%
@@ -221,3 +222,54 @@ class TestTrailingProfitEdgeCases:
         # Still trailing, not closed
         should_close, _, _ = rm.check_trailing_profit(_info(), current_pnl=49.0)  # 98%
         assert should_close is False  # floor is 100-3=97%, 98 > 97
+
+
+class TestSymbolSpecificTrailingOverrides:
+    """Symbol overrides should apply anti-whipsaw logic for noisy assets."""
+
+    def test_1hz25v_requires_breach_confirmation(self, rm):
+        info = _info(symbol='1HZ25V')
+
+        # Activate at symbol-specific 6% threshold.
+        rm.check_trailing_profit(info, current_pnl=5.0)    # 10%
+        rm.check_trailing_profit(info, current_pnl=10.0)   # 20% peak (floor 14% with 6% distance)
+
+        # Expire warmup so only breach-confirmation logic is tested.
+        rm._trailing_state['C001']['activated_at'] = datetime.now() - timedelta(seconds=31)
+
+        # First breach below floor should not close (needs 2 confirmations).
+        should_close, _, _ = rm.check_trailing_profit(info, current_pnl=6.5)  # 13%
+        assert should_close is False
+
+        # Second consecutive breach closes.
+        should_close, reason, _ = rm.check_trailing_profit(info, current_pnl=6.5)  # 13%
+        assert should_close is True
+        assert reason == 'trailing_profit_exit'
+
+    def test_1hz25v_warmup_blocks_early_trailing_exit(self, rm):
+        info = _info(symbol='1HZ25V')
+
+        rm.check_trailing_profit(info, current_pnl=5.0)   # 10%
+        rm.check_trailing_profit(info, current_pnl=10.0)  # 20% peak
+
+        # During warmup (<30s), even repeated floor breaches should not close.
+        should_close_1, _, _ = rm.check_trailing_profit(info, current_pnl=6.5)  # 13%
+        should_close_2, _, _ = rm.check_trailing_profit(info, current_pnl=6.5)  # 13%
+        assert should_close_1 is False
+        assert should_close_2 is False
+
+
+class TestTrailingBreakevenFloor:
+    """After trailing activation, dropping to 0% or below should exit."""
+
+    def test_exit_at_zero_profit_after_activation(self, rm):
+        rm.check_trailing_profit(_info(), current_pnl=4.0)  # 8% -> activates
+        should_close, reason, _ = rm.check_trailing_profit(_info(), current_pnl=0.0)
+        assert should_close is True
+        assert reason == 'trailing_breakeven_exit'
+
+    def test_exit_when_profit_turns_negative_after_activation(self, rm):
+        rm.check_trailing_profit(_info(), current_pnl=4.0)  # 8% -> activates
+        should_close, reason, _ = rm.check_trailing_profit(_info(), current_pnl=-0.5)  # -1%
+        assert should_close is True
+        assert reason == 'trailing_breakeven_exit'
