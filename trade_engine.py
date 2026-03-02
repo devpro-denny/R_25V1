@@ -1080,25 +1080,46 @@ class TradeEngine:
             if min_rr_ratio is not None:
                 planned_entry = signal.get("entry_price")
                 planned_rr = self._compute_rr_ratio(planned_entry, tp_price, sl_price)
+                rr_to_check = signal_rr if signal_rr is not None else planned_rr
+                rr_source = "signal_rr" if signal_rr is not None else "planned_rr"
+                rr_tolerance_raw = signal.get("rr_tolerance")
+                if rr_tolerance_raw is None:
+                    rr_tolerance_raw = getattr(
+                        config,
+                        "SCALPING_RR_TOLERANCE",
+                        getattr(config, "RR_TOLERANCE", 1e-6),
+                    )
+                try:
+                    rr_tolerance = float(rr_tolerance_raw or 0.0)
+                except (TypeError, ValueError):
+                    rr_tolerance = 0.0
                 logger.info(
-                    "[RR_CHECK][%s] signal_rr=%s planned_rr=%s min_rr=%.2f entry=%s tp=%s sl=%s",
+                    "[RR_CHECK][%s] signal_rr=%s planned_rr=%s check_rr=%s source=%s min_rr=%.2f tol=%.4f entry=%s tp=%s sl=%s",
                     symbol,
                     f"{signal_rr:.2f}" if signal_rr is not None else "n/a",
                     f"{planned_rr:.2f}" if planned_rr is not None else "n/a",
+                    f"{rr_to_check:.2f}" if rr_to_check is not None else "n/a",
+                    rr_source,
                     min_rr_ratio,
+                    rr_tolerance,
                     planned_entry,
                     tp_price,
                     sl_price,
                 )
-                if planned_rr is not None and planned_rr < min_rr_ratio:
-                    self.last_execution_reason = "signal_rr_below_minimum"
-                    logger.warning(
-                        "🛑 Signal R:R %.2f below minimum %.2f for %s - blocking trade before execution",
-                        planned_rr,
-                        min_rr_ratio,
-                        symbol,
-                    )
-                    return None
+                if rr_to_check is not None:
+                    rr_below_with_tolerance = (rr_to_check + rr_tolerance) < min_rr_ratio
+                    # Guard equality-at-display precision (e.g., 1.499999 vs 1.500000).
+                    rr_below_at_display_precision = round(rr_to_check, 2) < round(min_rr_ratio, 2)
+                    if rr_below_with_tolerance and rr_below_at_display_precision:
+                        self.last_execution_reason = "signal_rr_below_minimum"
+                        logger.warning(
+                            "🛑 Signal R:R %.4f below minimum %.4f for %s (tol=%.4f) - blocking trade before execution",
+                            rr_to_check,
+                            min_rr_ratio,
+                            symbol,
+                            rr_tolerance,
+                        )
+                        return None
             
             # Open trade on specified asset
             # CRITICAL: Use stake from signal if available (passed from BotRunner)
@@ -1200,4 +1221,3 @@ class TradeEngine:
                 pass
             
             return None
-

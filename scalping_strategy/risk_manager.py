@@ -553,10 +553,13 @@ class ScalpingRiskManager(BaseRiskManager):
                 )
             except Exception:
                 min_rr_required = default_min_rr
-            if rr_ratio + rr_tolerance < min_rr_required:
+            rr_below_with_tolerance = (rr_ratio + rr_tolerance) < min_rr_required
+            # Guard equality-at-display precision (e.g., 1.499999 vs 1.500000).
+            rr_below_at_display_precision = round(rr_ratio, 2) < round(min_rr_required, 2)
+            if rr_below_with_tolerance and rr_below_at_display_precision:
                 return (
                     False,
-                    f"RR gate blocked: {rr_ratio:.2f} < {min_rr_required:.2f}",
+                    f"RR gate blocked: {rr_ratio:.4f} < {min_rr_required:.4f} (tol={rr_tolerance:.4f})",
                 )
 
         direction = str(signal_dict.get("signal", "")).upper()
