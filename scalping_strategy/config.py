@@ -5,8 +5,8 @@ All scalping-specific constants and thresholds
 
 # Dedicated symbol universe for scalping (kept local for independence).
 # 1HZ100V and 1HZ30V are intentionally blocked and must never be traded.
-BLOCKED_SYMBOLS = {"1HZ100V", "1HZ30V", "R_100", "R_25", "1HZ50V", "stpRNG4"}
-SYMBOLS = ["R_75", "1HZ25V", "1HZ75V", "1HZ90V", "stpRNG5"]
+BLOCKED_SYMBOLS = {"1HZ100V", "1HZ30V", "R_100", "R_25", "1HZ50V"}
+SYMBOLS = ["R_75", "1HZ25V", "1HZ75V", "1HZ90V", "stpRNG5", "stpRNG4"]
 
 # Empty rollout list means: trade full scalping symbol universe.
 SCALPING_ROLLOUT_SYMBOLS = []
@@ -80,8 +80,9 @@ ASSET_CONFIG = {
         "multiplier": 200,
         "description": "Step Index 400",
         "tick_size": 0.1,
-        "movement_threshold_pct": 0.7,
-        "entry_distance_pct": 0.7,
+        # Strict entry profile: tolerate less short-term displacement.
+        "movement_threshold_pct": 0.45,
+        "entry_distance_pct": 0.45,
     },
 }
 
@@ -91,7 +92,7 @@ ASSET_CONFIG = {
 SCALPING_TIMEFRAMES = ["1h", "5m", "1m"]
 SCALPING_ADX_THRESHOLD = 25
 SCALPING_ADX_MAX_THRESHOLD = 34
-SCALPING_STPRNG4_MIN_ADX = 25
+SCALPING_STPRNG4_MIN_ADX = 35
 SCALPING_RSI_UP_MIN = 58
 SCALPING_RSI_UP_MAX = 72
 SCALPING_RSI_DOWN_MIN = 28
@@ -123,7 +124,7 @@ SCALPING_R50_DOWN_MIN_CONFIDENCE = 9.0
 # Directional safety gate from the final improvement report:
 # suspend DOWN signals everywhere except explicit allowlist symbols.
 SCALPING_DOWN_DIRECTION_FILTER_ENABLED = True
-SCALPING_DOWN_ALLOWED_SYMBOLS = {"R_75"}
+SCALPING_DOWN_ALLOWED_SYMBOLS = {"R_75", "stpRNG5"}
 
 # Per-symbol ADX minimum overrides (directional). If no symbol override exists,
 # the global SCALPING_ADX_THRESHOLD is used.
@@ -131,6 +132,8 @@ SCALPING_SYMBOL_ADX_OVERRIDES = {
     "1HZ75V": {"DOWN": 50, "UP": 25},
     "1HZ25V": {"DOWN": 25, "UP": 25},
     "1HZ90V": {"UP": 20},
+    # Strict stpRNG4 trend-quality requirement.
+    "stpRNG4": {"UP": 35, "DOWN": 40},
 }
 
 # ==================== SCALPING RISK MANAGEMENT ====================
