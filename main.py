@@ -333,13 +333,6 @@ class TradingBot:
             
             logger.info(f"🎯 Selected {symbol} for trading (strongest signal)")
             
-            # Notify signal detected
-            if TELEGRAM_ENABLED:
-                try:
-                    await notifier.notify_signal(signal)
-                except Exception as e:
-                    logger.error(f"❌ Telegram notification failed: {e}")
-            
             # Validate trade parameters
             if config.USE_TOPDOWN_STRATEGY:
                 # Top-Down: TP/SL come from strategy
