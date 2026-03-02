@@ -23,7 +23,7 @@ def test_external_strategy_metadata():
     strategy = ScalpingStrategy()
     assert strategy.get_strategy_name() == "Scalping"
     assert strategy.get_required_timeframes() == ["1h", "5m", "1m"]
-    assert "R_50" in strategy.get_symbols()
+    assert "1HZ90V" in strategy.get_symbols()
 
 
 def test_external_analyze_missing_data():
@@ -63,7 +63,7 @@ def test_external_analyze_rejects_weak_adx(monkeypatch):
     )
 
     with patch.object(ScalpingStrategy, "_determine_trend", side_effect=["UP", "UP"]):
-        result = strategy.analyze(data_1h=data, data_5m=data, data_1m=data, symbol="R_50")
+        result = strategy.analyze(data_1h=data, data_5m=data, data_1m=data, symbol="1HZ90V")
 
     assert result["can_trade"] is False
     assert "Weak trend" in result["details"]["reason"]
@@ -93,7 +93,7 @@ def test_external_analyze_success_up(monkeypatch):
     with patch.object(ScalpingStrategy, "_determine_trend", side_effect=["UP", "UP"]), patch.object(
         ScalpingStrategy, "_calculate_atr", return_value=0.5
     ), patch.object(ScalpingStrategy, "_is_parabolic_spike", return_value=False):
-        result = strategy.analyze(data_1h=data, data_5m=data, data_1m=data, symbol="R_50")
+        result = strategy.analyze(data_1h=data, data_5m=data, data_1m=data, symbol="1HZ90V")
 
     assert result["can_trade"] is True
     assert result["signal"] == "UP"
@@ -130,8 +130,98 @@ def test_external_analyze_allows_rr_within_tolerance(monkeypatch):
     with patch.object(ScalpingStrategy, "_determine_trend", side_effect=["UP", "UP"]), patch.object(
         ScalpingStrategy, "_calculate_atr", return_value=0.5
     ), patch.object(ScalpingStrategy, "_is_parabolic_spike", return_value=False):
-        result = strategy.analyze(data_1h=data, data_5m=data, data_1m=data, symbol="R_50")
+        result = strategy.analyze(data_1h=data, data_5m=data, data_1m=data, symbol="1HZ90V")
 
     assert result["can_trade"] is True
     assert result["risk_reward_ratio"] < 1.5
     assert result["risk_reward_ratio"] + scalping_pkg.config.SCALPING_RR_TOLERANCE >= 1.5
+
+
+def test_external_analyze_applies_symbol_adx_override(monkeypatch):
+    strategy = ScalpingStrategy()
+    data = _mock_ohlc()
+
+    data.iloc[-1, data.columns.get_loc("open")] = 100.0
+    data.iloc[-1, data.columns.get_loc("close")] = 100.8
+
+    monkeypatch.setattr(
+        scalping_pkg,
+        "calculate_rsi",
+        lambda _df, period=14: pd.Series([60.0] * len(data), index=data.index),
+    )
+    monkeypatch.setattr(
+        scalping_pkg,
+        "calculate_adx",
+        lambda _df, period=14: pd.Series([21.0] * len(data), index=data.index),
+    )
+    monkeypatch.setattr(scalping_pkg.config, "SCALPING_ADX_THRESHOLD", 25)
+    monkeypatch.setattr(
+        scalping_pkg.config,
+        "SCALPING_SYMBOL_ADX_OVERRIDES",
+        {"1HZ90V": {"UP": 20}},
+    )
+
+    with patch.object(ScalpingStrategy, "_determine_trend", side_effect=["UP", "UP"]), patch.object(
+        ScalpingStrategy, "_calculate_atr", return_value=0.5
+    ), patch.object(ScalpingStrategy, "_is_parabolic_spike", return_value=False):
+        result = strategy.analyze(data_1h=data, data_5m=data, data_1m=data, symbol="1HZ90V")
+
+    assert result["can_trade"] is True
+    assert result["signal"] == "UP"
+
+
+def test_external_analyze_blocks_down_for_disallowed_symbol(monkeypatch):
+    strategy = ScalpingStrategy()
+    data = _mock_ohlc()
+
+    monkeypatch.setattr(
+        scalping_pkg,
+        "calculate_rsi",
+        lambda _df, period=14: pd.Series([35.0] * len(data), index=data.index),
+    )
+    monkeypatch.setattr(
+        scalping_pkg,
+        "calculate_adx",
+        lambda _df, period=14: pd.Series([40.0] * len(data), index=data.index),
+    )
+    monkeypatch.setattr(scalping_pkg.config, "SCALPING_DOWN_DIRECTION_FILTER_ENABLED", True)
+    monkeypatch.setattr(scalping_pkg.config, "SCALPING_DOWN_ALLOWED_SYMBOLS", {"R_75"})
+
+    with patch.object(ScalpingStrategy, "_determine_trend", side_effect=["DOWN", "DOWN"]):
+        result = strategy.analyze(data_1h=data, data_5m=data, data_1m=data, symbol="1HZ90V")
+
+    assert result["can_trade"] is False
+    assert "suspended" in result["details"]["reason"].lower()
+
+
+def test_external_analyze_defensive_rsi_revalidation(monkeypatch):
+    strategy = ScalpingStrategy()
+    data = _mock_ohlc()
+
+    data.iloc[-1, data.columns.get_loc("open")] = 100.0
+    data.iloc[-1, data.columns.get_loc("close")] = 100.8
+
+    monkeypatch.setattr(
+        scalping_pkg,
+        "calculate_rsi",
+        lambda _df, period=14: pd.Series([60.0] * len(data), index=data.index),
+    )
+    monkeypatch.setattr(
+        scalping_pkg,
+        "calculate_adx",
+        lambda _df, period=14: pd.Series([30.0] * len(data), index=data.index),
+    )
+    monkeypatch.setattr(scalping_pkg.config, "SCALPING_RSI_UP_MIN", 58)
+    monkeypatch.setattr(scalping_pkg.config, "SCALPING_RSI_UP_MAX", 72)
+
+    def _mutating_atr(*_args, **_kwargs):
+        monkeypatch.setattr(scalping_pkg.config, "SCALPING_RSI_UP_MIN", 65)
+        return 0.5
+
+    with patch.object(ScalpingStrategy, "_determine_trend", side_effect=["UP", "UP"]), patch.object(
+        ScalpingStrategy, "_calculate_atr", side_effect=_mutating_atr
+    ), patch.object(ScalpingStrategy, "_is_parabolic_spike", return_value=False):
+        result = strategy.analyze(data_1h=data, data_5m=data, data_1m=data, symbol="1HZ90V")
+
+    assert result["can_trade"] is False
+    assert "bypass" in result["details"]["reason"].lower()

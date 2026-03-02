@@ -125,6 +125,134 @@ BEGIN
   END IF;
 END $$;
 
+-- 6. Scalping runtime state persistence
+create table if not exists public.scalping_runtime_state (
+  user_id uuid primary key references auth.users (id) on delete cascade,
+  loss_cooldown_until timestamp with time zone null,
+  updated_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+
+create or replace function public.touch_scalping_runtime_state_updated_at()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  new.updated_at = timezone('utc'::text, now());
+  return new;
+end;
+$$;
+
+drop trigger if exists scalping_runtime_state_updated_at on public.scalping_runtime_state;
+create trigger scalping_runtime_state_updated_at
+  before update on public.scalping_runtime_state
+  for each row execute procedure public.touch_scalping_runtime_state_updated_at();
+
+alter table public.scalping_runtime_state enable row level security;
+
+drop policy if exists "Scalping runtime state visible to owner and admins" on public.scalping_runtime_state;
+drop policy if exists "Scalping runtime state insert owner or admin" on public.scalping_runtime_state;
+drop policy if exists "Scalping runtime state update owner or admin" on public.scalping_runtime_state;
+drop policy if exists "Scalping runtime state delete owner or admin" on public.scalping_runtime_state;
+
+create policy "Scalping runtime state visible to owner and admins"
+  on public.scalping_runtime_state for select
+  using (
+    (select auth.uid()) = user_id
+    or
+    (select public.is_admin())
+  );
+
+create policy "Scalping runtime state insert owner or admin"
+  on public.scalping_runtime_state for insert
+  with check (
+    (select auth.uid()) = user_id
+    or
+    (select public.is_admin())
+  );
+
+create policy "Scalping runtime state update owner or admin"
+  on public.scalping_runtime_state for update
+  using (
+    (select auth.uid()) = user_id
+    or
+    (select public.is_admin())
+  );
+
+create policy "Scalping runtime state delete owner or admin"
+  on public.scalping_runtime_state for delete
+  using (
+    (select auth.uid()) = user_id
+    or
+    (select public.is_admin())
+  );
+
+-- 7. Rise/Fall cross-process bot session lock table
+create table if not exists public.rf_bot_sessions (
+  user_id uuid primary key references auth.users (id) on delete cascade,
+  started_at timestamp with time zone not null default timezone('utc'::text, now()),
+  process_id bigint,
+  created_at timestamp with time zone not null default timezone('utc'::text, now()),
+  updated_at timestamp with time zone not null default timezone('utc'::text, now())
+);
+
+create or replace function public.touch_rf_bot_sessions_updated_at()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  new.updated_at = timezone('utc'::text, now());
+  return new;
+end;
+$$;
+
+drop trigger if exists rf_bot_sessions_updated_at on public.rf_bot_sessions;
+create trigger rf_bot_sessions_updated_at
+  before update on public.rf_bot_sessions
+  for each row execute procedure public.touch_rf_bot_sessions_updated_at();
+
+alter table public.rf_bot_sessions enable row level security;
+
+drop policy if exists "RF bot sessions visible to owner and admins" on public.rf_bot_sessions;
+drop policy if exists "RF bot sessions insert owner or admin" on public.rf_bot_sessions;
+drop policy if exists "RF bot sessions update owner or admin" on public.rf_bot_sessions;
+drop policy if exists "RF bot sessions delete owner or admin" on public.rf_bot_sessions;
+
+create policy "RF bot sessions visible to owner and admins"
+  on public.rf_bot_sessions for select
+  using (
+    (select auth.uid()) = user_id
+    or
+    (select public.is_admin())
+  );
+
+create policy "RF bot sessions insert owner or admin"
+  on public.rf_bot_sessions for insert
+  with check (
+    (select auth.uid()) = user_id
+    or
+    (select public.is_admin())
+  );
+
+create policy "RF bot sessions update owner or admin"
+  on public.rf_bot_sessions for update
+  using (
+    (select auth.uid()) = user_id
+    or
+    (select public.is_admin())
+  );
+
+create policy "RF bot sessions delete owner or admin"
+  on public.rf_bot_sessions for delete
+  using (
+    (select auth.uid()) = user_id
+    or
+    (select public.is_admin())
+  );
+
 -- 2. Backfill existing trades
 UPDATE public.trades 
 SET strategy_type = 'Conservative' 

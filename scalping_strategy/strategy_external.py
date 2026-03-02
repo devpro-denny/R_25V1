@@ -98,6 +98,28 @@ class ScalpingStrategy(BaseStrategy):
         direction = trend_1h  # "UP" or "DOWN"
         _step_log(2, f"Trend aligned: {direction}")
 
+        if (
+            direction == "DOWN"
+            and bool(getattr(scalping_config, "SCALPING_DOWN_DIRECTION_FILTER_ENABLED", False))
+        ):
+            allowed_down_symbols = set(
+                getattr(scalping_config, "SCALPING_DOWN_ALLOWED_SYMBOLS", {"R_75"})
+            )
+            if symbol not in allowed_down_symbols:
+                _step_log(
+                    2,
+                    (
+                        f"DOWN direction suspended for {symbol} "
+                        f"(allowed: {sorted(allowed_down_symbols)})"
+                    ),
+                )
+                return {
+                    "can_trade": False,
+                    "details": {
+                        "reason": f"DOWN direction suspended for {symbol}",
+                    },
+                }
+
         # ------------------------------------------------------------------
         # STEP 3/9: RSI and ADX — load via package hook (current structure),
         # read from last *closed* candle (iloc[-2], current discipline).
@@ -133,24 +155,42 @@ class ScalpingStrategy(BaseStrategy):
         # ------------------------------------------------------------------
         # STEP 4/9: ADX threshold
         # ------------------------------------------------------------------
-        if adx_1m < scalping_config.SCALPING_ADX_THRESHOLD:
+        symbol_adx_overrides = getattr(scalping_config, "SCALPING_SYMBOL_ADX_OVERRIDES", {}) or {}
+        effective_adx_threshold = float(
+            symbol_adx_overrides.get(symbol, {}).get(
+                direction, scalping_config.SCALPING_ADX_THRESHOLD
+            )
+        )
+
+        if adx_1m < effective_adx_threshold:
             _step_log(
                 4,
-                f"Weak trend (ADX {adx_1m:.1f} < {scalping_config.SCALPING_ADX_THRESHOLD})",
+                f"Weak trend (ADX {adx_1m:.1f} < {effective_adx_threshold:.1f})",
             )
             return {
                 "can_trade": False,
                 "details": {
                     "reason": (
-                        f"Weak trend (ADX {adx_1m:.1f} < {scalping_config.SCALPING_ADX_THRESHOLD})"
+                        f"Weak trend (ADX {adx_1m:.1f} < {effective_adx_threshold:.1f})"
                     )
                 },
             }
-        _step_log(4, f"ADX gate passed ({adx_1m:.1f})")
+        _step_log(
+            4,
+            f"ADX gate passed ({adx_1m:.1f} >= {effective_adx_threshold:.1f})",
+        )
 
         # ------------------------------------------------------------------
         # STEP 5/9: RSI range validation
         # ------------------------------------------------------------------
+        _step_log(
+            5,
+            (
+                f"RSI check: {rsi_1m:.2f} | direction={direction} | "
+                f"UP=[{scalping_config.SCALPING_RSI_UP_MIN},{scalping_config.SCALPING_RSI_UP_MAX}] | "
+                f"DOWN=[{scalping_config.SCALPING_RSI_DOWN_MIN},{scalping_config.SCALPING_RSI_DOWN_MAX}]"
+            ),
+        )
         if direction == "UP":
             if not (scalping_config.SCALPING_RSI_UP_MIN <= rsi_1m <= scalping_config.SCALPING_RSI_UP_MAX):
                 _step_log(5, f"RSI {rsi_1m:.1f} not in UP range")
@@ -274,6 +314,23 @@ class ScalpingStrategy(BaseStrategy):
                     )
                 },
             }
+
+        if direction == "UP":
+            if not (scalping_config.SCALPING_RSI_UP_MIN <= rsi_1m <= scalping_config.SCALPING_RSI_UP_MAX):
+                _step_log(9, f"RSI gate bypass detected: {rsi_1m:.2f} not in UP range", level="error")
+                return {
+                    "can_trade": False,
+                    "details": {"reason": f"RSI gate bypass detected ({rsi_1m:.2f})"},
+                }
+        else:
+            if not (
+                scalping_config.SCALPING_RSI_DOWN_MIN <= rsi_1m <= scalping_config.SCALPING_RSI_DOWN_MAX
+            ):
+                _step_log(9, f"RSI gate bypass detected: {rsi_1m:.2f} not in DOWN range", level="error")
+                return {
+                    "can_trade": False,
+                    "details": {"reason": f"RSI gate bypass detected ({rsi_1m:.2f})"},
+                }
 
         _step_log(
             9,

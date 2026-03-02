@@ -203,7 +203,8 @@ class TestScalpingStrategyAnalyze:
             ScalpingStrategy, "_determine_trend", return_value="UP"
         ):
             mock_rsi.return_value = pd.Series([60.0] * 60)
-            mock_adx.return_value = pd.Series([30.0] * 57 + [30.0, 20.0, 20.0])
+            # Keep ADX above minimum threshold while forcing a steep negative slope.
+            mock_adx.return_value = pd.Series([30.0] * 57 + [33.0, 29.0, 29.0])
             result = strategy.analyze(data_1h=mock_ohlc, data_5m=mock_ohlc, data_1m=mock_ohlc)
             assert result["can_trade"] is False
             assert "ADX declining" in result["details"]["reason"]

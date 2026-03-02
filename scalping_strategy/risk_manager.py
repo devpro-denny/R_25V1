@@ -3,7 +3,7 @@ Scalping Risk Manager Implementation
 Independent risk management for scalping strategy with tighter limits.
 """
 
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 
 from base_risk_manager import BaseRiskManager
@@ -76,6 +76,22 @@ class ScalpingRiskManager(BaseRiskManager):
         self.symbol_consecutive_losses: Dict[str, int] = {}
         self.symbol_short_loss_events: Dict[str, List[datetime]] = {}
 
+        # Rolling regime guard (multi-day performance cooldown)
+        self.rolling_outcomes: List[Tuple[datetime, bool]] = []
+        self.performance_cooldown_until: datetime = datetime.min
+        self.performance_window_days = int(
+            getattr(scalping_config, "SCALPING_PERFORMANCE_WINDOW_DAYS", 3)
+        )
+        self.performance_min_trades = int(
+            getattr(scalping_config, "SCALPING_PERFORMANCE_MIN_TRADES", 10)
+        )
+        self.performance_min_win_rate_pct = float(
+            getattr(scalping_config, "SCALPING_PERFORMANCE_MIN_WIN_RATE_PCT", 35.0)
+        )
+        self.performance_cooldown_seconds = int(
+            getattr(scalping_config, "SCALPING_PERFORMANCE_COOLDOWN_SECONDS", 3 * 60 * 60)
+        )
+
         # Warning latches (avoid repeated warning spam)
         self._near_circuit_warning_emitted = False
         self._near_daily_loss_warning_emitted = False
@@ -96,25 +112,32 @@ class ScalpingRiskManager(BaseRiskManager):
         if not self.user_id:
             return
 
+        now = datetime.now()
         try:
-            from datetime import date
-
             from app.core.supabase import supabase
 
             today_start = datetime.combine(date.today(), datetime.min.time())
             result = (
                 supabase.table("trades")
-                .select("profit, status, created_at, symbol, signal")
+                .select("contract_id, profit, status, created_at, symbol, signal, exit_price")
                 .eq("user_id", self.user_id)
                 .gte("created_at", today_start.isoformat())
                 .execute()
             )
 
-            if not result.data:
-                logger.info("No trades today yet, starting fresh")
-                return
+            rows = list(result.data or [])
+            self._reconcile_stale_open_trades(supabase, rows)
 
-            rows = list(result.data)
+            reconcile_lookback_days = max(self.performance_window_days, 3)
+            reconcile_start = now - timedelta(days=reconcile_lookback_days)
+            reconcile_result = (
+                supabase.table("trades")
+                .select("contract_id, status, exit_price, profit")
+                .eq("user_id", self.user_id)
+                .gte("created_at", reconcile_start.isoformat())
+                .execute()
+            )
+            self._reconcile_stale_open_trades(supabase, list(reconcile_result.data or []))
             self.daily_trade_count = len(rows)
             self.daily_pnl = sum(float(t.get("profit", 0.0) or 0.0) for t in rows)
 
@@ -136,20 +159,173 @@ class ScalpingRiskManager(BaseRiskManager):
                 elif normalized == "win":
                     self.consecutive_losses = 0
 
+            self._restore_persisted_loss_cooldown(supabase, now)
+            self._seed_rolling_performance(supabase, now)
+            self._evaluate_performance_guard(now)
+
             # If we boot with an already-breached loss streak, immediately
             # re-engage the circuit breaker cooldown for this session.
-            if self.consecutive_losses >= self.max_consecutive_losses:
-                self._activate_global_loss_cooldown(datetime.now())
+            if (
+                self.loss_cooldown_until == datetime.min
+                and self.consecutive_losses >= self.max_consecutive_losses
+            ):
+                self._activate_global_loss_cooldown(now)
 
             logger.info(
-                "Loaded today's stats - Trades: %s, P&L: $%.2f, Consecutive Losses: %s",
+                (
+                    "Loaded today's stats - Trades: %s, P&L: $%.2f, "
+                    "Consecutive Losses: %s, Rolling outcomes: %s"
+                ),
                 self.daily_trade_count,
                 self.daily_pnl,
                 self.consecutive_losses,
+                len(self.rolling_outcomes),
             )
         except Exception as e:
             logger.warning(f"Could not load daily stats from database: {e}")
             logger.info("Starting with zero counters")
+
+    def _parse_db_datetime(self, value) -> Optional[datetime]:
+        if isinstance(value, datetime):
+            parsed = value
+        elif value is None:
+            return None
+        else:
+            text = str(value).strip()
+            if not text:
+                return None
+            if text.endswith("Z"):
+                text = text[:-1] + "+00:00"
+            try:
+                parsed = datetime.fromisoformat(text)
+            except Exception:
+                return None
+        if parsed.tzinfo is not None:
+            parsed = parsed.astimezone().replace(tzinfo=None)
+        return parsed
+
+    def _persist_loss_cooldown_until(self, cooldown_until: Optional[datetime]) -> None:
+        if not self.user_id:
+            return
+        try:
+            from app.core.supabase import supabase
+
+            payload = {
+                "user_id": self.user_id,
+                "loss_cooldown_until": cooldown_until.isoformat() if cooldown_until else None,
+            }
+            supabase.table("scalping_runtime_state").upsert(payload).execute()
+        except Exception as e:
+            logger.warning(f"Unable to persist scalping runtime state: {e}")
+
+    def _restore_persisted_loss_cooldown(self, supabase, now: datetime) -> None:
+        try:
+            state_result = (
+                supabase.table("scalping_runtime_state")
+                .select("loss_cooldown_until")
+                .eq("user_id", self.user_id)
+                .limit(1)
+                .execute()
+            )
+            state_rows = list(state_result.data or [])
+            if not state_rows:
+                return
+            restored_until = self._parse_db_datetime(state_rows[0].get("loss_cooldown_until"))
+            if restored_until and restored_until > now:
+                self.loss_cooldown_until = restored_until
+                remaining = int((restored_until - now).total_seconds())
+                logger.warning(
+                    "Restored persisted circuit-breaker cooldown (%ss remaining)",
+                    max(remaining, 0),
+                )
+        except Exception as e:
+            logger.warning(f"Could not restore persisted circuit-breaker cooldown: {e}")
+
+    def _reconcile_stale_open_trades(self, supabase, rows: List[Dict]) -> None:
+        for trade in rows:
+            status = str(trade.get("status", "")).strip().lower()
+            has_exit_price = trade.get("exit_price") not in (None, "")
+            has_profit = trade.get("profit") is not None
+            contract_id = trade.get("contract_id")
+
+            if status != "open" or not has_exit_price or not has_profit or not contract_id:
+                continue
+
+            try:
+                (
+                    supabase.table("trades")
+                    .update({"status": "sold"})
+                    .eq("user_id", self.user_id)
+                    .eq("contract_id", str(contract_id))
+                    .execute()
+                )
+                trade["status"] = "sold"
+                logger.warning("Reconciled stale open trade: %s", contract_id)
+            except Exception as e:
+                logger.warning("Failed stale-open reconciliation for %s: %s", contract_id, e)
+
+    def _seed_rolling_performance(self, supabase, now: datetime) -> None:
+        self.rolling_outcomes = []
+        window_days = max(self.performance_window_days, 1)
+        window_start = now - timedelta(days=window_days)
+        try:
+            perf_result = (
+                supabase.table("trades")
+                .select("created_at, status, profit")
+                .eq("user_id", self.user_id)
+                .gte("created_at", window_start.isoformat())
+                .execute()
+            )
+            for trade in list(perf_result.data or []):
+                trade_time = self._parse_db_datetime(trade.get("created_at")) or now
+                pnl = float(trade.get("profit", 0.0) or 0.0)
+                normalized = self._normalize_status(trade.get("status"), pnl)
+                if normalized == "win":
+                    self.rolling_outcomes.append((trade_time, True))
+                elif normalized == "loss":
+                    self.rolling_outcomes.append((trade_time, False))
+        except Exception as e:
+            logger.warning(f"Could not seed rolling performance outcomes: {e}")
+        self._prune_rolling_outcomes(now)
+
+    def _prune_rolling_outcomes(self, now: datetime) -> None:
+        cutoff = now - timedelta(days=max(self.performance_window_days, 1))
+        self.rolling_outcomes = [(ts, is_win) for ts, is_win in self.rolling_outcomes if ts >= cutoff]
+
+    def _refresh_performance_cooldown(self, now: datetime) -> None:
+        if self.performance_cooldown_until == datetime.min:
+            return
+        if now < self.performance_cooldown_until:
+            return
+        self.performance_cooldown_until = datetime.min
+        logger.warning("Performance cooldown expired. Trading resumed.")
+
+    def _evaluate_performance_guard(self, now: datetime) -> None:
+        self._prune_rolling_outcomes(now)
+        sample_size = len(self.rolling_outcomes)
+        if sample_size < max(self.performance_min_trades, 1):
+            return
+
+        wins = sum(1 for _, is_win in self.rolling_outcomes if is_win)
+        win_rate_pct = (wins / sample_size) * 100.0
+        if win_rate_pct >= self.performance_min_win_rate_pct:
+            return
+        if now < self.performance_cooldown_until:
+            return
+
+        self.performance_cooldown_until = now + timedelta(seconds=self.performance_cooldown_seconds)
+        logger.error(
+            (
+                "Performance guard triggered: win rate %.1f%% (%s/%s) below %.1f%% "
+                "for %s-day window. Blocking new trades for %ss."
+            ),
+            win_rate_pct,
+            wins,
+            sample_size,
+            self.performance_min_win_rate_pct,
+            self.performance_window_days,
+            self.performance_cooldown_seconds,
+        )
 
     def set_bot_state(self, state):
         """Set BotState instance for API updates (no-op for scalping)."""
@@ -202,6 +378,7 @@ class ScalpingRiskManager(BaseRiskManager):
 
     def _activate_global_loss_cooldown(self, now: datetime) -> None:
         self.loss_cooldown_until = now + timedelta(seconds=self.loss_cooldown_seconds)
+        self._persist_loss_cooldown_until(self.loss_cooldown_until)
         logger.error(
             "Circuit breaker triggered (%s consecutive losses). "
             "Blocking all new trades for %ss until %s",
@@ -219,6 +396,7 @@ class ScalpingRiskManager(BaseRiskManager):
         self.loss_cooldown_until = datetime.min
         self.consecutive_losses = 0
         self._near_circuit_warning_emitted = False
+        self._persist_loss_cooldown_until(None)
         logger.warning("Circuit-breaker cooldown expired. Trading resumed.")
 
     def _prune_short_loss_events(self, symbol: str, now: datetime) -> List[datetime]:
@@ -236,6 +414,8 @@ class ScalpingRiskManager(BaseRiskManager):
         """
         now = datetime.now()
         self._refresh_global_loss_cooldown(now)
+        self._refresh_performance_cooldown(now)
+        self._evaluate_performance_guard(now)
 
         if symbol:
             blocked_symbols = set(getattr(scalping_config, "BLOCKED_SYMBOLS", set()))
@@ -245,6 +425,10 @@ class ScalpingRiskManager(BaseRiskManager):
         if now < self.loss_cooldown_until:
             remaining = int((self.loss_cooldown_until - now).total_seconds())
             return False, f"Circuit breaker cooldown active ({remaining}s remaining)"
+
+        if now < self.performance_cooldown_until:
+            remaining = int((self.performance_cooldown_until - now).total_seconds())
+            return False, f"Performance guard cooldown active ({remaining}s remaining)"
 
         if len(self.active_trades) >= self.max_concurrent_trades:
             return False, f"Max concurrent trades reached ({self.max_concurrent_trades})"
@@ -336,17 +520,25 @@ class ScalpingRiskManager(BaseRiskManager):
 
         rr_ratio = None
         try:
-            entry_price = float(entry_price) if entry_price is not None else 0.0
-            tp_price = float(tp_price) if tp_price is not None else 0.0
-            sl_price = float(sl_price) if sl_price is not None else 0.0
-            if entry_price > 0 and tp_price > 0 and sl_price > 0:
-                risk = abs(entry_price - sl_price)
-                reward = abs(tp_price - entry_price)
-                if risk <= 0:
-                    return False, "Invalid stop loss distance (risk=0)"
-                rr_ratio = reward / risk
+            precomputed_rr = signal_dict.get("risk_reward_ratio")
+            if precomputed_rr is not None:
+                rr_ratio = float(precomputed_rr)
         except Exception:
             rr_ratio = None
+
+        if rr_ratio is None:
+            try:
+                entry_price = float(entry_price) if entry_price is not None else 0.0
+                tp_price = float(tp_price) if tp_price is not None else 0.0
+                sl_price = float(sl_price) if sl_price is not None else 0.0
+                if entry_price > 0 and tp_price > 0 and sl_price > 0:
+                    risk = abs(entry_price - sl_price)
+                    reward = abs(tp_price - entry_price)
+                    if risk <= 0:
+                        return False, "Invalid stop loss distance (risk=0)"
+                    rr_ratio = reward / risk
+            except Exception:
+                rr_ratio = None
 
         if rr_ratio is not None:
             default_min_rr = float(getattr(scalping_config, "SCALPING_MIN_RR_RATIO", 1.5))
@@ -583,6 +775,10 @@ class ScalpingRiskManager(BaseRiskManager):
             self._near_circuit_warning_emitted = False
             self.symbol_consecutive_losses[symbol] = 0
 
+        if normalized_status in {"win", "loss"}:
+            self.rolling_outcomes.append((now, normalized_status == "win"))
+            self._evaluate_performance_guard(now)
+
         max_daily_loss = self.daily_loss_multiplier * self.stake
         near_daily_limit = max_daily_loss > 0 and self.daily_pnl <= -(max_daily_loss * 0.8)
         if near_daily_limit and not self._near_daily_loss_warning_emitted:
@@ -655,6 +851,11 @@ class ScalpingRiskManager(BaseRiskManager):
                 if self.loss_cooldown_until != datetime.min
                 else None
             ),
+            "performance_cooldown_until": (
+                self.performance_cooldown_until.isoformat()
+                if self.performance_cooldown_until != datetime.min
+                else None
+            ),
             "last_trade_time": self.last_trade_time.isoformat() if self.last_trade_time else None,
             "runaway_protection_window_minutes": scalping_config.SCALPING_RUNAWAY_WINDOW_MINUTES,
             "recent_trade_count": len(self.recent_trade_timestamps),
@@ -707,7 +908,13 @@ class ScalpingRiskManager(BaseRiskManager):
         except Exception:
             rr_ratio = 0.0
 
-        stagnation_time_limit = int(getattr(scalping_config, "SCALPING_STAGNATION_EXIT_TIME", 120))
+        symbol_overrides = getattr(scalping_config, "SCALPING_SYMBOL_STAGNATION_OVERRIDES", {}) or {}
+        stagnation_time_limit = int(
+            symbol_overrides.get(
+                symbol,
+                getattr(scalping_config, "SCALPING_STAGNATION_EXIT_TIME", 120),
+            )
+        )
         rr_grace_threshold = float(
             getattr(scalping_config, "SCALPING_STAGNATION_RR_GRACE_THRESHOLD", 2.5)
         )
@@ -813,4 +1020,6 @@ class ScalpingRiskManager(BaseRiskManager):
         self.symbol_cooldown_until = {}
         self._near_circuit_warning_emitted = False
         self._near_daily_loss_warning_emitted = False
+        self._prune_rolling_outcomes(datetime.now())
+        self._refresh_performance_cooldown(datetime.now())
         logger.info("Daily stats reset complete")

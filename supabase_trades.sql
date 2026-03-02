@@ -1,5 +1,5 @@
 -- Create trades table to persist trade history
-create table public.trades (
+create table if not exists public.trades (
   id uuid not null default gen_random_uuid (),
   user_id uuid not null,
   contract_id text not null,
@@ -17,6 +17,20 @@ create table public.trades (
   constraint trades_contract_id_key unique (contract_id),
   constraint trades_user_id_fkey foreign KEY (user_id) references auth.users (id)
 ) TABLESPACE pg_default;
+
+-- Ensure unique constraint exists when table already existed before this script.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname = 'trades_contract_id_key'
+      AND conrelid = 'public.trades'::regclass
+  ) THEN
+    ALTER TABLE public.trades
+      ADD CONSTRAINT trades_contract_id_key UNIQUE (contract_id);
+  END IF;
+END $$;
 
 -- Enable RLS
 alter table public.trades enable row level security;

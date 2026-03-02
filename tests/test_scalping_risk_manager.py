@@ -11,7 +11,7 @@ def srm():
     return ScalpingRiskManager(user_id="test_user")
 
 
-def _open_trade(srm: ScalpingRiskManager, contract_id: str, symbol: str = "R_25", stake: float = 10.0):
+def _open_trade(srm: ScalpingRiskManager, contract_id: str, symbol: str = "R_75", stake: float = 10.0):
     srm.record_trade_open(
         {
             "contract_id": contract_id,
@@ -30,7 +30,7 @@ def test_scalping_rm_init(srm):
 
 
 def test_scalping_rm_can_trade_success(srm):
-    can, reason = srm.can_trade("R_25")
+    can, reason = srm.can_trade("R_75")
     assert can is True
     assert "passed" in reason.lower()
 
@@ -38,7 +38,7 @@ def test_scalping_rm_can_trade_success(srm):
 def test_scalping_rm_concurrent_limit(srm):
     srm.max_concurrent_trades = 1
     srm.active_trades = ["CON1"]
-    can, reason = srm.can_trade("R_25")
+    can, reason = srm.can_trade("R_75")
     assert can is False
     assert "concurrent" in reason.lower()
 
@@ -46,7 +46,7 @@ def test_scalping_rm_concurrent_limit(srm):
 def test_scalping_rm_cooldown(srm):
     srm.cooldown_seconds = 60
     srm.last_trade_time = datetime.now() - timedelta(seconds=10)
-    can, reason = srm.can_trade("R_25")
+    can, reason = srm.can_trade("R_75")
     assert can is False
     assert "cooldown" in reason.lower()
 
@@ -55,13 +55,13 @@ def test_scalping_rm_daily_loss(srm):
     srm.stake = 10.0
     srm.daily_loss_multiplier = 2.0
     srm.daily_pnl = -25.0
-    can, reason = srm.can_trade("R_25")
+    can, reason = srm.can_trade("R_75")
     assert can is False
     assert "loss limit" in reason.lower()
 
 
 def test_status_normalization_counts_lost_as_loss(srm):
-    _open_trade(srm, "CON1", symbol="R_25")
+    _open_trade(srm, "CON1", symbol="R_75")
     srm.record_trade_close("CON1", -1.0, "lost")
     assert srm.consecutive_losses == 1
 
@@ -93,21 +93,21 @@ def test_global_consecutive_loss_cooldown_and_recovery_reset(srm):
     srm.loss_cooldown_seconds = 60
     srm.single_loss_cooldown_seconds = 0
 
-    _open_trade(srm, "L1", "R_25")
+    _open_trade(srm, "L1", "R_75")
     srm.record_trade_close("L1", -1.0, "loss")
     _open_trade(srm, "L2", "R_75")
     srm.record_trade_close("L2", -1.0, "lost")
-    _open_trade(srm, "L3", "R_100")
+    _open_trade(srm, "L3", "1HZ90V")
     srm.record_trade_close("L3", -1.0, "loss")
 
-    can, reason = srm.can_trade("R_25")
+    can, reason = srm.can_trade("R_75")
     assert can is False
     assert "circuit breaker cooldown active" in reason.lower()
 
     # Expire cooldown -> counter resets and recovery mode starts.
     srm.loss_cooldown_until = datetime.now() - timedelta(seconds=1)
     srm.last_trade_time = datetime.now() - timedelta(seconds=srm.cooldown_seconds + 1)
-    can_after, _ = srm.can_trade("R_25")
+    can_after, _ = srm.can_trade("1HZ90V")
     assert can_after is True
     assert srm.consecutive_losses == 0
 
@@ -127,8 +127,8 @@ def test_symbol_cooldown_after_two_symbol_losses(srm):
     assert "cooldown active" in reason_r50.lower()
 
     srm.last_trade_time = datetime.now() - timedelta(seconds=srm.cooldown_seconds + 1)
-    can_r25, _ = srm.can_trade("R_25")
-    assert can_r25 is True
+    can_r75, _ = srm.can_trade("R_75")
+    assert can_r75 is True
 
 
 def test_short_loss_suppression_triggers_symbol_pause(srm):
@@ -168,7 +168,7 @@ def test_r50_down_requires_high_confidence(srm):
 
 def test_can_open_trade_blocks_rr_below_minimum(srm):
     allowed, reason = srm.can_open_trade(
-        symbol="R_25",
+        symbol="R_75",
         stake=10.0,
         take_profit=101.0,
         stop_loss=99.5,
@@ -185,7 +185,7 @@ def test_can_open_trade_blocks_rr_below_minimum(srm):
 
 def test_can_open_trade_allows_rr_at_or_above_minimum(srm):
     allowed, reason = srm.can_open_trade(
-        symbol="R_25",
+        symbol="R_75",
         stake=10.0,
         take_profit=102.0,
         stop_loss=99.5,
@@ -202,7 +202,7 @@ def test_can_open_trade_allows_rr_at_or_above_minimum(srm):
 
 def test_can_open_trade_allows_rr_within_tolerance(srm):
     allowed, reason = srm.can_open_trade(
-        symbol="R_25",
+        symbol="R_75",
         stake=10.0,
         take_profit=101.4999995,
         stop_loss=99.0,
@@ -221,7 +221,7 @@ def test_scalping_rm_stagnation_exit(srm):
     trade_info = {
         "open_time": datetime.now() - timedelta(seconds=200),
         "stake": 10.0,
-        "symbol": "R_25",
+        "symbol": "R_75",
     }
 
     with patch("scalping_config.SCALPING_STAGNATION_EXIT_TIME", 150), patch(
@@ -236,7 +236,7 @@ def test_scalping_rm_stagnation_exit_adds_time_for_high_rr(srm):
     trade_info = {
         "open_time": datetime.now() - timedelta(seconds=170),
         "stake": 10.0,
-        "symbol": "R_25",
+        "symbol": "R_75",
         "risk_reward_ratio": 3.0,
     }
 
@@ -244,18 +244,20 @@ def test_scalping_rm_stagnation_exit_adds_time_for_high_rr(srm):
         "scalping_config.SCALPING_STAGNATION_RR_GRACE_THRESHOLD", 2.5
     ), patch("scalping_config.SCALPING_STAGNATION_EXTRA_TIME", 60), patch(
         "scalping_config.SCALPING_STAGNATION_LOSS_PCT", 5.0
+    ), patch(
+        "scalping_config.SCALPING_SYMBOL_STAGNATION_OVERRIDES", {}
     ):
         should_exit, _ = srm.check_stagnation_exit(trade_info, -1.0)
         assert should_exit is False
 
-        trade_info["open_time"] = datetime.now() - timedelta(seconds=190)
+        trade_info["open_time"] = datetime.now() - timedelta(seconds=195)
         should_exit, reason = srm.check_stagnation_exit(trade_info, -1.0)
         assert should_exit is True
         assert reason == "stagnation_exit"
 
 
 def test_scalping_rm_trailing_profit(srm):
-    trade_info = {"contract_id": "CON1", "stake": 100.0, "symbol": "R_25"}
+    trade_info = {"contract_id": "CON1", "stake": 100.0, "symbol": "R_75"}
 
     with patch("scalping_config.SCALPING_TRAIL_ACTIVATION_PCT", 10.0), patch(
         "scalping_config.SCALPING_TRAIL_TIERS", [(10.0, 5.0)]
@@ -272,3 +274,148 @@ def test_scalping_rm_trailing_profit(srm):
         should, reason, _ = srm.check_trailing_profit(trade_info, 14.0)
         assert should is True
         assert reason == "trailing_profit_exit"
+
+
+def test_can_open_trade_uses_precomputed_rr_over_price_recompute(srm):
+    allowed, reason = srm.can_open_trade(
+        symbol="R_75",
+        stake=10.0,
+        take_profit=101.0,
+        stop_loss=99.5,
+        signal_dict={
+            "signal": "UP",
+            "entry_price": 100.0,
+            "risk_reward_ratio": 1.5,
+            "min_rr_required": 1.5,
+        },
+    )
+    assert allowed is True
+    assert reason == "OK"
+
+
+def test_can_open_trade_falls_back_to_recomputed_rr_when_missing_signal_rr(srm):
+    allowed, reason = srm.can_open_trade(
+        symbol="R_75",
+        stake=10.0,
+        take_profit=101.0,
+        stop_loss=99.5,
+        signal_dict={
+            "signal": "UP",
+            "entry_price": 100.0,
+            "min_rr_required": 2.5,
+        },
+    )
+    assert allowed is False
+    assert "rr gate blocked" in reason.lower()
+
+
+def test_load_daily_stats_restores_persisted_loss_cooldown():
+    mock_supabase = MagicMock()
+    trades_table = MagicMock()
+    state_table = MagicMock()
+
+    mock_supabase.table.side_effect = lambda name: (
+        state_table if name == "scalping_runtime_state" else trades_table
+    )
+    trades_table.select.return_value.eq.return_value.gte.return_value.execute.return_value = MagicMock(
+        data=[]
+    )
+    future = datetime.now() + timedelta(minutes=25)
+    state_table.select.return_value.eq.return_value.limit.return_value.execute.return_value = MagicMock(
+        data=[{"loss_cooldown_until": future.isoformat()}]
+    )
+
+    with patch.dict(
+        "sys.modules",
+        {"app": MagicMock(), "app.core": MagicMock(), "app.core.supabase": MagicMock(supabase=mock_supabase)},
+    ):
+        manager = ScalpingRiskManager(user_id="test_user")
+
+    assert manager.loss_cooldown_until > datetime.now()
+
+
+def test_global_cooldown_expiry_persists_clear_state(srm):
+    srm._persist_loss_cooldown_until = MagicMock()
+    srm.loss_cooldown_until = datetime.now() - timedelta(seconds=1)
+    srm.consecutive_losses = 3
+    srm.last_trade_time = datetime.now() - timedelta(seconds=srm.cooldown_seconds + 1)
+
+    can_trade, _ = srm.can_trade("R_75")
+    assert can_trade is True
+    assert srm.consecutive_losses == 0
+    srm._persist_loss_cooldown_until.assert_called_with(None)
+
+
+def test_load_daily_stats_reconciles_stale_open_trades():
+    mock_supabase = MagicMock()
+    trades_table = MagicMock()
+    state_table = MagicMock()
+
+    mock_supabase.table.side_effect = lambda name: (
+        state_table if name == "scalping_runtime_state" else trades_table
+    )
+    trades_table.select.return_value.eq.return_value.gte.return_value.execute.return_value = MagicMock(
+        data=[
+            {
+                "contract_id": "307845220868",
+                "profit": -1.81,
+                "status": "open",
+                "created_at": "2026-03-02T10:20:00",
+                "symbol": "R_75",
+                "signal": "DOWN",
+                "exit_price": 33937.97,
+            }
+        ]
+    )
+    trades_table.update.return_value.eq.return_value.eq.return_value.execute.return_value = MagicMock(
+        data=[{"status": "sold"}]
+    )
+    state_table.select.return_value.eq.return_value.limit.return_value.execute.return_value = MagicMock(
+        data=[]
+    )
+
+    with patch.dict(
+        "sys.modules",
+        {"app": MagicMock(), "app.core": MagicMock(), "app.core.supabase": MagicMock(supabase=mock_supabase)},
+    ):
+        ScalpingRiskManager(user_id="test_user")
+
+    assert trades_table.update.called
+    assert trades_table.update.call_args[0][0] == {"status": "sold"}
+
+
+def test_stagnation_exit_honors_symbol_override_timeout(srm):
+    with patch("scalping_config.SCALPING_STAGNATION_EXIT_TIME", 120), patch(
+        "scalping_config.SCALPING_SYMBOL_STAGNATION_OVERRIDES",
+        {"stpRNG5": 150, "R_75": 130},
+    ):
+        stp_trade = {
+            "open_time": datetime.now() - timedelta(seconds=140),
+            "stake": 10.0,
+            "symbol": "stpRNG5",
+        }
+        should_exit, _ = srm.check_stagnation_exit(stp_trade, -1.0)
+        assert should_exit is False
+
+        r75_trade = {
+            "open_time": datetime.now() - timedelta(seconds=140),
+            "stake": 10.0,
+            "symbol": "R_75",
+        }
+        should_exit, reason = srm.check_stagnation_exit(r75_trade, -1.0)
+        assert should_exit is True
+        assert reason == "stagnation_exit"
+
+
+def test_performance_guard_blocks_trading_below_threshold(srm):
+    now = datetime.now()
+    srm.performance_window_days = 3
+    srm.performance_min_trades = 10
+    srm.performance_min_win_rate_pct = 35.0
+    srm.performance_cooldown_seconds = 300
+    srm.last_trade_time = None
+    srm.rolling_outcomes = [(now - timedelta(minutes=i), i < 3) for i in range(10)]  # 30% wins
+
+    can_trade, reason = srm.can_trade("R_75")
+    assert can_trade is False
+    assert "performance guard cooldown active" in reason.lower()

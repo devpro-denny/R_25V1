@@ -42,7 +42,7 @@ def _info(contract_id='C001', stake=50.0, symbol='R_50'):
 
 
 class TestTrailingProfitBelowActivation:
-    """Trailing should not activate below 8% profit."""
+    """Trailing should not activate below the configured threshold."""
     
     def test_no_profit(self, rm):
         should_close, reason, just_activated = rm.check_trailing_profit(_info(), current_pnl=0.0)
@@ -51,8 +51,8 @@ class TestTrailingProfitBelowActivation:
         assert just_activated is False
     
     def test_small_profit(self, rm):
-        # 6% of $50 = $3
-        should_close, reason, just_activated = rm.check_trailing_profit(_info(), current_pnl=3.0)
+        # 5% of $50 = $2.5 (below current 6% activation threshold)
+        should_close, reason, just_activated = rm.check_trailing_profit(_info(), current_pnl=2.5)
         assert should_close is False
         assert just_activated is False
     
