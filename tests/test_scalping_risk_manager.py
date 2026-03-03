@@ -113,22 +113,23 @@ def test_global_consecutive_loss_cooldown_and_recovery_reset(srm):
 
 
 def test_symbol_cooldown_after_two_symbol_losses(srm):
-    srm.max_consecutive_losses = 99
-    srm.symbol_max_consecutive_losses = 2
-    srm.symbol_loss_cooldown_seconds = 600
+    with patch("scalping_config.BLOCKED_SYMBOLS", {"1HZ100V", "1HZ30V", "R_100", "1HZ50V"}):
+        srm.max_consecutive_losses = 99
+        srm.symbol_max_consecutive_losses = 2
+        srm.symbol_loss_cooldown_seconds = 600
 
-    _open_trade(srm, "S1", symbol="R_50")
-    srm.record_trade_close("S1", -1.0, "loss")
-    _open_trade(srm, "S2", symbol="R_50")
-    srm.record_trade_close("S2", -1.0, "loss")
+        _open_trade(srm, "S1", symbol="R_50")
+        srm.record_trade_close("S1", -1.0, "loss")
+        _open_trade(srm, "S2", symbol="R_50")
+        srm.record_trade_close("S2", -1.0, "loss")
 
-    can_r50, reason_r50 = srm.can_trade("R_50")
-    assert can_r50 is False
-    assert "cooldown active" in reason_r50.lower()
+        can_r50, reason_r50 = srm.can_trade("R_50")
+        assert can_r50 is False
+        assert "cooldown active" in reason_r50.lower()
 
-    srm.last_trade_time = datetime.now() - timedelta(seconds=srm.cooldown_seconds + 1)
-    can_r75, _ = srm.can_trade("R_75")
-    assert can_r75 is True
+        srm.last_trade_time = datetime.now() - timedelta(seconds=srm.cooldown_seconds + 1)
+        can_r75, _ = srm.can_trade("R_75")
+        assert can_r75 is True
 
 
 def test_short_loss_suppression_triggers_symbol_pause(srm):
@@ -150,20 +151,21 @@ def test_short_loss_suppression_triggers_symbol_pause(srm):
 
 
 def test_r50_down_requires_high_confidence(srm):
-    blocked, reason = srm.can_open_trade(
-        symbol="R_50",
-        stake=10.0,
-        signal_dict={"signal": "DOWN", "confidence": 8.5},
-    )
-    assert blocked is False
-    assert "confidence" in reason.lower()
+    with patch("scalping_config.BLOCKED_SYMBOLS", {"1HZ100V", "1HZ30V", "R_100", "1HZ50V"}):
+        blocked, reason = srm.can_open_trade(
+            symbol="R_50",
+            stake=10.0,
+            signal_dict={"signal": "DOWN", "confidence": 8.5},
+        )
+        assert blocked is False
+        assert "confidence" in reason.lower()
 
-    allowed, _ = srm.can_open_trade(
-        symbol="R_50",
-        stake=10.0,
-        signal_dict={"signal": "DOWN", "confidence": 9.2},
-    )
-    assert allowed is True
+        allowed, _ = srm.can_open_trade(
+            symbol="R_50",
+            stake=10.0,
+            signal_dict={"signal": "DOWN", "confidence": 9.2},
+        )
+        assert allowed is True
 
 
 def test_can_open_trade_blocks_rr_below_minimum(srm):
