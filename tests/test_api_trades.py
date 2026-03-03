@@ -39,6 +39,27 @@ def test_get_active_trades():
         assert len(data) == 1
         assert data[0]["contract_id"] == "123" # Serialized to string
 
+def test_get_active_trades_falls_back_to_db_when_bot_not_running():
+    """When no bot instance exists, /active should return persisted open trades."""
+    with patch("app.api.trades.bot_manager") as mock_bm, \
+         patch("app.api.trades.UserTradesService.get_user_active_trades") as mock_active_db:
+        mock_bm._bots = {}
+        mock_active_db.return_value = [{
+            "contract_id": "789",
+            "symbol": "R_25",
+            "direction": "UP",
+            "status": "open",
+            "stake": 12.0,
+        }]
+
+        response = client.get(f"{API_PREFIX}/active")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data) == 1
+        assert data[0]["contract_id"] == "789"
+        mock_active_db.assert_called_once_with("user123")
+
 def test_get_trade_history():
     """Test /history endpoint."""
     with patch("app.services.trades_service.UserTradesService.get_user_trades") as mock_get:

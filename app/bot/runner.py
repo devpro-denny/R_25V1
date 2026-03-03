@@ -1590,6 +1590,19 @@ class BotRunner:
                                     emoji="\U0001F513",
                                 )
                                 logger.info(f"[{self._get_strategy_name()}][{symbol}] \U0001F4B0 P&L: ${pnl:.2f}")
+
+                                # Persist to DB
+                                try:
+                                    result_for_db = sell_result.copy()
+                                    result_for_db.update(active_info)
+                                    result_for_db["strategy_type"] = self.strategy.get_strategy_name()
+                                    result_for_db["exit_reason"] = exit_reason
+                                    UserTradesService.save_trade(self.account_id, result_for_db)
+                                except Exception as e:
+                                    logger.error(
+                                        f"[{self._get_strategy_name()}][{symbol}] "
+                                        f"\u274C DB save failed for stagnation trade: {e}"
+                                    )
                                 
                                 # Notify Telegram with stagnation exit reason
                                 try:
@@ -1631,9 +1644,21 @@ class BotRunner:
                 # Record closure
                 self.risk_manager.record_trade_close(contract_id, pnl, status)
                 self.state.update_trade(contract_id, trade_status)
-                
+
                 logger.info(f"[{self._get_strategy_name()}][{symbol}] \U0001F513 Trade closed - system unlocked")
                 logger.info(f"[{self._get_strategy_name()}][{symbol}] \U0001F4B0 P&L: ${pnl:.2f}")
+
+                # Persist to DB
+                try:
+                    result_for_db = trade_status.copy()
+                    result_for_db.update(active_info)
+                    result_for_db["strategy_type"] = self.strategy.get_strategy_name()
+                    UserTradesService.save_trade(self.account_id, result_for_db)
+                except Exception as e:
+                    logger.error(
+                        f"[{self._get_strategy_name()}][{symbol}] "
+                        f"\u274C DB save failed for externally closed trade: {e}"
+                    )
                 
                 # Notify Telegram
                 try:

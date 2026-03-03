@@ -671,6 +671,17 @@ class ScalpingRiskManager(BaseRiskManager):
             len(self.active_trades),
             self.max_concurrent_trades,
         )
+        if self.user_id and contract_id:
+            try:
+                from app.services.trades_service import UserTradesService
+
+                payload = dict(trade_info or {})
+                payload.setdefault("signal", direction)
+                payload.setdefault("strategy_type", "Scalping")
+                payload.setdefault("open_time", open_time)
+                UserTradesService.track_active_trade(self.user_id, payload)
+            except Exception as e:
+                logger.warning(f"Could not persist active scalping trade: {e}")
 
     def record_trade_opened(self, trade_info: Dict) -> None:
         """Alias for base interface compatibility."""

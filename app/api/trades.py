@@ -16,6 +16,7 @@ from app.schemas.trades import (
 )
 from app.core.serializers import prepare_response  # ← ADD THIS LINE
 from app.core.auth import get_current_active_user
+from app.services.trades_service import UserTradesService
 
 router = APIRouter()
 
@@ -24,12 +25,25 @@ async def get_active_trades(
     current_user: dict = Depends(get_current_active_user)  # ← ADD AUTH
 ):
     """Get all active trades"""
-    bot = bot_manager.get_bot(current_user['id'])
-    trades = bot.state.get_active_trades()
+    user_id = current_user["id"]
+    bot = None
+    bots_map = getattr(bot_manager, "_bots", None)
+    if isinstance(bots_map, dict):
+        bot = bots_map.get(user_id)
+    else:
+        # Test fallback when bot_manager is mocked
+        bot = bot_manager.get_bot(user_id)
+
+    trades = bot.state.get_active_trades() if bot else []
 
     # Fallback: some strategies track active trade state in risk_manager metadata
     # rather than BotState.active_trades.
-    if not trades and bot.risk_manager and hasattr(bot.risk_manager, "get_active_trade_info"):
+    if (
+        not trades
+        and bot
+        and bot.risk_manager
+        and hasattr(bot.risk_manager, "get_active_trade_info")
+    ):
         active_info = bot.risk_manager.get_active_trade_info()
         if active_info and active_info.get("contract_id"):
             strategy_name = None
@@ -51,6 +65,10 @@ async def get_active_trades(
                 "trailing_enabled": active_info.get("trailing_enabled"),
                 "stagnation_enabled": active_info.get("stagnation_enabled"),
             }]
+
+    # Persisted fallback: keep active trades visible even when bot is stopped/restarted.
+    if not trades:
+        trades = UserTradesService.get_user_active_trades(user_id)
 
     return prepare_response(
         trades,

@@ -13,6 +13,25 @@ class UserTradesService:
     """
 
     @staticmethod
+    def _invalidate_trade_cache(user_id: str) -> None:
+        """Invalidate cached trade list/stat snapshots for a user."""
+        cache.delete_pattern(f"trades:{user_id}:*")
+        cache.delete(f"stats:{user_id}")
+        cache.delete(f"trades:{user_id}:active")
+
+    @staticmethod
+    def _normalize_signal(value: Optional[str]) -> Optional[str]:
+        """Normalize direction/signal aliases to UP or DOWN."""
+        if value is None:
+            return None
+        raw = str(value).strip().upper()
+        if raw in {"UP", "BUY", "CALL", "RISE"}:
+            return "UP"
+        if raw in {"DOWN", "SELL", "PUT", "FALL"}:
+            return "DOWN"
+        return raw if raw else None
+
+    @staticmethod
     def save_trade(user_id: str, trade_data: Dict) -> Optional[Dict]:
         """
         Save a completed trade to Supabase.
@@ -22,14 +41,16 @@ class UserTradesService:
             required_fields = {
                 'contract_id': 'Contract ID',
                 'symbol': 'Symbol',
-                'signal': 'Signal (UP/DOWN)'
             }
-            
             for field, name in required_fields.items():
                 if not trade_data.get(field):
                     logger.error(f"❌ Cannot save trade: Missing required field '{name}'")
                     logger.debug(f"Trade data keys: {list(trade_data.keys())}")
                     return None
+            if not (trade_data.get("signal") or trade_data.get("direction")):
+                logger.error("❌ Cannot save trade: Missing required field 'Signal (UP/DOWN)'")
+                logger.debug(f"Trade data keys: {list(trade_data.keys())}")
+                return None
             
             # Get timestamp and convert to string if it's a datetime object
             timestamp = trade_data.get("timestamp") or trade_data.get("closed_at")
@@ -41,7 +62,9 @@ class UserTradesService:
                 "user_id": user_id,
                 "contract_id": str(trade_data.get("contract_id")),
                 "symbol": trade_data.get("symbol"),
-                "signal": trade_data.get("signal"),
+                "signal": UserTradesService._normalize_signal(
+                    trade_data.get("signal") or trade_data.get("direction")
+                ),
                 "stake": trade_data.get("stake"),
                 "entry_price": trade_data.get("entry_price") or trade_data.get("entry_spot"),  # Fallback
                 "exit_price": trade_data.get("exit_price"),
@@ -52,16 +75,30 @@ class UserTradesService:
                 "strategy_type": trade_data.get("strategy_type", "Conservative")
             }
 
-
-            # Insert into Supabase
-            response = supabase.table("trades").insert(record).execute()
+            # Insert final trade row. If an active/open row already exists for
+            # this contract_id, update it in place.
+            try:
+                response = supabase.table("trades").insert(record).execute()
+            except Exception as insert_error:
+                error_text = str(insert_error).lower()
+                duplicate_contract = (
+                    "duplicate key" in error_text
+                    or "trades_contract_id_key" in error_text
+                    or "conflict" in error_text
+                )
+                if not duplicate_contract:
+                    raise
+                response = (
+                    supabase.table("trades")
+                    .update(record)
+                    .eq("user_id", user_id)
+                    .eq("contract_id", record["contract_id"])
+                    .execute()
+                )
             
             if response.data:
                 logger.info(f"✅ Trade persisted to DB: {record['contract_id']}")
-                
-                # Invalidate Cache
-                cache.delete_pattern(f"trades:{user_id}:*")
-                cache.delete(f"stats:{user_id}")
+                UserTradesService._invalidate_trade_cache(user_id)
                 
                 return response.data[0]
             else:
@@ -71,6 +108,83 @@ class UserTradesService:
         except Exception as e:
             logger.error(f"❌ Error saving trade to DB: {e}")
             return None
+
+    @staticmethod
+    def track_active_trade(user_id: str, trade_data: Dict) -> Optional[Dict]:
+        """
+        Persist/refresh an open trade row so active trades survive bot stops.
+        """
+        try:
+            contract_id = trade_data.get("contract_id")
+            symbol = trade_data.get("symbol")
+            signal = UserTradesService._normalize_signal(
+                trade_data.get("signal") or trade_data.get("direction")
+            )
+            if not contract_id or not symbol or not signal:
+                return None
+
+            timestamp = (
+                trade_data.get("timestamp")
+                or trade_data.get("open_time")
+                or datetime.now().isoformat()
+            )
+            if isinstance(timestamp, datetime):
+                timestamp = timestamp.isoformat()
+
+            record = {
+                "user_id": user_id,
+                "contract_id": str(contract_id),
+                "symbol": symbol,
+                "signal": signal,
+                "stake": trade_data.get("stake"),
+                "entry_price": trade_data.get("entry_price") or trade_data.get("entry_spot"),
+                "exit_price": None,
+                "profit": None,
+                "status": "open",
+                "timestamp": timestamp,
+                "duration": None,
+                "strategy_type": trade_data.get("strategy_type", "Conservative"),
+            }
+
+            response = (
+                supabase.table("trades")
+                .upsert(record, on_conflict="contract_id")
+                .execute()
+            )
+            if response.data:
+                UserTradesService._invalidate_trade_cache(user_id)
+                return response.data[0]
+            return None
+        except Exception as e:
+            logger.error(f"❌ Error tracking active trade: {e}")
+            return None
+
+    @staticmethod
+    def get_user_active_trades(user_id: str, limit: int = 20) -> List[Dict]:
+        """
+        Fetch currently open trades from persistent storage.
+        """
+        try:
+            cache_key = f"trades:{user_id}:active"
+            cached_data = cache.get(cache_key)
+            if cached_data:
+                return cached_data
+
+            response = (
+                supabase.table("trades")
+                .select("*")
+                .eq("user_id", user_id)
+                .eq("status", "open")
+                .order("timestamp", desc=True)
+                .limit(limit)
+                .execute()
+            )
+            data = response.data if response.data else []
+            cache.set(cache_key, data, ttl=20)
+            return data
+        except Exception as e:
+            logger.error(f"❌ Error fetching active trades from DB: {e}")
+            return []
 
     @staticmethod
     def get_user_trades(user_id: str, limit: int = 50) -> List[Dict]:

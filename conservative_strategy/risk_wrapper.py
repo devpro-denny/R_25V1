@@ -88,6 +88,17 @@ class ConservativeRiskManager(BaseRiskManager):
             trade_info: Dict containing trade details
         """
         self.risk_manager.record_trade_open(trade_info)
+        if not self.user_id:
+            return
+        try:
+            from app.services.trades_service import UserTradesService
+
+            payload = dict(trade_info or {})
+            payload.setdefault("signal", payload.get("direction"))
+            payload.setdefault("strategy_type", "Conservative")
+            UserTradesService.track_active_trade(self.user_id, payload)
+        except Exception as e:
+            logger.warning(f"Could not persist active conservative trade: {e}")
     
     def record_trade_close(self, contract_id: str, pnl: float, status: str) -> None:
         """
@@ -151,7 +162,20 @@ class ConservativeRiskManager(BaseRiskManager):
         Returns:
             bool: True if existing positions found
         """
-        return await self.risk_manager.check_for_existing_positions(trade_engine)
+        found = await self.risk_manager.check_for_existing_positions(trade_engine)
+        if found and self.user_id:
+            try:
+                from app.services.trades_service import UserTradesService
+
+                active_info = self.risk_manager.get_active_trade_info()
+                if active_info:
+                    payload = dict(active_info)
+                    payload.setdefault("signal", payload.get("direction"))
+                    payload.setdefault("strategy_type", "Conservative")
+                    UserTradesService.track_active_trade(self.user_id, payload)
+            except Exception as e:
+                logger.warning(f"Could not persist recovered active trade: {e}")
+        return found
     
     def get_active_trade_info(self) -> Optional[Dict]:
         """
