@@ -149,6 +149,30 @@ async def test_bot_runner_run_bot_initialization(mock_components):
     assert runner.data_fetcher is not None
     assert reached_running is True
 
+
+@pytest.mark.asyncio
+async def test_bot_runner_active_trade_monitor_ignores_entry_cooldown(mock_components):
+    runner = BotRunner(account_id="test_user", api_token="valid_token")
+    runner.user_stake = 10.0
+
+    runner.risk_manager = MagicMock()
+    runner.risk_manager.check_for_existing_positions = AsyncMock(return_value=False)
+    runner.risk_manager.can_trade.return_value = (True, "OK")
+    runner.risk_manager.get_cooldown_remaining.return_value = 45
+    runner.risk_manager.active_trades = ["C001"]
+
+    async def fake_scan_cycle():
+        # End after first loop iteration; _run_bot should still compute wait_time.
+        runner.is_running = False
+
+    runner._multi_asset_scan_cycle = AsyncMock(side_effect=fake_scan_cycle)
+
+    with patch("app.bot.runner.logger.debug") as mock_debug:
+        await runner._run_bot()
+
+    messages = [str(call.args[0]) for call in mock_debug.call_args_list if call.args]
+    assert any("Active trade monitor in 1s" in msg for msg in messages)
+
 @pytest.mark.asyncio
 async def test_bot_runner_scan_cycle_executes_trade(mock_components, sample_ohlc_data):
     runner = BotRunner(account_id="test_user")
