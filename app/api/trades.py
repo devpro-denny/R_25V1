@@ -8,7 +8,12 @@ from typing import List
 from datetime import datetime
 
 from app.bot.manager import bot_manager
-from app.schemas.trades import TradeResponse, TradeStatsResponse
+from app.schemas.trades import (
+    TradeExitControlsResponse,
+    TradeExitControlsUpdate,
+    TradeResponse,
+    TradeStatsResponse,
+)
 from app.core.serializers import prepare_response  # ← ADD THIS LINE
 from app.core.auth import get_current_active_user
 
@@ -19,7 +24,34 @@ async def get_active_trades(
     current_user: dict = Depends(get_current_active_user)  # ← ADD AUTH
 ):
     """Get all active trades"""
-    trades = bot_manager.get_bot(current_user['id']).state.get_active_trades()
+    bot = bot_manager.get_bot(current_user['id'])
+    trades = bot.state.get_active_trades()
+
+    # Fallback: some strategies track active trade state in risk_manager metadata
+    # rather than BotState.active_trades.
+    if not trades and bot.risk_manager and hasattr(bot.risk_manager, "get_active_trade_info"):
+        active_info = bot.risk_manager.get_active_trade_info()
+        if active_info and active_info.get("contract_id"):
+            strategy_name = None
+            if bot.strategy and hasattr(bot.strategy, "get_strategy_name"):
+                try:
+                    strategy_name = bot.strategy.get_strategy_name()
+                except Exception:
+                    strategy_name = None
+
+            trades = [{
+                "contract_id": str(active_info.get("contract_id")),
+                "symbol": active_info.get("symbol", "UNKNOWN"),
+                "direction": active_info.get("direction", "UP"),
+                "strategy_type": strategy_name,
+                "stake": active_info.get("stake"),
+                "entry_price": active_info.get("entry_price"),
+                "status": "open",
+                "timestamp": active_info.get("open_time") or active_info.get("timestamp"),
+                "trailing_enabled": active_info.get("trailing_enabled"),
+                "stagnation_enabled": active_info.get("stagnation_enabled"),
+            }]
+
     return prepare_response(
         trades,
         id_fields=['contract_id']  # ← Convert contract_id to string
@@ -237,3 +269,32 @@ async def debug_trade_stats(
             "traceback": traceback.format_exc(),
             "partial_debug_info": debug_info
         })
+
+
+@router.patch("/active/{contract_id}/exit-controls", response_model=TradeExitControlsResponse)
+async def update_active_trade_exit_controls(
+    contract_id: str,
+    payload: TradeExitControlsUpdate,
+    current_user: dict = Depends(get_current_active_user),
+):
+    """Toggle trailing/stagnation runtime controls for an active trade."""
+    bot = bot_manager._bots.get(current_user["id"])
+    if not bot or not bot.is_running or not bot.risk_manager:
+        raise HTTPException(status_code=404, detail="No running bot for this user")
+
+    risk_manager = bot.risk_manager
+    if not hasattr(risk_manager, "set_trade_exit_controls"):
+        raise HTTPException(
+            status_code=400,
+            detail="Active strategy does not support runtime exit controls",
+        )
+
+    updated = risk_manager.set_trade_exit_controls(
+        contract_id=contract_id,
+        trailing_enabled=payload.trailing_enabled,
+        stagnation_enabled=payload.stagnation_enabled,
+    )
+    if not updated:
+        raise HTTPException(status_code=404, detail="Active trade not found")
+
+    return prepare_response(updated, id_fields=["contract_id"])

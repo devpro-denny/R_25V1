@@ -428,7 +428,9 @@ class RiskManager:
             'cancellation_enabled': False,
             'cancellation_expiry': None,
             'highest_unrealized_pnl': 0.0, # Track peak profit for trailing stop
-            'has_been_profitable': False   # Track if trade ever went into profit
+            'has_been_profitable': False,  # Track if trade ever went into profit
+            'trailing_enabled': True,
+            'stagnation_enabled': True,
         }
         
         self.trades_today.append(trade_record)
@@ -645,7 +647,10 @@ class RiskManager:
         elapsed_seconds = (datetime.now() - active_trade.get('timestamp', datetime.now())).total_seconds()
 
         # 2. Stagnation Exit
-        if getattr(config, 'ENABLE_STAGNATION_EXIT', False):
+        if (
+            getattr(config, 'ENABLE_STAGNATION_EXIT', False)
+            and bool(active_trade.get("stagnation_enabled", True))
+        ):
              stagnation_time = config.STAGNATION_EXIT_TIME
              if elapsed_seconds >= stagnation_time and current_pnl < 0:
                   loss_pct = (abs(current_pnl) / stake) * 100
@@ -667,7 +672,9 @@ class RiskManager:
             current_peak = current_pnl
             
         # Use peak PnL to determine tier activation, but current PnL for trigger check
-        trailing = self.update_trailing_stop(active_trade, current_peak, stake)
+        trailing = None
+        if bool(active_trade.get("trailing_enabled", True)):
+            trailing = self.update_trailing_stop(active_trade, current_peak, stake)
         if trailing:
              stop_profit_pct = trailing['stop_profit_pct']
              tier_name = trailing['tier_name']
@@ -848,6 +855,47 @@ class RiskManager:
         symbol_label = f"({symbol})" if trade else ""
         logger.info(f"💰 Trade closed {symbol_label}: {status.upper()} | P&L: {format_currency(pnl)}")
         logger.info(f"📊 GLOBAL Daily: {format_currency(self.daily_pnl)} | Total: {format_currency(self.total_pnl)}")
+
+    def set_trade_exit_controls(
+        self,
+        contract_id: str,
+        trailing_enabled: Optional[bool] = None,
+        stagnation_enabled: Optional[bool] = None,
+    ) -> Optional[Dict]:
+        """Update runtime exit controls for one active trade."""
+        if not contract_id:
+            return None
+
+        active_trade = None
+        for trade in self.active_trades:
+            if trade.get("contract_id") == contract_id:
+                active_trade = trade
+                break
+
+        if active_trade is None:
+            return None
+
+        if trailing_enabled is not None:
+            active_trade["trailing_enabled"] = bool(trailing_enabled)
+            if not active_trade["trailing_enabled"]:
+                active_trade["trail_stop_profit_pct"] = None
+                active_trade["trail_tier_name"] = None
+        if stagnation_enabled is not None:
+            active_trade["stagnation_enabled"] = bool(stagnation_enabled)
+
+        if self.bot_state and hasattr(self.bot_state, "active_trades"):
+            for trade in self.bot_state.active_trades:
+                if str(trade.get("contract_id")) != str(contract_id):
+                    continue
+                trade["trailing_enabled"] = bool(active_trade.get("trailing_enabled", True))
+                trade["stagnation_enabled"] = bool(active_trade.get("stagnation_enabled", True))
+                break
+
+        return {
+            "contract_id": str(contract_id),
+            "trailing_enabled": bool(active_trade.get("trailing_enabled", True)),
+            "stagnation_enabled": bool(active_trade.get("stagnation_enabled", True)),
+        }
     
     def get_statistics(self) -> Dict:
         """Get comprehensive trading statistics"""
@@ -945,7 +993,9 @@ class RiskManager:
             'stake': trade.get('stake'),
             'timestamp': trade.get('timestamp'),
             'strategy': trade.get('strategy'),
-            'phase': trade.get('phase')
+            'phase': trade.get('phase'),
+            'trailing_enabled': trade.get('trailing_enabled', True),
+            'stagnation_enabled': trade.get('stagnation_enabled', True),
         }
     
     def print_status(self):

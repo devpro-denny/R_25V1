@@ -642,6 +642,8 @@ class ScalpingRiskManager(BaseRiskManager):
                 "multiplier": trade_info.get("multiplier"),
                 "risk_reward_ratio": trade_info.get("risk_reward_ratio"),
                 "min_rr_required": trade_info.get("min_rr_required"),
+                "trailing_enabled": True,
+                "stagnation_enabled": True,
             }
 
         self.daily_trade_count += 1
@@ -673,6 +675,35 @@ class ScalpingRiskManager(BaseRiskManager):
     def record_trade_opened(self, trade_info: Dict) -> None:
         """Alias for base interface compatibility."""
         self.record_trade_open(trade_info)
+
+    def set_trade_exit_controls(
+        self,
+        contract_id: str,
+        trailing_enabled: Optional[bool] = None,
+        stagnation_enabled: Optional[bool] = None,
+    ) -> Optional[Dict]:
+        """Update runtime exit controls for one active trade."""
+        if not contract_id:
+            return None
+        if contract_id not in self.active_trades:
+            return None
+
+        metadata = self._trade_metadata.get(contract_id)
+        if not isinstance(metadata, dict):
+            return None
+
+        if trailing_enabled is not None:
+            metadata["trailing_enabled"] = bool(trailing_enabled)
+            if not metadata["trailing_enabled"]:
+                self._trailing_state.pop(contract_id, None)
+        if stagnation_enabled is not None:
+            metadata["stagnation_enabled"] = bool(stagnation_enabled)
+
+        return {
+            "contract_id": contract_id,
+            "trailing_enabled": bool(metadata.get("trailing_enabled", True)),
+            "stagnation_enabled": bool(metadata.get("stagnation_enabled", True)),
+        }
 
     def record_trade_closed(self, result: Dict) -> None:
         """
@@ -898,6 +929,12 @@ class ScalpingRiskManager(BaseRiskManager):
         """
         Close stale losing trades.
         """
+        contract_id = trade_info.get("contract_id")
+        if contract_id:
+            meta = self._trade_metadata.get(contract_id, {})
+            if isinstance(meta, dict) and not bool(meta.get("stagnation_enabled", True)):
+                return False, ""
+
         open_time = trade_info.get("open_time")
         stake = trade_info.get("stake", self.stake)
         symbol = trade_info.get("symbol", "UNKNOWN")
@@ -952,6 +989,10 @@ class ScalpingRiskManager(BaseRiskManager):
         stake = trade_info.get("stake", self.stake)
         symbol = trade_info.get("symbol", "UNKNOWN")
         if not contract_id or stake <= 0:
+            return False, "", False
+
+        meta = self._trade_metadata.get(contract_id, {})
+        if isinstance(meta, dict) and not bool(meta.get("trailing_enabled", True)):
             return False, "", False
 
         now = datetime.now()

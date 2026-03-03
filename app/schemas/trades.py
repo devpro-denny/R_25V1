@@ -24,6 +24,8 @@ class TradeResponse(BaseModel):
     pnl: Optional[float] = Field(None, validation_alias=AliasChoices("profit", "pnl"))
     timestamp: Optional[datetime] = None
     duration: Optional[int] = None
+    trailing_enabled: Optional[bool] = None
+    stagnation_enabled: Optional[bool] = None
 
     class Config:
         from_attributes = True
@@ -49,3 +51,18 @@ class TradeStatsResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class TradeExitControlsUpdate(BaseModel):
+    """Schema for updating per-trade runtime exit controls."""
+
+    trailing_enabled: Optional[bool] = None
+    stagnation_enabled: Optional[bool] = None
+
+
+class TradeExitControlsResponse(BaseModel):
+    """Schema for per-trade runtime exit controls."""
+
+    contract_id: str
+    trailing_enabled: bool
+    stagnation_enabled: bool
