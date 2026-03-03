@@ -182,7 +182,7 @@ SCALPING_STAGNATION_EXTRA_TIME = 0  # disabled by default for strict 75s/3.0% be
 SCALPING_SYMBOL_STAGNATION_OVERRIDES = {
     "stpRNG5": 180,
     "R_75": 150,
-    "R_25": 180,
+    "R_25": 90,
 }
 
 # ==================== TRAILING PROFIT ====================
