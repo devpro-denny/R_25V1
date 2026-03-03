@@ -220,6 +220,33 @@ def test_symbol_cooldown_after_two_symbol_losses(srm):
         assert can_r75 is True
 
 
+def test_scalping_set_trade_exit_controls_matches_numeric_contract_id_with_string_input(srm):
+    """Exit controls should update even when route ID is string and stored ID is numeric."""
+    numeric_contract_id = 308022298068
+    srm.active_trades = [numeric_contract_id]
+    srm._trade_metadata = {
+        numeric_contract_id: {
+            "trailing_enabled": True,
+            "stagnation_enabled": True,
+        }
+    }
+    srm._trailing_state = {numeric_contract_id: {"peak_profit_pct": 10.0}}
+
+    updated = srm.set_trade_exit_controls(
+        "308022298068",
+        trailing_enabled=False,
+        stagnation_enabled=False,
+    )
+
+    assert updated is not None
+    assert updated["contract_id"] == "308022298068"
+    assert updated["trailing_enabled"] is False
+    assert updated["stagnation_enabled"] is False
+    assert srm._trade_metadata[numeric_contract_id]["trailing_enabled"] is False
+    assert srm._trade_metadata[numeric_contract_id]["stagnation_enabled"] is False
+    assert numeric_contract_id not in srm._trailing_state
+
+
 def test_short_loss_suppression_triggers_symbol_pause(srm):
     srm.max_consecutive_losses = 99
     srm.symbol_max_consecutive_losses = 99

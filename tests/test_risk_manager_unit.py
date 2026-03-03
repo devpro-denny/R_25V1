@@ -260,8 +260,35 @@ def test_get_statistics(rm):
     rm.losing_trades = 1
     rm.total_pnl = 5.0
     rm.trades_today = [{"exit_type": "take_profit", "pnl": 10.0}, {"exit_type": "stop_loss", "pnl": -5.0}]
-    
+
     stats = rm.get_statistics()
     assert stats["win_rate"] == 50.0
     assert stats["profit_factor"] == 2.0
     assert stats["avg_win"] == 10.0
+
+
+def test_set_trade_exit_controls_matches_numeric_contract_id_with_string_input(rm):
+    """Exit controls should update even when path contract_id is string and stored ID is int."""
+    rm.active_trades = [{
+        "contract_id": 308022298068,
+        "symbol": "R_25",
+        "trailing_enabled": True,
+        "stagnation_enabled": True,
+    }]
+    rm.bot_state = MagicMock()
+    rm.bot_state.active_trades = [{
+        "contract_id": 308022298068,
+        "trailing_enabled": True,
+        "stagnation_enabled": True,
+    }]
+
+    updated = rm.set_trade_exit_controls("308022298068", trailing_enabled=False, stagnation_enabled=False)
+
+    assert updated is not None
+    assert updated["contract_id"] == "308022298068"
+    assert updated["trailing_enabled"] is False
+    assert updated["stagnation_enabled"] is False
+    assert rm.active_trades[0]["trailing_enabled"] is False
+    assert rm.active_trades[0]["stagnation_enabled"] is False
+    assert rm.bot_state.active_trades[0]["trailing_enabled"] is False
+    assert rm.bot_state.active_trades[0]["stagnation_enabled"] is False
