@@ -129,8 +129,29 @@ END $$;
 create table if not exists public.scalping_runtime_state (
   user_id uuid primary key references auth.users (id) on delete cascade,
   loss_cooldown_until timestamp with time zone null,
+  daily_trade_count integer not null default 0,
+  daily_trade_count_date date null,
   updated_at timestamp with time zone default timezone('utc'::text, now()) not null
 );
+
+do $$
+begin
+  if not exists (
+    select 1 from information_schema.columns
+    where table_name = 'scalping_runtime_state' and column_name = 'daily_trade_count'
+  ) then
+    alter table public.scalping_runtime_state
+      add column daily_trade_count integer not null default 0;
+  end if;
+
+  if not exists (
+    select 1 from information_schema.columns
+    where table_name = 'scalping_runtime_state' and column_name = 'daily_trade_count_date'
+  ) then
+    alter table public.scalping_runtime_state
+      add column daily_trade_count_date date null;
+  end if;
+end $$;
 
 create or replace function public.touch_scalping_runtime_state_updated_at()
 returns trigger

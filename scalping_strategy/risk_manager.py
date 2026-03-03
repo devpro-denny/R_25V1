@@ -28,7 +28,14 @@ class ScalpingRiskManager(BaseRiskManager):
             scalping_config, "SCALPING_MAX_CONCURRENT_PER_SYMBOL", 1
         )
         self.cooldown_seconds = scalping_config.SCALPING_COOLDOWN_SECONDS
-        self.max_trades_per_day = scalping_config.SCALPING_MAX_TRADES_PER_DAY
+        configured_daily_limit = int(
+            getattr(scalping_config, "SCALPING_MAX_TRADES_PER_DAY", 10)
+        )
+        hard_daily_cap = int(
+            getattr(scalping_config, "SCALPING_HARD_MAX_TRADES_PER_DAY", 10)
+        )
+        # Enforce non-negotiable daily entry ceiling for scalping.
+        self.max_trades_per_day = min(configured_daily_limit, hard_daily_cap)
         self.max_consecutive_losses = scalping_config.SCALPING_MAX_CONSECUTIVE_LOSSES
         self.loss_cooldown_seconds = getattr(
             scalping_config, "SCALPING_GLOBAL_LOSS_COOLDOWN_SECONDS", 3 * 60 * 60
@@ -61,6 +68,8 @@ class ScalpingRiskManager(BaseRiskManager):
         # State tracking
         self.active_trades: List[str] = []
         self.daily_trade_count = 0
+        self._daily_trade_count_date = date.today()
+        self._last_daily_count_sync: datetime = datetime.min
         self.daily_up_trade_count = 0
         self.daily_down_trade_count = 0
         self.daily_pnl = 0.0
@@ -160,6 +169,7 @@ class ScalpingRiskManager(BaseRiskManager):
                     self.consecutive_losses = 0
 
             self._restore_persisted_loss_cooldown(supabase, now)
+            self._sync_daily_trade_count_from_db(now, force=True)
             self._seed_rolling_performance(supabase, now)
             self._evaluate_performance_guard(now)
 
@@ -185,6 +195,80 @@ class ScalpingRiskManager(BaseRiskManager):
             logger.warning(f"Could not load daily stats from database: {e}")
             logger.info("Starting with zero counters")
 
+    def _sync_daily_trade_count_from_db(self, now: datetime, force: bool = False) -> None:
+        """
+        Keep daily entry count anchored to DB so restarts cannot bypass limits.
+        """
+        if not self.user_id:
+            return
+
+        today = now.date()
+        if self._daily_trade_count_date != today:
+            self.daily_trade_count = 0
+            self.daily_up_trade_count = 0
+            self.daily_down_trade_count = 0
+            self._daily_trade_count_date = today
+            self._last_daily_count_sync = datetime.min
+            force = True
+
+        if not force and self._last_daily_count_sync != datetime.min:
+            if (now - self._last_daily_count_sync).total_seconds() < 15:
+                return
+
+        persisted_count = 0
+        persisted_count_date: Optional[date] = None
+        state_sync_supported = False
+
+        try:
+            from app.core.supabase import supabase
+
+            try:
+                state_result = (
+                    supabase.table("scalping_runtime_state")
+                    .select("daily_trade_count, daily_trade_count_date")
+                    .eq("user_id", self.user_id)
+                    .limit(1)
+                    .execute()
+                )
+                state_sync_supported = True
+                state_rows = list(state_result.data or [])
+                if state_rows:
+                    persisted_count = max(int(state_rows[0].get("daily_trade_count") or 0), 0)
+                    persisted_count_date = self._parse_db_date(
+                        state_rows[0].get("daily_trade_count_date")
+                    )
+            except Exception as state_error:
+                logger.warning(
+                    "Could not read persisted scalping daily trade counter: %s",
+                    state_error,
+                )
+
+            today_start = datetime.combine(today, datetime.min.time())
+            result = (
+                supabase.table("trades")
+                .select("contract_id", count="exact")
+                .eq("user_id", self.user_id)
+                .gte("created_at", today_start.isoformat())
+                .execute()
+            )
+            db_count = int(result.count or 0)
+
+            if persisted_count_date != today:
+                persisted_count = 0
+
+            # Never decrease intra-day in-memory count; this avoids temporary
+            # undercount if persistence is delayed.
+            reconciled_count = max(int(self.daily_trade_count or 0), db_count, persisted_count)
+            self.daily_trade_count = reconciled_count
+            self._daily_trade_count_date = today
+            if state_sync_supported and (
+                persisted_count_date != today or persisted_count != reconciled_count
+            ):
+                self._persist_daily_trade_count(today, reconciled_count)
+            self._last_daily_count_sync = now
+        except Exception as e:
+            logger.warning(f"Could not sync daily trade count from DB: {e}")
+
     def _parse_db_datetime(self, value) -> Optional[datetime]:
         if isinstance(value, datetime):
             parsed = value
@@ -203,6 +287,42 @@ class ScalpingRiskManager(BaseRiskManager):
         if parsed.tzinfo is not None:
             parsed = parsed.astimezone().replace(tzinfo=None)
         return parsed
+
+    def _parse_db_date(self, value) -> Optional[date]:
+        if isinstance(value, datetime):
+            return value.date()
+        if isinstance(value, date):
+            return value
+        if value is None:
+            return None
+        text = str(value).strip()
+        if not text:
+            return None
+        if "T" in text:
+            text = text.split("T", 1)[0]
+        try:
+            return date.fromisoformat(text)
+        except Exception:
+            return None
+
+    def _persist_daily_trade_count(self, trade_date: date, trade_count: int) -> None:
+        if not self.user_id:
+            return
+        normalized_count = max(int(trade_count or 0), 0)
+        if isinstance(trade_date, datetime):
+            trade_date = trade_date.date()
+        serialized_date = trade_date.isoformat() if isinstance(trade_date, date) else None
+        try:
+            from app.core.supabase import supabase
+
+            payload = {
+                "user_id": self.user_id,
+                "daily_trade_count": normalized_count,
+                "daily_trade_count_date": serialized_date,
+            }
+            supabase.table("scalping_runtime_state").upsert(payload).execute()
+        except Exception as e:
+            logger.warning(f"Unable to persist scalping daily trade count: {e}")
 
     def _persist_loss_cooldown_until(self, cooldown_until: Optional[datetime]) -> None:
         if not self.user_id:
@@ -413,6 +533,7 @@ class ScalpingRiskManager(BaseRiskManager):
         Check whether opening a new trade is allowed.
         """
         now = datetime.now()
+        self._sync_daily_trade_count_from_db(now)
         self._refresh_global_loss_cooldown(now)
         self._refresh_performance_cooldown(now)
         self._evaluate_performance_guard(now)
@@ -647,6 +768,7 @@ class ScalpingRiskManager(BaseRiskManager):
             }
 
         self.daily_trade_count += 1
+        self._daily_trade_count_date = now.date()
         if direction in {"UP", "BUY"}:
             self.daily_up_trade_count += 1
         elif direction in {"DOWN", "SELL"}:
@@ -658,6 +780,7 @@ class ScalpingRiskManager(BaseRiskManager):
         self.recent_trade_timestamps.append(now)
         if len(self.recent_trade_timestamps) > scalping_config.SCALPING_RUNAWAY_TRADE_COUNT:
             self.recent_trade_timestamps.pop(0)
+        self._persist_daily_trade_count(self._daily_trade_count_date, self.daily_trade_count)
 
         logger.info(
             "Trade opened - Contract: %s, Symbol: %s, Daily count: %s/%s",
@@ -1184,6 +1307,8 @@ class ScalpingRiskManager(BaseRiskManager):
         """
         logger.info("Resetting daily stats for scalping risk manager")
         self.daily_trade_count = 0
+        self._daily_trade_count_date = datetime.now().date()
+        self._last_daily_count_sync = datetime.min
         self.daily_up_trade_count = 0
         self.daily_down_trade_count = 0
         self.daily_pnl = 0.0
@@ -1196,4 +1321,5 @@ class ScalpingRiskManager(BaseRiskManager):
         self._near_daily_loss_warning_emitted = False
         self._prune_rolling_outcomes(datetime.now())
         self._refresh_performance_cooldown(datetime.now())
+        self._persist_daily_trade_count(self._daily_trade_count_date, self.daily_trade_count)
         logger.info("Daily stats reset complete")

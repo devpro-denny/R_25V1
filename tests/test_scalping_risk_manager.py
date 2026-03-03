@@ -1,4 +1,5 @@
 import pytest
+import sys
 from datetime import datetime, timedelta
 from unittest.mock import patch
 from unittest.mock import MagicMock
@@ -58,6 +59,93 @@ def test_scalping_rm_daily_loss(srm):
     can, reason = srm.can_trade("R_75")
     assert can is False
     assert "loss limit" in reason.lower()
+
+
+def test_scalping_rm_daily_entry_limit_enforced_at_10(srm):
+    srm.daily_trade_count = 10
+    srm.last_trade_time = None
+    can, reason = srm.can_trade("R_75")
+    assert can is False
+    assert "daily trade limit reached (10)" in reason.lower()
+
+
+def test_scalping_rm_daily_entry_limit_hard_caps_config(monkeypatch):
+    monkeypatch.setattr("scalping_config.SCALPING_MAX_TRADES_PER_DAY", 80)
+    monkeypatch.setattr("scalping_config.SCALPING_HARD_MAX_TRADES_PER_DAY", 10)
+    manager = ScalpingRiskManager(user_id="test_user")
+    assert manager.max_trades_per_day == 10
+
+
+def test_scalping_rm_daily_entry_limit_uses_db_synced_count(srm, monkeypatch):
+    mock_supabase = MagicMock()
+    count_response = MagicMock()
+    count_response.count = 10
+    (
+        mock_supabase.table.return_value.select.return_value.eq.return_value.gte.return_value
+        .execute.return_value
+    ) = count_response
+    monkeypatch.setitem(
+        sys.modules,
+        "app.core.supabase",
+        MagicMock(supabase=mock_supabase),
+    )
+
+    srm.daily_trade_count = 0
+    srm.last_trade_time = None
+    srm._last_daily_count_sync = datetime.min
+
+    can, reason = srm.can_trade("R_75")
+    assert can is False
+    assert "daily trade limit reached (10)" in reason.lower()
+    assert srm.daily_trade_count == 10
+
+
+def test_scalping_rm_daily_entry_limit_restores_from_runtime_state(monkeypatch):
+    mock_supabase = MagicMock()
+    trades_table = MagicMock()
+    state_table = MagicMock()
+
+    mock_supabase.table.side_effect = lambda name: (
+        state_table if name == "scalping_runtime_state" else trades_table
+    )
+
+    today_iso = datetime.now().date().isoformat()
+    trades_table.select.return_value.eq.return_value.gte.return_value.execute.return_value = MagicMock(
+        data=[],
+        count=0,
+    )
+    state_table.select.return_value.eq.return_value.limit.return_value.execute.return_value = MagicMock(
+        data=[{"daily_trade_count": 10, "daily_trade_count_date": today_iso}]
+    )
+
+    monkeypatch.setitem(
+        sys.modules,
+        "app.core.supabase",
+        MagicMock(supabase=mock_supabase),
+    )
+
+    manager = ScalpingRiskManager(user_id="test_user")
+    manager.last_trade_time = None
+    manager._last_daily_count_sync = datetime.min
+
+    can, reason = manager.can_trade("R_75")
+    assert can is False
+    assert "daily trade limit reached (10)" in reason.lower()
+    assert manager.daily_trade_count == 10
+
+
+def test_scalping_rm_record_trade_open_persists_runtime_daily_counter(srm):
+    srm._persist_daily_trade_count = MagicMock()
+    srm.record_trade_open(
+        {
+            "contract_id": "ENTRY-1",
+            "symbol": "R_75",
+            "direction": "UP",
+            "stake": 10.0,
+        }
+    )
+    assert srm._persist_daily_trade_count.called
+    assert srm._persist_daily_trade_count.call_args[0][1] == 1
 
 
 def test_status_normalization_counts_lost_as_loss(srm):
