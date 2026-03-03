@@ -819,22 +819,29 @@ class ScalpingRiskManager(BaseRiskManager):
         """Update runtime exit controls for one active trade."""
         if not contract_id:
             return None
-        if contract_id not in self.active_trades:
+        normalized_contract_id = str(contract_id)
+        matched_contract_id = None
+        for active_contract_id in self.active_trades:
+            if str(active_contract_id) == normalized_contract_id:
+                matched_contract_id = active_contract_id
+                break
+
+        if matched_contract_id is None:
             return None
 
-        metadata = self._trade_metadata.get(contract_id)
+        metadata = self._trade_metadata.get(matched_contract_id)
         if not isinstance(metadata, dict):
             return None
 
         if trailing_enabled is not None:
             metadata["trailing_enabled"] = bool(trailing_enabled)
             if not metadata["trailing_enabled"]:
-                self._trailing_state.pop(contract_id, None)
+                self._trailing_state.pop(matched_contract_id, None)
         if stagnation_enabled is not None:
             metadata["stagnation_enabled"] = bool(stagnation_enabled)
 
         return {
-            "contract_id": contract_id,
+            "contract_id": str(matched_contract_id),
             "trailing_enabled": bool(metadata.get("trailing_enabled", True)),
             "stagnation_enabled": bool(metadata.get("stagnation_enabled", True)),
         }

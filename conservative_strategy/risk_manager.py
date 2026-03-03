@@ -866,9 +866,10 @@ class RiskManager:
         if not contract_id:
             return None
 
+        normalized_contract_id = str(contract_id)
         active_trade = None
         for trade in self.active_trades:
-            if trade.get("contract_id") == contract_id:
+            if str(trade.get("contract_id")) == normalized_contract_id:
                 active_trade = trade
                 break
 
@@ -885,14 +886,14 @@ class RiskManager:
 
         if self.bot_state and hasattr(self.bot_state, "active_trades"):
             for trade in self.bot_state.active_trades:
-                if str(trade.get("contract_id")) != str(contract_id):
+                if str(trade.get("contract_id")) != normalized_contract_id:
                     continue
                 trade["trailing_enabled"] = bool(active_trade.get("trailing_enabled", True))
                 trade["stagnation_enabled"] = bool(active_trade.get("stagnation_enabled", True))
                 break
 
         return {
-            "contract_id": str(contract_id),
+            "contract_id": str(active_trade.get("contract_id", normalized_contract_id)),
             "trailing_enabled": bool(active_trade.get("trailing_enabled", True)),
             "stagnation_enabled": bool(active_trade.get("stagnation_enabled", True)),
         }

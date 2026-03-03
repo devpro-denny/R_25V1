@@ -184,3 +184,48 @@ def test_debug_trade_stats_critical_failure():
     finally:
         # Restore auth override
         app.dependency_overrides[get_current_active_user] = lambda: {"id": "user123", "email": "test@example.com", "role": "user"}
+
+
+def test_update_active_trade_exit_controls_success():
+    """Test toggling active-trade exit controls."""
+    with patch("app.api.trades.bot_manager") as mock_bm:
+        mock_risk_manager = MagicMock()
+        mock_risk_manager.set_trade_exit_controls.return_value = {
+            "contract_id": 308022298068,
+            "trailing_enabled": False,
+            "stagnation_enabled": True,
+        }
+        mock_bot = MagicMock()
+        mock_bot.is_running = True
+        mock_bot.risk_manager = mock_risk_manager
+        mock_bm._bots = {"user123": mock_bot}
+
+        response = client.patch(
+            f"{API_PREFIX}/active/308022298068/exit-controls",
+            json={"trailing_enabled": False},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["contract_id"] == "308022298068"
+        assert data["trailing_enabled"] is False
+        assert data["stagnation_enabled"] is True
+        mock_risk_manager.set_trade_exit_controls.assert_called_once_with(
+            contract_id="308022298068",
+            trailing_enabled=False,
+            stagnation_enabled=None,
+        )
+
+
+def test_update_active_trade_exit_controls_not_found():
+    """Test exit-controls update when no running bot is available."""
+    with patch("app.api.trades.bot_manager") as mock_bm:
+        mock_bm._bots = {}
+
+        response = client.patch(
+            f"{API_PREFIX}/active/308022298068/exit-controls",
+            json={"trailing_enabled": False},
+        )
+
+        assert response.status_code == 404
+        assert "No running bot" in response.json()["detail"]
