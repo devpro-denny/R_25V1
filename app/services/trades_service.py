@@ -32,6 +32,61 @@ class UserTradesService:
         return raw if raw else None
 
     @staticmethod
+    def _to_float(value: Optional[object]) -> Optional[float]:
+        """Safely coerce a value to float when possible."""
+        if value is None:
+            return None
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _normalize_trade_status(
+        status: Optional[object],
+        profit: Optional[object],
+        exit_price: Optional[object],
+    ) -> str:
+        """
+        Normalize status to stable values and prevent stale open rows.
+
+        If P/L or exit price exists, trade is realized and should not remain open.
+        """
+        raw_status = str(status or "").strip().lower()
+        profit_value = UserTradesService._to_float(profit)
+        has_realized_data = profit_value is not None or exit_price not in (None, "")
+
+        if raw_status in {"open", "active", "pending"} and has_realized_data:
+            if profit_value is not None:
+                if profit_value > 0:
+                    return "win"
+                if profit_value < 0:
+                    return "loss"
+            return "closed"
+
+        if raw_status in {"won", "win", "profit", "take_profit", "tp"}:
+            return "win"
+        if raw_status in {"lost", "loss", "stop_loss", "sl"}:
+            return "loss"
+        if raw_status in {"sold", "closed", "settled", "complete", "completed"}:
+            if profit_value is not None:
+                if profit_value > 0:
+                    return "win"
+                if profit_value < 0:
+                    return "loss"
+            return "closed"
+
+        if has_realized_data:
+            if profit_value is not None:
+                if profit_value > 0:
+                    return "win"
+                if profit_value < 0:
+                    return "loss"
+            return "closed"
+
+        return raw_status or "open"
+
+    @staticmethod
     def save_trade(user_id: str, trade_data: Dict) -> Optional[Dict]:
         """
         Save a completed trade to Supabase.
@@ -56,6 +111,12 @@ class UserTradesService:
             timestamp = trade_data.get("timestamp") or trade_data.get("closed_at")
             if isinstance(timestamp, datetime):
                 timestamp = timestamp.isoformat()
+
+            normalized_status = UserTradesService._normalize_trade_status(
+                trade_data.get("status"),
+                trade_data.get("profit"),
+                trade_data.get("exit_price"),
+            )
             
             # Prepare record
             record = {
@@ -69,7 +130,7 @@ class UserTradesService:
                 "entry_price": trade_data.get("entry_price") or trade_data.get("entry_spot"),  # Fallback
                 "exit_price": trade_data.get("exit_price"),
                 "profit": trade_data.get("profit"),
-                "status": trade_data.get("status"),
+                "status": normalized_status,
                 "timestamp": timestamp,
                 "duration": trade_data.get("duration"),
                 "strategy_type": trade_data.get("strategy_type", "Conservative")
@@ -146,6 +207,29 @@ class UserTradesService:
                 "strategy_type": trade_data.get("strategy_type", "Conservative"),
             }
 
+            existing_response = (
+                supabase.table("trades")
+                .select("status,profit,exit_price,contract_id")
+                .eq("user_id", user_id)
+                .eq("contract_id", str(contract_id))
+                .limit(1)
+                .execute()
+            )
+            existing_rows = list(existing_response.data or [])
+            if existing_rows:
+                existing_row = existing_rows[0]
+                existing_status = UserTradesService._normalize_trade_status(
+                    existing_row.get("status"),
+                    existing_row.get("profit"),
+                    existing_row.get("exit_price"),
+                )
+                if existing_status != "open":
+                    return {
+                        **existing_row,
+                        "status": existing_status,
+                        "contract_id": str(existing_row.get("contract_id", contract_id)),
+                    }
+
             response = (
                 supabase.table("trades")
                 .upsert(record, on_conflict="contract_id")
@@ -179,9 +263,38 @@ class UserTradesService:
                 .limit(limit)
                 .execute()
             )
-            data = response.data if response.data else []
-            cache.set(cache_key, data, ttl=20)
-            return data
+            data = list(response.data or [])
+            active_rows: List[Dict] = []
+
+            for row in data:
+                normalized_status = UserTradesService._normalize_trade_status(
+                    row.get("status"),
+                    row.get("profit"),
+                    row.get("exit_price"),
+                )
+
+                if normalized_status == "open":
+                    active_rows.append(row)
+                    continue
+
+                try:
+                    (
+                        supabase.table("trades")
+                        .update({"status": normalized_status})
+                        .eq("user_id", user_id)
+                        .eq("contract_id", str(row.get("contract_id")))
+                        .execute()
+                    )
+                except Exception as repair_error:
+                    logger.warning(
+                        "Failed to repair stale active trade %s for user %s: %s",
+                        row.get("contract_id"),
+                        user_id,
+                        repair_error,
+                    )
+
+            cache.set(cache_key, active_rows, ttl=20)
+            return active_rows
         except Exception as e:
             logger.error(f"❌ Error fetching active trades from DB: {e}")
             return []

@@ -98,6 +98,28 @@ def test_save_trade_duplicate_contract_updates_existing(mock_supabase, mock_cach
     mock_cache.delete.assert_any_call(f"stats:{user_id}")
     mock_cache.delete.assert_any_call(f"trades:{user_id}:active")
 
+def test_save_trade_normalizes_realized_open_status(mock_supabase, mock_cache):
+    """Realized trades must not be persisted as open."""
+    user_id = "user123"
+    trade_data = {
+        "contract_id": "c-realized-1",
+        "symbol": "R_10",
+        "direction": "CALL",
+        "profit": -2.5,
+        "exit_price": 99.2,
+        "status": "open",
+    }
+
+    mock_response = MagicMock()
+    mock_response.data = [{"id": 77, "status": "loss"}]
+    mock_supabase.table.return_value.insert.return_value.execute.return_value = mock_response
+
+    result = UserTradesService.save_trade(user_id, trade_data)
+
+    assert result == {"id": 77, "status": "loss"}
+    payload = mock_supabase.table.return_value.insert.call_args.args[0]
+    assert payload["status"] == "loss"
+
 def test_track_active_trade_upsert_success(mock_supabase, mock_cache):
     """Open trade tracking should upsert an 'open' record."""
     user_id = "user123"
@@ -122,6 +144,36 @@ def test_track_active_trade_upsert_success(mock_supabase, mock_cache):
     mock_cache.delete_pattern.assert_called_with(f"trades:{user_id}:*")
     mock_cache.delete.assert_any_call(f"stats:{user_id}")
     mock_cache.delete.assert_any_call(f"trades:{user_id}:active")
+
+def test_track_active_trade_does_not_reopen_settled_row(mock_supabase, mock_cache):
+    """Active tracker should not overwrite already-settled trades back to open."""
+    user_id = "user123"
+    trade_data = {
+        "contract_id": "c-closed-1",
+        "symbol": "R_25",
+        "direction": "CALL",
+        "stake": 10.0,
+        "entry_price": 100.0,
+    }
+
+    existing_response = MagicMock()
+    existing_response.data = [{
+        "contract_id": "c-closed-1",
+        "status": "open",
+        "profit": 1.2,
+        "exit_price": 101.2,
+    }]
+    (
+        mock_supabase.table.return_value.select.return_value.eq.return_value.eq.return_value
+        .limit.return_value.execute.return_value
+    ) = existing_response
+
+    result = UserTradesService.track_active_trade(user_id, trade_data)
+
+    assert result is not None
+    assert result["status"] == "win"
+    assert str(result["contract_id"]) == "c-closed-1"
+    mock_supabase.table.return_value.upsert.assert_not_called()
 
 def test_get_user_active_trades_cache_hit(mock_supabase, mock_cache):
     """Active trades should be returned from cache when present."""
@@ -149,6 +201,28 @@ def test_get_user_active_trades_cache_miss(mock_supabase, mock_cache):
     result = UserTradesService.get_user_active_trades(user_id, limit=5)
 
     assert result == db_rows
+    mock_cache.set.assert_called_once()
+
+def test_get_user_active_trades_repairs_stale_open_rows(mock_supabase, mock_cache):
+    """Rows marked open with realized P/L should be repaired and excluded from active list."""
+    user_id = "user123"
+    mock_cache.get.return_value = None
+    db_rows = [
+        {"contract_id": "c-open", "status": "open", "profit": None, "exit_price": None},
+        {"contract_id": "c-stale", "status": "open", "profit": -1.0, "exit_price": 99.0},
+    ]
+    select_response = MagicMock()
+    select_response.data = db_rows
+    (
+        mock_supabase.table.return_value.select.return_value.eq.return_value.eq.return_value
+        .order.return_value.limit.return_value.execute.return_value
+    ) = select_response
+
+    result = UserTradesService.get_user_active_trades(user_id, limit=10)
+
+    assert result == [{"contract_id": "c-open", "status": "open", "profit": None, "exit_price": None}]
+    update_payload = mock_supabase.table.return_value.update.call_args.args[0]
+    assert update_payload["status"] == "loss"
     mock_cache.set.assert_called_once()
 
 def test_get_user_trades_cache_hit(mock_supabase, mock_cache):
