@@ -12,7 +12,7 @@ import asyncio
 import logging
 import re
 from datetime import datetime
-from typing import Optional, Dict, List
+from typing import Optional, Dict, List, Set
 from enum import Enum
 
 # Import existing bot modules
@@ -304,6 +304,307 @@ class BotRunner:
         from conservative_risk_manager import ConservativeRiskManager
 
         return ConservativeRiskManager(user_id=self.account_id)
+
+    @staticmethod
+    def _parse_trade_datetime(value: Optional[object]) -> Optional[datetime]:
+        """Parse DB/API datetime payloads into naive local datetime."""
+        if isinstance(value, datetime):
+            parsed = value
+        elif value is None:
+            return None
+        elif isinstance(value, (int, float)):
+            try:
+                parsed = datetime.fromtimestamp(float(value))
+            except Exception:
+                return None
+        else:
+            text = str(value).strip()
+            if not text:
+                return None
+            if text.endswith("Z"):
+                text = text[:-1] + "+00:00"
+            try:
+                parsed = datetime.fromisoformat(text)
+            except Exception:
+                return None
+
+        if parsed.tzinfo is not None:
+            parsed = parsed.astimezone().replace(tzinfo=None)
+        return parsed
+
+    def _get_runtime_active_contract_ids(self) -> Set[str]:
+        """
+        Collect active contract IDs from risk manager state.
+        Supports both conservative (dict rows) and scalping (id list) formats.
+        """
+        ids: Set[str] = set()
+        if not self.risk_manager:
+            return ids
+
+        active_trades = getattr(self.risk_manager, "active_trades", None)
+        if not isinstance(active_trades, list):
+            return ids
+
+        for trade in active_trades:
+            if isinstance(trade, dict):
+                contract_id = trade.get("contract_id")
+            else:
+                contract_id = trade
+            if contract_id in (None, ""):
+                continue
+            ids.add(str(contract_id))
+        return ids
+
+    def _restore_trade_for_monitoring(self, persisted_trade: Dict) -> bool:
+        """
+        Rebuild in-memory active-trade state from a persisted open DB row.
+        """
+        if not self.risk_manager or not isinstance(persisted_trade, dict):
+            return False
+
+        contract_id_raw = persisted_trade.get("contract_id")
+        if contract_id_raw in (None, ""):
+            return False
+        contract_id = str(contract_id_raw)
+
+        active_ids = self._get_runtime_active_contract_ids()
+        if contract_id in active_ids:
+            return False
+
+        symbol = persisted_trade.get("symbol") or "UNKNOWN"
+        direction = str(
+            persisted_trade.get("signal")
+            or persisted_trade.get("direction")
+            or ""
+        ).upper()
+        if direction == "CALL":
+            direction = "UP"
+        elif direction == "PUT":
+            direction = "DOWN"
+
+        stake = persisted_trade.get("stake")
+        try:
+            stake = float(stake) if stake is not None else None
+        except Exception:
+            stake = None
+
+        entry_price = persisted_trade.get("entry_price")
+        if entry_price is None:
+            entry_price = persisted_trade.get("entry_spot")
+        try:
+            entry_price = float(entry_price) if entry_price is not None else None
+        except Exception:
+            entry_price = None
+
+        open_time = self._parse_trade_datetime(
+            persisted_trade.get("timestamp") or persisted_trade.get("open_time")
+        ) or datetime.now()
+
+        if self._is_scalping_strategy() and hasattr(self.risk_manager, "_trade_metadata"):
+            active_trades = getattr(self.risk_manager, "active_trades", None)
+            trade_metadata = getattr(self.risk_manager, "_trade_metadata", None)
+            if not isinstance(active_trades, list) or not isinstance(trade_metadata, dict):
+                return False
+
+            active_trades.append(contract_id)
+            existing_meta = trade_metadata.get(contract_id, {})
+            trade_metadata[contract_id] = {
+                **existing_meta,
+                "stake": stake if stake is not None else existing_meta.get("stake", getattr(self.risk_manager, "stake", 0.0)),
+                "symbol": symbol,
+                "open_time": open_time,
+                "direction": direction,
+                "entry_price": entry_price,
+                "multiplier": persisted_trade.get("multiplier", existing_meta.get("multiplier")),
+                "risk_reward_ratio": persisted_trade.get("risk_reward_ratio", existing_meta.get("risk_reward_ratio")),
+                "min_rr_required": persisted_trade.get("min_rr_required", existing_meta.get("min_rr_required")),
+                "trailing_enabled": bool(existing_meta.get("trailing_enabled", True)),
+                "stagnation_enabled": bool(existing_meta.get("stagnation_enabled", True)),
+            }
+        else:
+            active_trades = getattr(self.risk_manager, "active_trades", None)
+            if not isinstance(active_trades, list):
+                return False
+            active_trades.append(
+                {
+                    "timestamp": open_time,
+                    "symbol": symbol,
+                    "contract_id": contract_id,
+                    "direction": direction,
+                    "stake": stake if stake is not None else 0.0,
+                    "entry_price": entry_price if entry_price is not None else 0.0,
+                    "entry_spot": entry_price if entry_price is not None else 0.0,
+                    "status": "open",
+                    "strategy": "recovery",
+                    "phase": "committed",
+                    "cancellation_enabled": False,
+                    "cancellation_expiry": None,
+                    "highest_unrealized_pnl": 0.0,
+                    "has_been_profitable": False,
+                    "trailing_enabled": True,
+                    "stagnation_enabled": True,
+                }
+            )
+
+        if not any(
+            isinstance(t, dict) and str(t.get("contract_id")) == contract_id
+            for t in list(getattr(self.state, "active_trades", []))
+        ):
+            self.state.add_trade(
+                {
+                    "contract_id": contract_id,
+                    "symbol": symbol,
+                    "direction": direction,
+                    "stake": stake,
+                    "entry_price": entry_price,
+                    "open_time": open_time.isoformat(),
+                    "status": "open",
+                    "strategy_type": self._get_strategy_name(),
+                }
+            )
+
+        logger.warning(
+            "[%s][SYSTEM] Recovered active trade from DB for monitoring: %s (%s)",
+            self._get_strategy_name(),
+            contract_id,
+            symbol,
+        )
+        return True
+
+    async def _reconcile_active_trades_on_startup(self) -> None:
+        """
+        Reconcile persisted open trades against broker status at startup.
+
+        - If still open: restore runtime state so monitoring resumes immediately.
+        - If already closed: persist final status so stale DB open rows are repaired.
+        """
+        if not self.account_id or not self.trade_engine:
+            return
+
+        try:
+            persisted_active = UserTradesService.get_user_active_trades(self.account_id, limit=50)
+        except Exception as e:
+            logger.warning(
+                "[%s][SYSTEM] Failed to load persisted active trades: %s",
+                self._get_strategy_name(),
+                e,
+            )
+            return
+
+        if not isinstance(persisted_active, list) or not persisted_active:
+            return
+
+        recovered_count = 0
+        settled_count = 0
+
+        for persisted_trade in persisted_active:
+            if not isinstance(persisted_trade, dict):
+                continue
+
+            contract_id_raw = persisted_trade.get("contract_id")
+            if contract_id_raw in (None, ""):
+                continue
+            contract_id = str(contract_id_raw)
+
+            live_status: Optional[Dict] = None
+            try:
+                live_status = await self.trade_engine.get_trade_status(contract_id)
+            except Exception as status_error:
+                logger.warning(
+                    "[%s][SYSTEM] Could not fetch status for persisted trade %s: %s",
+                    self._get_strategy_name(),
+                    contract_id,
+                    status_error,
+                )
+
+            status_name = str((live_status or {}).get("status", "")).strip().lower()
+            is_settled = bool((live_status or {}).get("is_sold")) or status_name in {
+                "sold",
+                "won",
+                "lost",
+                "closed",
+                "settled",
+            }
+
+            if is_settled:
+                pnl = 0.0
+                try:
+                    pnl = float((live_status or {}).get("profit", 0.0) or 0.0)
+                except Exception:
+                    pnl = 0.0
+
+                normalized_status = str((live_status or {}).get("status") or "").strip().lower()
+                if not normalized_status:
+                    normalized_status = "won" if pnl > 0 else ("lost" if pnl < 0 else "sold")
+
+                if contract_id in self._get_runtime_active_contract_ids():
+                    try:
+                        self.risk_manager.record_trade_close(contract_id, pnl, normalized_status)
+                    except Exception as close_error:
+                        logger.warning(
+                            "[%s][SYSTEM] Failed runtime close reconciliation for %s: %s",
+                            self._get_strategy_name(),
+                            contract_id,
+                            close_error,
+                        )
+
+                reconciled = dict(persisted_trade)
+                if isinstance(live_status, dict):
+                    reconciled.update(live_status)
+                reconciled["contract_id"] = contract_id
+                reconciled["symbol"] = reconciled.get("symbol") or persisted_trade.get("symbol")
+                reconciled["signal"] = (
+                    reconciled.get("signal")
+                    or persisted_trade.get("signal")
+                    or persisted_trade.get("direction")
+                )
+                reconciled["direction"] = reconciled.get("direction") or reconciled.get("signal")
+                reconciled["profit"] = pnl
+                reconciled["status"] = normalized_status
+                reconciled["strategy_type"] = self._get_strategy_name()
+                reconciled["entry_price"] = (
+                    reconciled.get("entry_price")
+                    or persisted_trade.get("entry_price")
+                    or persisted_trade.get("entry_spot")
+                )
+                if reconciled.get("exit_price") is None:
+                    reconciled["exit_price"] = (
+                        (live_status or {}).get("current_spot")
+                        or (live_status or {}).get("bid_price")
+                    )
+
+                sell_time = (live_status or {}).get("sell_time")
+                if sell_time not in (None, ""):
+                    try:
+                        reconciled["timestamp"] = datetime.fromtimestamp(int(sell_time))
+                    except Exception:
+                        reconciled["timestamp"] = datetime.now()
+                else:
+                    reconciled["timestamp"] = datetime.now()
+
+                saved_row = UserTradesService.save_trade(self.account_id, reconciled)
+                if saved_row:
+                    settled_count += 1
+                    self.state.update_trade(contract_id, reconciled)
+                    logger.info(
+                        "[%s][SYSTEM] Reconciled stale open trade to closed: %s (%s, P&L %.2f)",
+                        self._get_strategy_name(),
+                        contract_id,
+                        normalized_status,
+                        pnl,
+                    )
+                continue
+
+            if self._restore_trade_for_monitoring(persisted_trade):
+                recovered_count += 1
+
+        if recovered_count or settled_count:
+            logger.info(
+                "[%s][SYSTEM] Startup active-trade reconciliation complete: recovered=%s, settled=%s",
+                self._get_strategy_name(),
+                recovered_count,
+                settled_count,
+            )
 
     def _cycle_step(
         self,
@@ -726,6 +1027,13 @@ class BotRunner:
                     logger.warning(f"[{self._get_strategy_name()}][SYSTEM] \U0001F512 Existing position detected on startup")
             except Exception as e:
                 logger.warning(f"[{self._get_strategy_name()}][SYSTEM] \u26A0\ufe0f Existing-position check failed: {e}")
+
+            # Reconcile persisted open trades so restart resumes monitoring
+            # and stale DB rows are closed when broker already settled them.
+            try:
+                await self._reconcile_active_trades_on_startup()
+            except Exception as e:
+                logger.warning(f"[{self._get_strategy_name()}][SYSTEM] \u26A0\ufe0f Active-trade reconciliation failed: {e}")
             
             # Get initial balance
             try:

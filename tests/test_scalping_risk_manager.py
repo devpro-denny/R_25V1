@@ -2,7 +2,7 @@ import pytest
 import sys
 from datetime import datetime, timedelta
 from unittest.mock import patch
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, AsyncMock
 
 from scalping_risk_manager import ScalpingRiskManager
 
@@ -146,6 +146,37 @@ def test_scalping_rm_record_trade_open_persists_runtime_daily_counter(srm):
     )
     assert srm._persist_daily_trade_count.called
     assert srm._persist_daily_trade_count.call_args[0][1] == 1
+
+
+@pytest.mark.asyncio
+async def test_scalping_check_for_existing_positions_recovers_open_contract():
+    manager = ScalpingRiskManager(user_id="test_user")
+    trade_engine = MagicMock()
+    trade_engine.portfolio = AsyncMock(
+        return_value={
+            "portfolio": {
+                "contracts": [
+                    {
+                        "contract_type": "CALL",
+                        "underlying": "R_75",
+                        "contract_id": "307900001",
+                        "buy_price": 10.0,
+                        "entry_spot": 123.45,
+                        "date_start": int(datetime.now().timestamp()) - 30,
+                    }
+                ]
+            }
+        }
+    )
+
+    with patch("app.services.trades_service.UserTradesService.track_active_trade") as mock_track:
+        recovered = await manager.check_for_existing_positions(trade_engine)
+
+    assert recovered is True
+    assert "307900001" in manager.active_trades
+    assert manager._trade_metadata["307900001"]["symbol"] == "R_75"
+    assert manager._trade_metadata["307900001"]["direction"] == "UP"
+    assert mock_track.called
 
 
 def test_status_normalization_counts_lost_as_loss(srm):

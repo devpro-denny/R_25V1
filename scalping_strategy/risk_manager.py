@@ -457,8 +457,137 @@ class ScalpingRiskManager(BaseRiskManager):
         logger.info(f"Scalping Risk Stake Updated: ${stake}")
 
     async def check_for_existing_positions(self, trade_engine) -> bool:
-        """Scalping starts fresh by default."""
-        return False
+        """
+        Recover open scalping contracts from broker on startup.
+
+        Returns:
+            True when at least one active position was restored.
+        """
+        try:
+            response = await trade_engine.portfolio({"portfolio": 1})
+            if not isinstance(response, dict):
+                return False
+
+            contracts = (
+                response.get("portfolio", {}).get("contracts", [])
+                if isinstance(response.get("portfolio"), dict)
+                else []
+            )
+            if not isinstance(contracts, list):
+                return False
+
+            allowed_symbols = set(getattr(scalping_config, "SYMBOLS", []))
+            blocked_symbols = set(getattr(scalping_config, "BLOCKED_SYMBOLS", set()))
+            recovered_count = 0
+
+            for position in contracts:
+                if not isinstance(position, dict):
+                    continue
+
+                contract_type = str(position.get("contract_type", "")).upper()
+                if contract_type not in {"CALL", "PUT"}:
+                    continue
+
+                symbol = position.get("underlying")
+                if not symbol:
+                    continue
+                if symbol in blocked_symbols:
+                    continue
+                if allowed_symbols and symbol not in allowed_symbols:
+                    continue
+
+                contract_id_raw = position.get("contract_id")
+                if contract_id_raw in (None, ""):
+                    continue
+                contract_id = str(contract_id_raw)
+
+                if any(str(active_id) == contract_id for active_id in self.active_trades):
+                    continue
+                if len(self.active_trades) >= self.max_concurrent_trades:
+                    logger.warning(
+                        "[SCALPING] Existing broker positions exceed configured cap (%s). "
+                        "Only first %s will be monitored.",
+                        len(self.active_trades) + 1,
+                        self.max_concurrent_trades,
+                    )
+                    break
+
+                raw_start = position.get("date_start")
+                if isinstance(raw_start, (int, float)):
+                    try:
+                        open_time = datetime.fromtimestamp(float(raw_start))
+                    except Exception:
+                        open_time = datetime.now()
+                else:
+                    open_time = self._parse_db_datetime(raw_start) or datetime.now()
+
+                try:
+                    stake = float(position.get("buy_price", self.stake) or self.stake)
+                except Exception:
+                    stake = float(self.stake)
+
+                entry_price = position.get("entry_spot")
+                try:
+                    entry_price = float(entry_price) if entry_price is not None else None
+                except Exception:
+                    entry_price = None
+
+                direction = "UP" if contract_type == "CALL" else "DOWN"
+
+                self.active_trades.append(contract_id)
+                self._trade_metadata[contract_id] = {
+                    "stake": stake,
+                    "symbol": symbol,
+                    "open_time": open_time,
+                    "direction": direction,
+                    "entry_price": entry_price,
+                    "multiplier": position.get("multiplier"),
+                    "risk_reward_ratio": None,
+                    "min_rr_required": None,
+                    "trailing_enabled": True,
+                    "stagnation_enabled": True,
+                }
+                recovered_count += 1
+
+                logger.warning(
+                    "[SCALPING] Recovered existing position on startup: %s (%s)",
+                    contract_id,
+                    symbol,
+                )
+
+                if self.user_id:
+                    try:
+                        from app.services.trades_service import UserTradesService
+
+                        UserTradesService.track_active_trade(
+                            self.user_id,
+                            {
+                                "contract_id": contract_id,
+                                "symbol": symbol,
+                                "signal": direction,
+                                "direction": direction,
+                                "stake": stake,
+                                "entry_price": entry_price,
+                                "open_time": open_time,
+                                "strategy_type": "Scalping",
+                            },
+                        )
+                    except Exception as persist_error:
+                        logger.warning(
+                            "Could not persist recovered scalping active trade %s: %s",
+                            contract_id,
+                            persist_error,
+                        )
+
+            if recovered_count > 0:
+                logger.info(
+                    "[SCALPING] Startup recovery restored %s active trade(s)",
+                    recovered_count,
+                )
+            return recovered_count > 0
+        except Exception as e:
+            logger.error(f"[SCALPING] Existing-position recovery failed: {e}")
+            return False
 
     def _normalize_status(self, status: Optional[str], pnl: float = 0.0) -> str:
         raw = str(status or "").strip().lower()
