@@ -120,6 +120,36 @@ def test_save_trade_normalizes_realized_open_status(mock_supabase, mock_cache):
     payload = mock_supabase.table.return_value.insert.call_args.args[0]
     assert payload["status"] == "loss"
 
+def test_save_trade_retries_without_optional_columns_on_schema_cache_error(mock_supabase, mock_cache):
+    """PGRST204 schema-cache column errors should retry without optional fields."""
+    user_id = "user123"
+    trade_data = {
+        "contract_id": "c-compat-1",
+        "symbol": "R_10",
+        "direction": "CALL",
+        "status": "open",
+        "entry_source": "manual_imported",
+        "multiplier": 50,
+    }
+
+    insert_chain = mock_supabase.table.return_value.insert.return_value
+    insert_chain.execute.side_effect = [
+        Exception(
+            "{'code': 'PGRST204', 'message': \"Could not find the 'entry_source' column of 'trades' in the schema cache\"}"
+        ),
+        MagicMock(data=[{"id": 88, "contract_id": "c-compat-1", "status": "open"}]),
+    ]
+
+    result = UserTradesService.save_trade(user_id, trade_data)
+
+    assert result == {"id": 88, "contract_id": "c-compat-1", "status": "open"}
+    first_payload = mock_supabase.table.return_value.insert.call_args_list[0].args[0]
+    second_payload = mock_supabase.table.return_value.insert.call_args_list[1].args[0]
+    assert "entry_source" in first_payload
+    assert "multiplier" in first_payload
+    assert "entry_source" not in second_payload
+    assert "multiplier" not in second_payload
+
 def test_track_active_trade_upsert_success(mock_supabase, mock_cache):
     """Open trade tracking should upsert an 'open' record."""
     user_id = "user123"

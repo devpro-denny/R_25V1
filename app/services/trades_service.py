@@ -47,7 +47,13 @@ class UserTradesService:
         Remove optional columns if database schema has not been migrated yet.
         """
         error_text = str(error).lower()
-        if "column" not in error_text or "does not exist" not in error_text:
+        is_missing_column = (
+            ("column" in error_text and "does not exist" in error_text)
+            or ("pgrst204" in error_text and "schema cache" in error_text)
+            or ("could not find the 'entry_source' column" in error_text)
+            or ("could not find the 'multiplier' column" in error_text)
+        )
+        if not is_missing_column:
             return record
 
         compact = dict(record)
