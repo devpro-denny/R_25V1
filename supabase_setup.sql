@@ -125,6 +125,34 @@ BEGIN
   END IF;
 END $$;
 
+-- 1b. Add entry_source marker to trades table (system/manual-import origin)
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'trades' AND column_name = 'entry_source'
+  ) THEN
+    ALTER TABLE public.trades
+    ADD COLUMN entry_source TEXT NULL;
+
+    RAISE NOTICE 'Added entry_source column to trades table';
+  END IF;
+END $$;
+
+-- 1c. Add multiplier value snapshot to trades table
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'trades' AND column_name = 'multiplier'
+  ) THEN
+    ALTER TABLE public.trades
+    ADD COLUMN multiplier NUMERIC NULL;
+
+    RAISE NOTICE 'Added multiplier column to trades table';
+  END IF;
+END $$;
+
 -- 6. Scalping runtime state persistence
 create table if not exists public.scalping_runtime_state (
   user_id uuid primary key references auth.users (id) on delete cascade,

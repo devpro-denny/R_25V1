@@ -278,6 +278,8 @@ class TelegramNotifier:
         text = str(raw_source or "").strip().lower().replace("-", "_").replace(" ", "_")
         if text in {"manual", "manual_tracking", "manual_entry", "manual_contract"}:
             return "Manual Tracking"
+        if text in {"manual_imported", "sync_import", "broker_sync"}:
+            return "Manual Import (Sync)"
         if text in {"system", "strategy", "strategy_engine", "auto", "automated"}:
             return "System Strategy"
         if text:

@@ -190,3 +190,16 @@ async def test_notify_trade_opened_includes_entry_source_labels(mock_bot):
         sent_manual = notifier.bot.send_message.call_args.kwargs["text"]
         assert "Entry Source: <b>Manual Tracking</b>" in sent_manual
 
+        await notifier.notify_trade_opened(
+            {
+                "symbol": "R_25",
+                "contract_id": "sync-1",
+                "direction": "UP",
+                "stake": 10.0,
+                "entry_price": 100.0,
+                "entry_source": "manual_imported",
+            }
+        )
+        sent_sync = notifier.bot.send_message.call_args.kwargs["text"]
+        assert "Entry Source: <b>Manual Import (Sync)</b>" in sent_sync
+

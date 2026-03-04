@@ -42,6 +42,20 @@ class UserTradesService:
             return None
 
     @staticmethod
+    def _drop_optional_columns_for_compat(record: Dict, error: Exception) -> Dict:
+        """
+        Remove optional columns if database schema has not been migrated yet.
+        """
+        error_text = str(error).lower()
+        if "column" not in error_text or "does not exist" not in error_text:
+            return record
+
+        compact = dict(record)
+        compact.pop("entry_source", None)
+        compact.pop("multiplier", None)
+        return compact
+
+    @staticmethod
     def _normalize_trade_status(
         status: Optional[object],
         profit: Optional[object],
@@ -133,7 +147,9 @@ class UserTradesService:
                 "status": normalized_status,
                 "timestamp": timestamp,
                 "duration": trade_data.get("duration"),
-                "strategy_type": trade_data.get("strategy_type", "Conservative")
+                "strategy_type": trade_data.get("strategy_type", "Conservative"),
+                "entry_source": trade_data.get("entry_source"),
+                "multiplier": trade_data.get("multiplier"),
             }
 
             # Insert final trade row. If an active/open row already exists for
@@ -141,21 +157,34 @@ class UserTradesService:
             try:
                 response = supabase.table("trades").insert(record).execute()
             except Exception as insert_error:
-                error_text = str(insert_error).lower()
-                duplicate_contract = (
-                    "duplicate key" in error_text
-                    or "trades_contract_id_key" in error_text
-                    or "conflict" in error_text
+                compact_record = UserTradesService._drop_optional_columns_for_compat(
+                    record,
+                    insert_error,
                 )
-                if not duplicate_contract:
-                    raise
-                response = (
-                    supabase.table("trades")
-                    .update(record)
-                    .eq("user_id", user_id)
-                    .eq("contract_id", record["contract_id"])
-                    .execute()
-                )
+                if compact_record != record:
+                    record = compact_record
+                    try:
+                        response = supabase.table("trades").insert(record).execute()
+                        insert_error = None
+                    except Exception as insert_retry_error:
+                        insert_error = insert_retry_error
+
+                if insert_error is not None:
+                    error_text = str(insert_error).lower()
+                    duplicate_contract = (
+                        "duplicate key" in error_text
+                        or "trades_contract_id_key" in error_text
+                        or "conflict" in error_text
+                    )
+                    if not duplicate_contract:
+                        raise
+                    response = (
+                        supabase.table("trades")
+                        .update(record)
+                        .eq("user_id", user_id)
+                        .eq("contract_id", record["contract_id"])
+                        .execute()
+                    )
             
             if response.data:
                 logger.info(f"✅ Trade persisted to DB: {record['contract_id']}")
@@ -205,6 +234,8 @@ class UserTradesService:
                 "timestamp": timestamp,
                 "duration": None,
                 "strategy_type": trade_data.get("strategy_type", "Conservative"),
+                "entry_source": trade_data.get("entry_source"),
+                "multiplier": trade_data.get("multiplier"),
             }
 
             existing_response = (
@@ -230,11 +261,25 @@ class UserTradesService:
                         "contract_id": str(existing_row.get("contract_id", contract_id)),
                     }
 
-            response = (
-                supabase.table("trades")
-                .upsert(record, on_conflict="contract_id")
-                .execute()
-            )
+            try:
+                response = (
+                    supabase.table("trades")
+                    .upsert(record, on_conflict="contract_id")
+                    .execute()
+                )
+            except Exception as upsert_error:
+                compact_record = UserTradesService._drop_optional_columns_for_compat(
+                    record,
+                    upsert_error,
+                )
+                if compact_record == record:
+                    raise
+                record = compact_record
+                response = (
+                    supabase.table("trades")
+                    .upsert(record, on_conflict="contract_id")
+                    .execute()
+                )
             if response.data:
                 UserTradesService._invalidate_trade_cache(user_id)
                 return response.data[0]
@@ -242,6 +287,26 @@ class UserTradesService:
         except Exception as e:
             logger.error(f"❌ Error tracking active trade: {e}")
             return None
+
+    @staticmethod
+    def get_user_trade_contract_ids(user_id: str) -> set[str]:
+        """Fetch all persisted contract IDs for broker-vs-local diff checks."""
+        try:
+            response = (
+                supabase.table("trades")
+                .select("contract_id")
+                .eq("user_id", user_id)
+                .execute()
+            )
+            rows = list(response.data or [])
+            return {
+                str(row.get("contract_id"))
+                for row in rows
+                if row.get("contract_id") not in (None, "")
+            }
+        except Exception as e:
+            logger.error(f"❌ Error fetching user contract IDs: {e}")
+            return set()
 
     @staticmethod
     def get_user_active_trades(user_id: str, limit: int = 20) -> List[Dict]:

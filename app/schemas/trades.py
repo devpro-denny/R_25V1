@@ -3,7 +3,7 @@ Pydantic schemas for trade-related responses.
 """
 
 from datetime import datetime
-from typing import Optional
+from typing import List, Optional
 
 from pydantic import AliasChoices, BaseModel, Field
 
@@ -26,6 +26,8 @@ class TradeResponse(BaseModel):
     duration: Optional[int] = None
     trailing_enabled: Optional[bool] = None
     stagnation_enabled: Optional[bool] = None
+    multiplier: Optional[float] = None
+    entry_source: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -68,18 +70,18 @@ class TradeExitControlsResponse(BaseModel):
     stagnation_enabled: bool
 
 
-class ManualActiveTradeCreate(BaseModel):
-    """Schema for registering a manually opened broker contract for monitoring."""
+class TradeSyncResponse(BaseModel):
+    """Schema for broker-to-local active trade sync summary."""
 
-    open_contract_id: str = Field(
-        validation_alias=AliasChoices("open_contract_id", "contract_id")
-    )
-    symbol: str
-    direction: str = Field(default="UP")
-    stake: Optional[float] = None
-    entry_price: Optional[float] = None
-    strategy_type: Optional[str] = None
-    open_time: Optional[datetime] = None
+    checked_contracts: int
+    existing_count: int
+    missing_count: int
+    imported_count: int
+    runtime_registered_count: int
+    imported_contract_ids: List[str] = Field(default_factory=list)
+    skipped_non_multiplier_ids: List[str] = Field(default_factory=list)
+    failed_contract_ids: List[str] = Field(default_factory=list)
+    message: str
 
     class Config:
         from_attributes = True

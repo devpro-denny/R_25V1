@@ -60,6 +60,55 @@ def test_get_active_trades_falls_back_to_db_when_bot_not_running():
         assert data[0]["contract_id"] == "789"
         mock_active_db.assert_called_once_with("user123")
 
+
+def test_get_active_trades_keeps_system_exit_control_flags():
+    """Active system trades should preserve trailing/stagnation toggle state."""
+    with patch("app.api.trades.bot_manager") as mock_bm:
+        mock_bot = MagicMock()
+        mock_bot.state.get_active_trades.return_value = [{
+            "contract_id": "sys-101",
+            "symbol": "R_50",
+            "direction": "UP",
+            "status": "open",
+            "stake": 10.0,
+            "trailing_enabled": False,
+            "stagnation_enabled": True,
+        }]
+        mock_bm.get_bot.return_value = mock_bot
+
+        response = client.get(f"{API_PREFIX}/active")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data) == 1
+        assert data[0]["contract_id"] == "sys-101"
+        assert data[0]["trailing_enabled"] is False
+        assert data[0]["stagnation_enabled"] is True
+
+
+def test_get_active_trades_defaults_system_controls_when_missing():
+    """System active trades should default controls to enabled if omitted."""
+    with patch("app.api.trades.bot_manager") as mock_bm:
+        mock_bot = MagicMock()
+        mock_bot.state.get_active_trades.return_value = [{
+            "contract_id": 321,
+            "symbol": "R_75",
+            "direction": "CALL",
+            "status": "open",
+            "stake": 10.0,
+        }]
+        mock_bm.get_bot.return_value = mock_bot
+
+        response = client.get(f"{API_PREFIX}/active")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data[0]["contract_id"] == "321"
+        assert data[0]["direction"] == "UP"
+        assert data[0]["trailing_enabled"] is True
+        assert data[0]["stagnation_enabled"] is True
+        assert data[0]["entry_source"] == "system"
+
 def test_get_trade_history():
     """Test /history endpoint."""
     with patch("app.services.trades_service.UserTradesService.get_user_trades") as mock_get:
@@ -231,135 +280,153 @@ def test_update_active_trade_exit_controls_not_found():
         assert "No running bot" in response.json()["detail"]
 
 
-def test_register_manual_active_trade_success():
-    """Manual contract registration should persist and return normalized trade payload."""
+def test_sync_active_trades_imports_new_multiplier_contracts():
+    """Sync should import missing open multiplier contracts and register runtime tracking."""
     with patch("app.api.trades.bot_manager") as mock_bm, \
+         patch("app.api.trades._load_user_trading_context") as mock_ctx, \
+         patch("app.api.trades.UserTradesService.get_user_trade_contract_ids") as mock_ids, \
          patch("app.api.trades.UserTradesService.track_active_trade") as mock_track, \
          patch("app.api.trades.event_manager.broadcast", new_callable=AsyncMock) as mock_broadcast:
-        mock_risk_manager = MagicMock()
-        mock_risk_manager.get_active_trade_info.return_value = None
-        mock_bot = MagicMock()
-        mock_bot.is_running = True
-        mock_bot.risk_manager = mock_risk_manager
-        mock_bot.strategy.get_strategy_name.return_value = "Scalping"
-        mock_bot.state.active_trades = []
-        mock_bot.telegram_bridge.notify_trade_opened = AsyncMock()
-        mock_bm._bots = {"user123": mock_bot}
-
-        mock_track.return_value = {
-            "contract_id": "308022298068",
-            "symbol": "R_50",
-            "signal": "UP",
-            "status": "open",
-            "strategy_type": "Scalping",
-            "stake": 10.0,
-            "entry_price": 100.0,
-            "timestamp": "2026-03-04T08:00:00",
-        }
-
-        response = client.post(
-            f"{API_PREFIX}/active/manual",
-            json={
-                "open_contract_id": "308022298068",
-                "symbol": "R_50",
-                "direction": "CALL",
-                "stake": 10.0,
-                "entry_price": 100.0,
-            },
+        mock_trade_engine = MagicMock()
+        mock_trade_engine.is_connected = True
+        mock_trade_engine.portfolio = AsyncMock(
+            return_value={
+                "portfolio": {
+                    "contracts": [
+                        {"contract_id": "existing-1", "contract_type": "MULTUP", "underlying": "R_50"},
+                        {"contract_id": "new-mult-1", "contract_type": "MULTDOWN", "underlying": "R_75", "buy_price": 12.5},
+                        {"contract_id": "new-nonmult-1", "contract_type": "CALL", "underlying": "R_100"},
+                    ]
+                }
+            }
         )
 
-        assert response.status_code == 200
-        data = response.json()
-        assert data["contract_id"] == "308022298068"
-        assert data["direction"] == "UP"
-        assert data["strategy_type"] == "Scalping"
-        assert data["status"] == "open"
-        mock_track.assert_called_once()
-        mock_risk_manager.record_trade_open.assert_called_once()
-        mock_bot.telegram_bridge.notify_trade_opened.assert_awaited_once()
-        mock_broadcast.assert_awaited_once()
+        async def _detail_by_contract(payload):
+            contract_id = str(payload.get("contract_id"))
+            if contract_id == "new-mult-1":
+                return {
+                    "proposal_open_contract": {
+                        "contract_id": "new-mult-1",
+                        "contract_type": "MULTDOWN",
+                        "underlying": "R_75",
+                        "buy_price": 12.5,
+                        "entry_spot": 99.9,
+                        "multiplier": 200,
+                        "date_start": 1700000000,
+                    }
+                }
+            return {
+                "proposal_open_contract": {
+                    "contract_id": "new-nonmult-1",
+                    "contract_type": "CALL",
+                    "underlying": "R_100",
+                }
+            }
 
+        mock_trade_engine.send_request = AsyncMock(side_effect=_detail_by_contract)
 
-def test_register_manual_active_trade_rejects_when_another_trade_is_active():
-    """Manual registration should reject when runtime already tracks a different active contract."""
-    with patch("app.api.trades.bot_manager") as mock_bm:
-        mock_risk_manager = MagicMock()
-        mock_risk_manager.get_active_trade_info.return_value = {"contract_id": "existing-1"}
-        mock_bot = MagicMock()
-        mock_bot.is_running = True
-        mock_bot.risk_manager = mock_risk_manager
-        mock_bot.strategy.get_strategy_name.return_value = "Conservative"
-        mock_bm._bots = {"user123": mock_bot}
-
-        response = client.post(
-            f"{API_PREFIX}/active/manual",
-            json={
-                "open_contract_id": "new-1",
-                "symbol": "R_75",
-                "direction": "UP",
-            },
-        )
-
-        assert response.status_code == 409
-        assert "already has an active contract" in response.json()["detail"]
-
-
-def test_register_manual_active_trade_rejects_when_active_trade_list_is_occupied():
-    """Manual registration should also reject when active_trades list already has another contract."""
-    with patch("app.api.trades.bot_manager") as mock_bm:
-        mock_risk_manager = MagicMock()
-        mock_risk_manager.active_trades = [{"contract_id": "existing-list-1", "symbol": "R_100"}]
-        mock_risk_manager.get_active_trade_info.return_value = None
-        mock_bot = MagicMock()
-        mock_bot.is_running = True
-        mock_bot.risk_manager = mock_risk_manager
-        mock_bot.strategy.get_strategy_name.return_value = "Conservative"
-        mock_bm._bots = {"user123": mock_bot}
-
-        response = client.post(
-            f"{API_PREFIX}/active/manual",
-            json={
-                "open_contract_id": "new-2",
-                "symbol": "R_100",
-                "direction": "UP",
-            },
-        )
-
-        assert response.status_code == 409
-        assert "already has an active contract" in response.json()["detail"]
-
-
-def test_register_manual_active_trade_uses_running_stake_when_missing():
-    """Manual registration should inherit configured running stake when payload stake is omitted."""
-    with patch("app.api.trades.bot_manager") as mock_bm, \
-         patch("app.api.trades.UserTradesService.track_active_trade") as mock_track, \
-         patch("app.api.trades.event_manager.broadcast", new_callable=AsyncMock):
         mock_risk_manager = MagicMock()
         mock_risk_manager.active_trades = []
         mock_risk_manager.get_active_trade_info.return_value = None
+
+        mock_state = MagicMock()
+        mock_state.active_trades = []
+
         mock_bot = MagicMock()
         mock_bot.is_running = True
+        mock_bot.trade_engine = mock_trade_engine
         mock_bot.risk_manager = mock_risk_manager
-        mock_bot.user_stake = 15.0
-        mock_bot.strategy.get_strategy_name.return_value = "Conservative"
+        mock_bot.state = mock_state
+        mock_bot.strategy.get_strategy_name.return_value = "Scalping"
+        mock_bot.telegram_bridge.notify_trade_opened = AsyncMock()
         mock_bm._bots = {"user123": mock_bot}
+
+        mock_ctx.return_value = {"deriv_api_key": None, "active_strategy": "Scalping"}
+        mock_ids.return_value = {"existing-1"}
         mock_track.return_value = {
-            "contract_id": "manual-3",
+            "contract_id": "new-mult-1",
             "symbol": "R_75",
-            "signal": "UP",
+            "signal": "DOWN",
             "status": "open",
-            "strategy_type": "Conservative",
+            "strategy_type": "Scalping",
         }
 
-        response = client.post(
-            f"{API_PREFIX}/active/manual",
-            json={
-                "open_contract_id": "manual-3",
-                "symbol": "R_75",
-                "direction": "UP",
-            },
-        )
+        response = client.post(f"{API_PREFIX}/active/sync")
 
         assert response.status_code == 200
-        saved_payload = mock_track.call_args.args[1]
-        assert saved_payload["stake"] == 15.0
+        data = response.json()
+        assert data["checked_contracts"] == 3
+        assert data["existing_count"] == 1
+        assert data["missing_count"] == 2
+        assert data["imported_count"] == 1
+        assert data["runtime_registered_count"] == 1
+        assert data["imported_contract_ids"] == ["new-mult-1"]
+        assert data["skipped_non_multiplier_ids"] == ["new-nonmult-1"]
+        mock_track.assert_called_once()
+        mock_risk_manager.record_trade_open.assert_called_once()
+        mock_broadcast.assert_awaited_once()
+
+
+def test_sync_active_trades_rejects_non_multiplier_strategy():
+    with patch("app.api.trades.bot_manager") as mock_bm, \
+         patch("app.api.trades._load_user_trading_context") as mock_ctx:
+        mock_bot = MagicMock()
+        mock_bot.strategy.get_strategy_name.return_value = "RiseFall"
+        mock_bm._bots = {"user123": mock_bot}
+        mock_ctx.return_value = {"deriv_api_key": "abc", "active_strategy": "RiseFall"}
+
+        response = client.post(f"{API_PREFIX}/active/sync")
+
+        assert response.status_code == 400
+        assert "supports Conservative and Scalping" in response.json()["detail"]
+
+
+def test_sync_active_trades_uses_profile_api_key_when_bot_not_running():
+    with patch("app.api.trades.bot_manager") as mock_bm, \
+         patch("app.api.trades._load_user_trading_context") as mock_ctx, \
+         patch("app.api.trades.TradeEngine") as mock_engine_cls, \
+         patch("app.api.trades.default_telegram_bridge") as mock_bridge, \
+         patch("app.api.trades.UserTradesService.get_user_trade_contract_ids") as mock_ids, \
+         patch("app.api.trades.UserTradesService.track_active_trade") as mock_track:
+        mock_bm._bots = {}
+        mock_ctx.return_value = {"deriv_api_key": "token-123", "active_strategy": "Conservative"}
+        mock_ids.return_value = set()
+        mock_track.return_value = {"contract_id": "new-1", "status": "open"}
+        mock_bridge.notify_trade_opened = AsyncMock()
+
+        mock_engine = MagicMock()
+        mock_engine.connect = AsyncMock(return_value=True)
+        mock_engine.disconnect = AsyncMock()
+        mock_engine.portfolio = AsyncMock(
+            return_value={
+                "portfolio": {
+                    "contracts": [
+                        {"contract_id": "new-1", "contract_type": "MULTUP", "underlying": "R_50"}
+                    ]
+                }
+            }
+        )
+        mock_engine.send_request = AsyncMock(
+            return_value={
+                "proposal_open_contract": {
+                    "contract_id": "new-1",
+                    "contract_type": "MULTUP",
+                    "underlying": "R_50",
+                    "buy_price": 10.0,
+                    "entry_spot": 101.0,
+                    "multiplier": 150,
+                    "date_start": 1700000000,
+                }
+            }
+        )
+        mock_engine_cls.return_value = mock_engine
+
+        response = client.post(f"{API_PREFIX}/active/sync")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["imported_count"] == 1
+        mock_engine_cls.assert_called_once()
+        mock_engine.connect.assert_awaited_once()
+        mock_engine.disconnect.assert_awaited_once()
+        mock_bridge.notify_trade_opened.assert_awaited_once()

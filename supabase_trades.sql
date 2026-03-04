@@ -7,6 +7,8 @@ create table if not exists public.trades (
   signal text not null,
   stake numeric null,
   entry_price numeric null,
+  multiplier numeric null,
+  entry_source text null,
   exit_price numeric null,
   profit numeric null,
   status text null,

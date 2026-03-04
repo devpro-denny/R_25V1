@@ -243,27 +243,50 @@ async def test_bot_runner_monitor_active_trade_already_closed(mock_components):
     runner.risk_manager = MagicMock()
     runner.risk_manager.has_active_trade = True
     runner.risk_manager.get_active_trade_info.return_value = {
-        'symbol': 'R_25', 'contract_id': '123'
+        "symbol": "R_25",
+        "contract_id": "123",
+        "direction": "UP",
+        "stake": 10.0,
+        "entry_price": 100.0,
+        "timestamp": datetime.now().isoformat(),
     }
-    
+
+    # Simulate an existing active row tracked in BotState to validate move-to-history.
+    runner.state.add_trade(
+        {
+            "contract_id": "123",
+            "symbol": "R_25",
+            "direction": "UP",
+            "stake": 10.0,
+            "entry_price": 100.0,
+            "status": "open",
+            "strategy_type": "Conservative",
+        }
+    )
+
     runner.trade_engine = mock_components["te"].return_value
     # Mock trade engine returning closed status
-    runner.trade_engine.get_trade_status = AsyncMock(return_value={'is_sold': True, 'profit': 10.0, 'status': 'won'})
-    
+    runner.trade_engine.get_trade_status = AsyncMock(
+        return_value={"is_sold": True, "profit": 10.0, "status": "won"}
+    )
+
     # Simple strategy mock
     runner.strategy = MagicMock()
     runner.strategy.get_strategy_name.return_value = "Conservative"
-    
+
     await runner._monitor_active_trade()
-    
-    # Since it's sold, but _monitor_active_trade only handles Scalping stagnation for non-sold?
-    # Wait, let's check the code. If is_sold is True, it doesn't do anything currently?
-    
-    # Actually, if trade_status and not trade_status.get('is_sold'):
-    # it only enters the scalping logic.
-    # If is_sold is True, it should probably be recorded as closed if not already?
-    # The runner currently relies on execute_trade waiting for closure.
-    pass
+
+    runner.risk_manager.record_trade_close.assert_called_once_with("123", 10.0, "won")
+    assert any(
+        isinstance(t, dict) and str(t.get("contract_id")) == "123"
+        for t in runner.state.trade_history
+    )
+    assert not any(
+        isinstance(t, dict) and str(t.get("contract_id")) == "123"
+        for t in runner.state.active_trades
+    )
+    assert mock_components["uts"].save_trade.called
+    runner.telegram_bridge.notify_trade_closed.assert_awaited_once()
 
 @pytest.mark.asyncio
 async def test_bot_runner_monitor_active_trade_conservative_stays_open(mock_components):
