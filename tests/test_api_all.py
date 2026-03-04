@@ -315,6 +315,36 @@ def test_monitor_logs_no_running_bot_returns_empty(mock_auth):
         assert response.json()["logs"] == []
 
 
+def test_monitor_logs_reads_profile_strategy_when_bot_not_running(mock_auth):
+    with patch("app.api.monitor.os.path.exists", return_value=True), \
+         patch("builtins.open") as mock_open, \
+         patch("app.api.monitor.bot_manager") as mock_manager, \
+         patch("app.api.monitor.supabase") as mock_supabase:
+        mock_file = MagicMock()
+        mock_file.__enter__.return_value.readlines.return_value = [
+            "2026-02-20 20:00:00 | INFO | [u123] Profile-strategy log line\n"
+        ]
+        mock_open.return_value = mock_file
+        mock_manager.get_status.return_value = {"is_running": False}
+        (
+            mock_supabase.table.return_value
+            .select.return_value
+            .eq.return_value
+            .limit.return_value
+            .execute.return_value
+            .data
+        ) = [{"active_strategy": "Scalping"}]
+
+        response = client.get("/api/v1/monitor/logs?lines=10")
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["running_bot"] is None
+        assert payload["active_strategy"] == "Scalping"
+        assert len(payload["logs"]) == 1
+        assert "Profile-strategy log line" in payload["logs"][0]
+        assert "not running" in payload["message"].lower()
+
+
 def test_monitor_logs_filters_decorative_lines(mock_auth):
     with patch("app.api.monitor.os.path.exists", return_value=True), \
          patch("builtins.open") as mock_open, \

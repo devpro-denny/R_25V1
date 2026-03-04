@@ -148,6 +148,10 @@ class BotRunner:
         self._active_progress_key_prefix = "active:"
         # Structured decision event throttling cache
         self._decision_log_state: Dict[str, Dict] = {}
+        # Periodic DB-to-runtime recovery for persisted open trades.
+        self._last_active_trade_recovery_at: datetime = datetime.min
+        # Track consecutive broker-status misses per contract for fallback reconciliation.
+        self._active_status_miss_counts: Dict[str, int] = {}
         # Protect trade execution path when symbol scans run concurrently.
         self._execution_mutex: asyncio.Lock = asyncio.Lock()
         # Protect cycle-level winner claim when multiple symbols signal concurrently.
@@ -421,6 +425,13 @@ class BotRunner:
         open_time = self._parse_trade_datetime(
             persisted_trade.get("timestamp") or persisted_trade.get("open_time")
         ) or datetime.now()
+        entry_source = str(persisted_trade.get("entry_source") or "system")
+        is_manual_tracking = entry_source.strip().lower() in {
+            "manual_imported",
+            "manual_tracking",
+            "sync_import",
+            "broker_sync",
+        } or bool(persisted_trade.get("manual_tracking"))
 
         if self._is_scalping_strategy() and hasattr(self.risk_manager, "_trade_metadata"):
             active_trades = getattr(self.risk_manager, "active_trades", None)
@@ -442,6 +453,8 @@ class BotRunner:
                 "min_rr_required": persisted_trade.get("min_rr_required", existing_meta.get("min_rr_required")),
                 "trailing_enabled": bool(existing_meta.get("trailing_enabled", True)),
                 "stagnation_enabled": bool(existing_meta.get("stagnation_enabled", True)),
+                "entry_source": entry_source,
+                "manual_tracking": is_manual_tracking,
             }
         else:
             active_trades = getattr(self.risk_manager, "active_trades", None)
@@ -466,6 +479,8 @@ class BotRunner:
                     "has_been_profitable": False,
                     "trailing_enabled": True,
                     "stagnation_enabled": True,
+                    "entry_source": entry_source,
+                    "manual_tracking": is_manual_tracking,
                 }
             )
 
@@ -493,6 +508,48 @@ class BotRunner:
             symbol,
         )
         return True
+
+    def _recover_runtime_active_trades(self, min_interval_seconds: int = 15) -> int:
+        """
+        Recover persisted open trades into runtime state during live bot operation.
+        This protects monitoring continuity if runtime registration was missed.
+        """
+        if not self.account_id or not self.risk_manager:
+            return 0
+
+        now = datetime.now()
+        if (
+            self._last_active_trade_recovery_at != datetime.min
+            and (now - self._last_active_trade_recovery_at).total_seconds() < max(min_interval_seconds, 1)
+        ):
+            return 0
+        self._last_active_trade_recovery_at = now
+
+        try:
+            persisted_active = UserTradesService.get_user_active_trades(self.account_id, limit=50)
+        except Exception as e:
+            logger.warning(
+                "[%s][SYSTEM] Runtime active-trade recovery failed: %s",
+                self._get_strategy_name(),
+                e,
+            )
+            return 0
+
+        if not isinstance(persisted_active, list) or not persisted_active:
+            return 0
+
+        recovered = 0
+        for persisted_trade in persisted_active:
+            if self._restore_trade_for_monitoring(persisted_trade):
+                recovered += 1
+
+        if recovered:
+            logger.info(
+                "[%s][SYSTEM] Runtime active-trade recovery: %s contract(s) reattached for monitoring",
+                self._get_strategy_name(),
+                recovered,
+            )
+        return recovered
 
     async def _reconcile_active_trades_on_startup(self) -> None:
         """
@@ -1219,6 +1276,9 @@ class BotRunner:
         5. All other symbols blocked until trade closes
         """
         
+        # Recover persisted opens that may have missed runtime registration.
+        self._recover_runtime_active_trades()
+
         # Step 1: Check global permission
         self._cycle_signal_claimed = False
         self._cycle_winner_symbol = None
@@ -1226,7 +1286,19 @@ class BotRunner:
         
         # If we have an active trade, monitor it instead of scanning
         if self.risk_manager.active_trades:
-            logger.debug(f"[{self._get_strategy_name()}][SYSTEM] \U0001F440 Monitoring {len(self.risk_manager.active_trades)} active trade(s)")
+            now = datetime.now()
+            monitor_log_key = "system:active_trade_monitor_mode"
+            last_marker = self.last_status_log.get(monitor_log_key, {"time": datetime.min})
+            if (now - last_marker.get("time", datetime.min)).total_seconds() >= 15:
+                logger.info(
+                    "[%s][SYSTEM] Active trade(s) detected (%s) - monitoring exits while new entries remain gated",
+                    self._get_strategy_name(),
+                    len(self.risk_manager.active_trades),
+                )
+                self.last_status_log[monitor_log_key] = {
+                    "msg": "active_trade_monitor_mode",
+                    "time": now,
+                }
             await self._broadcast_decision(
                 symbol="SYSTEM",
                 phase="scan",
@@ -1874,6 +1946,7 @@ class BotRunner:
                     pass
 
                 self.last_status_log.pop(progress_key, None)
+                self._active_status_miss_counts.pop(contract_id, None)
                 return True
             except Exception as close_error:
                 self._cycle_step(
@@ -1889,7 +1962,69 @@ class BotRunner:
         try:
             trade_status = await self.trade_engine.get_trade_status(contract_id)
             if not trade_status:
+                miss_count = self._active_status_miss_counts.get(contract_id, 0) + 1
+                self._active_status_miss_counts[contract_id] = miss_count
+                miss_log_key = f"{progress_key}:status_miss"
+                now = datetime.now()
+                last_miss = self.last_status_log.get(miss_log_key, {"time": datetime.min})
+                if (now - last_miss.get("time", datetime.min)).total_seconds() >= 15:
+                    logger.warning(
+                        "[%s][%s] Active monitor: broker status unavailable for contract %s (attempt %s)",
+                        self._get_strategy_name(),
+                        symbol,
+                        contract_id,
+                        miss_count,
+                    )
+                    self.last_status_log[miss_log_key] = {
+                        "msg": "status_unavailable",
+                        "time": now,
+                    }
+
+                # Fallback: if broker portfolio confirms this contract is no
+                # longer open, force runtime/db transition to avoid stale rows.
+                if miss_count >= 3:
+                    try:
+                        portfolio_resp = await self.trade_engine.portfolio({"portfolio": 1})
+                        contracts = list((portfolio_resp or {}).get("portfolio", {}).get("contracts") or [])
+                        open_ids = {
+                            str(item.get("contract_id"))
+                            for item in contracts
+                            if isinstance(item, dict) and item.get("contract_id") not in (None, "")
+                        }
+                        if contract_id not in open_ids:
+                            logger.warning(
+                                "[%s][%s] Active monitor fallback: %s absent from broker open portfolio; marking closed",
+                                self._get_strategy_name(),
+                                symbol,
+                                contract_id,
+                            )
+                            if hasattr(self.risk_manager, "record_trade_close"):
+                                self.risk_manager.record_trade_close(contract_id, 0.0, "closed")
+                            forced_close = dict(active_info)
+                            forced_close.update(
+                                {
+                                    "contract_id": contract_id,
+                                    "status": "closed",
+                                    "profit": 0.0,
+                                    "timestamp": datetime.now(),
+                                    "strategy_type": self._get_strategy_name(),
+                                    "exit_reason": "broker_status_unavailable_portfolio_closed",
+                                }
+                            )
+                            self.state.update_trade(contract_id, forced_close)
+                            UserTradesService.save_trade(self.account_id, forced_close)
+                            self._active_status_miss_counts.pop(contract_id, None)
+                            self.last_status_log.pop(progress_key, None)
+                    except Exception as fallback_error:
+                        logger.warning(
+                            "[%s][%s] Active monitor fallback reconciliation failed for %s: %s",
+                            self._get_strategy_name(),
+                            symbol,
+                            contract_id,
+                            fallback_error,
+                        )
                 return
+            self._active_status_miss_counts.pop(contract_id, None)
 
             status_name = str(trade_status.get("status", "")).strip().lower()
             is_sold = bool(trade_status.get("is_sold")) or status_name in {
@@ -2085,6 +2220,7 @@ class BotRunner:
                     pass
 
                 self.last_status_log.pop(progress_key, None)
+                self._active_status_miss_counts.pop(contract_id, None)
 
         except Exception as e:
             logger.warning(f"[{self._get_strategy_name()}][{symbol}] Could not monitor trade: {e}")

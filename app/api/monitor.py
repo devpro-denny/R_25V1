@@ -14,6 +14,7 @@ from app.bot.events import event_manager
 from app.bot.manager import bot_manager
 from app.core.auth import get_current_active_user
 from app.core.serializers import prepare_response
+from app.core.supabase import supabase
 from app.schemas.common import PerformanceResponse
 
 router = APIRouter()
@@ -121,6 +122,24 @@ def _resolve_active_strategy(status: dict) -> str | None:
     if isinstance(cfg, dict):
         return _normalize_strategy_name(cfg.get("strategy"))
     return None
+
+
+def _resolve_profile_strategy(user_id: str) -> str | None:
+    """Fallback strategy source when bot is not running."""
+    try:
+        response = (
+            supabase.table("profiles")
+            .select("active_strategy")
+            .eq("id", user_id)
+            .limit(1)
+            .execute()
+        )
+        rows = list(response.data or [])
+        if not rows:
+            return None
+        return _normalize_strategy_name(rows[0].get("active_strategy"))
+    except Exception:
+        return None
 
 
 def _resolve_log_files(active_strategy: str, user_id: str) -> list[str]:
@@ -240,27 +259,27 @@ async def get_recent_logs(
     lines: int = Query(100, ge=1, le=1000),
     current_user: dict = Depends(get_current_active_user),
 ):
-    """Get recent logs for the currently running bot only."""
+    """Get recent logs for the user's active strategy (running or last-known)."""
     try:
         user_id = current_user["id"]
         filtered_logs = []
         total_lines = 0
 
         status = bot_manager.get_status(user_id)
-        active_strategy = _resolve_active_strategy(status)
+        active_strategy = _resolve_active_strategy(status) or _resolve_profile_strategy(user_id)
         running_bot = None
-        if status.get("is_running"):
+        is_running = bool(status.get("is_running"))
+        if is_running:
             running_bot = "risefall" if active_strategy == "RiseFall" else "multiplier"
-
-        if not running_bot:
+        if not active_strategy:
             return prepare_response(
                 {
                     "logs": [],
                     "total_lines": 0,
                     "showing": 0,
-                    "running_bot": None,
+                    "running_bot": running_bot,
                     "active_strategy": None,
-                    "message": "No bot is currently running",
+                    "message": "No active strategy resolved for this user",
                 }
             )
 
@@ -299,6 +318,11 @@ async def get_recent_logs(
                 "showing": len(filtered_logs),
                 "running_bot": running_bot,
                 "active_strategy": active_strategy,
+                "message": (
+                    "Live bot logs"
+                    if is_running
+                    else "Showing recent strategy logs while bot is not running"
+                ),
             }
         )
     except Exception as e:

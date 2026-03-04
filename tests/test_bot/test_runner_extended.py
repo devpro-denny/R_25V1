@@ -225,3 +225,66 @@ async def test_scalping_gate_counters_track_rejections_and_opportunity_rate(runn
     assert metrics["scalping_rejections"] == 1
     assert metrics["scalping_opportunity_rate_pct"] == 50.0
     assert metrics["scalping_gate_counters"]["gate_2_trend:no_fresh_crossover"] == 1
+
+
+def test_recover_runtime_active_trades_throttles_and_recovers(runner):
+    runner.risk_manager = MagicMock()
+    runner._restore_trade_for_monitoring = MagicMock(side_effect=[True])
+
+    with patch("app.bot.runner.UserTradesService.get_user_active_trades", return_value=[{"contract_id": "c1"}]) as mock_get:
+        recovered = runner._recover_runtime_active_trades(min_interval_seconds=1)
+        assert recovered == 1
+        assert mock_get.call_count == 1
+
+        # Second immediate call should be throttled.
+        recovered_again = runner._recover_runtime_active_trades(min_interval_seconds=60)
+        assert recovered_again == 0
+        assert mock_get.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_multi_asset_scan_cycle_monitors_active_trades_even_when_global_gate_blocked(runner):
+    runner.risk_manager = MagicMock()
+    runner.risk_manager.active_trades = ["c1"]
+    runner.risk_manager.can_trade.return_value = (False, "Circuit breaker cooldown active")
+    runner._recover_runtime_active_trades = MagicMock(return_value=0)
+    runner._broadcast_decision = AsyncMock()
+    runner._monitor_active_trade = AsyncMock()
+
+    await runner._multi_asset_scan_cycle()
+
+    runner._recover_runtime_active_trades.assert_called_once()
+    runner._monitor_active_trade.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_monitor_active_trade_fallback_closes_when_status_missing_and_not_in_portfolio(runner):
+    runner.account_id = "u-test"
+    runner.state = MagicMock()
+
+    risk_manager = MagicMock()
+    risk_manager.active_trades = ["c1"]
+    risk_manager.get_active_trade_info.return_value = {
+        "contract_id": "c1",
+        "symbol": "R_25",
+        "stake": 10.0,
+        "entry_source": "manual_imported",
+        "manual_tracking": True,
+    }
+    runner.risk_manager = risk_manager
+
+    trade_engine = MagicMock()
+    trade_engine.get_trade_status = AsyncMock(return_value=None)
+    trade_engine.portfolio = AsyncMock(return_value={"portfolio": {"contracts": []}})
+    runner.trade_engine = trade_engine
+
+    # Prime miss counter so fallback branch executes in this call.
+    runner._active_status_miss_counts["c1"] = 2
+
+    with patch("app.bot.runner.UserTradesService.save_trade", return_value={"contract_id": "c1"}) as mock_save:
+        await runner._monitor_active_trade()
+
+    risk_manager.record_trade_close.assert_called_once_with("c1", 0.0, "closed")
+    runner.state.update_trade.assert_called_once()
+    assert "c1" not in runner._active_status_miss_counts
+    assert mock_save.called
