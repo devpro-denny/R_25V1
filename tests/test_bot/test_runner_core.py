@@ -380,3 +380,86 @@ async def test_bot_runner_monitor_active_trade_scalping_trailing_activation(mock
     
     # Should call remove_take_profit
     assert runner.trade_engine.remove_take_profit.called
+
+
+@pytest.mark.asyncio
+async def test_runner_startup_reconcile_restores_open_scalping_trade(mock_components):
+    runner = BotRunner(account_id="test_user")
+    runner.strategy = MagicMock()
+    runner.strategy.get_strategy_name.return_value = "Scalping"
+
+    risk_manager = MagicMock()
+    risk_manager.active_trades = []
+    risk_manager._trade_metadata = {}
+    runner.risk_manager = risk_manager
+
+    runner.trade_engine = mock_components["te"].return_value
+    runner.trade_engine.get_trade_status = AsyncMock(
+        return_value={
+            "contract_id": "C-OPEN-1",
+            "status": "open",
+            "is_sold": False,
+            "profit": 0.0,
+        }
+    )
+
+    mock_components["uts"].get_user_active_trades.return_value = [
+        {
+            "contract_id": "C-OPEN-1",
+            "symbol": "R_75",
+            "signal": "DOWN",
+            "stake": 10.0,
+            "entry_price": 100.5,
+            "timestamp": datetime.now().isoformat(),
+            "status": "open",
+        }
+    ]
+
+    await runner._reconcile_active_trades_on_startup()
+
+    assert "C-OPEN-1" in runner.risk_manager.active_trades
+    assert runner.risk_manager._trade_metadata["C-OPEN-1"]["symbol"] == "R_75"
+    assert any(
+        str(trade.get("contract_id")) == "C-OPEN-1"
+        for trade in runner.state.active_trades
+    )
+
+
+@pytest.mark.asyncio
+async def test_runner_startup_reconcile_settles_stale_open_db_trade(mock_components):
+    runner = BotRunner(account_id="test_user")
+    runner.strategy = MagicMock()
+    runner.strategy.get_strategy_name.return_value = "Conservative"
+    runner.risk_manager = MagicMock()
+    runner.risk_manager.active_trades = []
+
+    runner.trade_engine = mock_components["te"].return_value
+    runner.trade_engine.get_trade_status = AsyncMock(
+        return_value={
+            "contract_id": "C-CLOSED-1",
+            "status": "won",
+            "is_sold": True,
+            "profit": 4.5,
+            "current_spot": 102.0,
+            "sell_time": int(datetime.now().timestamp()),
+        }
+    )
+
+    mock_components["uts"].get_user_active_trades.return_value = [
+        {
+            "contract_id": "C-CLOSED-1",
+            "symbol": "R_25",
+            "signal": "UP",
+            "stake": 10.0,
+            "entry_price": 100.0,
+            "status": "open",
+        }
+    ]
+    mock_components["uts"].save_trade.return_value = {"contract_id": "C-CLOSED-1"}
+
+    await runner._reconcile_active_trades_on_startup()
+
+    assert mock_components["uts"].save_trade.called
+    payload = mock_components["uts"].save_trade.call_args[0][1]
+    assert payload["contract_id"] == "C-CLOSED-1"
+    assert payload["status"] != "open"
