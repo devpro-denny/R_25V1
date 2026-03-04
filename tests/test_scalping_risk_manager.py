@@ -174,6 +174,32 @@ def test_scalping_manual_import_trade_does_not_increment_daily_cooldown_counters
     assert srm.daily_pnl == 0.0
     assert srm.consecutive_losses == 0
 
+def test_scalping_manual_import_trade_exit_controls_toggle(srm):
+    """Exit controls must be mutable for synced/manual-import scalping trades."""
+    srm.record_trade_open(
+        {
+            "contract_id": "MANUAL-TOGGLE-1",
+            "symbol": "R_75",
+            "direction": "DOWN",
+            "stake": 10.0,
+            "entry_source": "manual_imported",
+            "manual_tracking": True,
+        }
+    )
+
+    updated = srm.set_trade_exit_controls(
+        "MANUAL-TOGGLE-1",
+        trailing_enabled=False,
+        stagnation_enabled=False,
+    )
+    assert updated is not None
+    assert updated["trailing_enabled"] is False
+    assert updated["stagnation_enabled"] is False
+
+    metadata = srm._trade_metadata["MANUAL-TOGGLE-1"]
+    assert metadata["trailing_enabled"] is False
+    assert metadata["stagnation_enabled"] is False
+
 def test_scalping_rm_daily_entry_limit_ignores_manual_import_rows(srm, monkeypatch):
     """DB-synced daily count should exclude manual-import rows."""
     mock_supabase = MagicMock()
