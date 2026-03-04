@@ -174,15 +174,15 @@ SCALPING_RUNAWAY_TRADE_COUNT = 10
 # ==================== STAGNATION EXIT ====================
 # Final report recommendation (Feb 25-27, 2026):
 # cut stagnation losers earlier without touching winners (which are positive early).
-SCALPING_STAGNATION_EXIT_TIME = 120  # seconds
+SCALPING_STAGNATION_EXIT_TIME = 76  # seconds
 SCALPING_STAGNATION_LOSS_PCT = 4  # percentage of stake
 SCALPING_STAGNATION_RR_GRACE_THRESHOLD = 2.5
 SCALPING_STAGNATION_EXTRA_TIME = 0  # disabled by default for strict 75s/3.0% behavior
 
 SCALPING_SYMBOL_STAGNATION_OVERRIDES = {
-    "stpRNG5": 180,
-    "R_75": 150,
-    "R_25": 90,
+    "stpRNG5": 120,
+    "R_75": 120,
+    "R_25": 120,
 }
 
 # ==================== TRAILING PROFIT ====================
