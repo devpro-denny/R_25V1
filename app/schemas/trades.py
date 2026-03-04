@@ -66,3 +66,21 @@ class TradeExitControlsResponse(BaseModel):
     contract_id: str
     trailing_enabled: bool
     stagnation_enabled: bool
+
+
+class ManualActiveTradeCreate(BaseModel):
+    """Schema for registering a manually opened broker contract for monitoring."""
+
+    open_contract_id: str = Field(
+        validation_alias=AliasChoices("open_contract_id", "contract_id")
+    )
+    symbol: str
+    direction: str = Field(default="UP")
+    stake: Optional[float] = None
+    entry_price: Optional[float] = None
+    strategy_type: Optional[str] = None
+    open_time: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+        populate_by_name = True

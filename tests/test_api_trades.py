@@ -5,7 +5,7 @@ Tests API endpoints with mocked auth and service layers.
 
 import pytest
 from fastapi.testclient import TestClient
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 from app.core.auth import get_current_active_user
 from app.main import app  # Import your FastAPI app
 
@@ -229,3 +229,74 @@ def test_update_active_trade_exit_controls_not_found():
 
         assert response.status_code == 404
         assert "No running bot" in response.json()["detail"]
+
+
+def test_register_manual_active_trade_success():
+    """Manual contract registration should persist and return normalized trade payload."""
+    with patch("app.api.trades.bot_manager") as mock_bm, \
+         patch("app.api.trades.UserTradesService.track_active_trade") as mock_track, \
+         patch("app.api.trades.event_manager.broadcast", new_callable=AsyncMock) as mock_broadcast:
+        mock_risk_manager = MagicMock()
+        mock_risk_manager.get_active_trade_info.return_value = None
+        mock_bot = MagicMock()
+        mock_bot.is_running = True
+        mock_bot.risk_manager = mock_risk_manager
+        mock_bot.strategy.get_strategy_name.return_value = "Scalping"
+        mock_bot.state.active_trades = []
+        mock_bm._bots = {"user123": mock_bot}
+
+        mock_track.return_value = {
+            "contract_id": "308022298068",
+            "symbol": "R_50",
+            "signal": "UP",
+            "status": "open",
+            "strategy_type": "Scalping",
+            "stake": 10.0,
+            "entry_price": 100.0,
+            "timestamp": "2026-03-04T08:00:00",
+        }
+
+        response = client.post(
+            f"{API_PREFIX}/active/manual",
+            json={
+                "open_contract_id": "308022298068",
+                "symbol": "R_50",
+                "direction": "CALL",
+                "stake": 10.0,
+                "entry_price": 100.0,
+            },
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["contract_id"] == "308022298068"
+        assert data["direction"] == "UP"
+        assert data["strategy_type"] == "Scalping"
+        assert data["status"] == "open"
+        mock_track.assert_called_once()
+        mock_risk_manager.record_trade_open.assert_called_once()
+        mock_broadcast.assert_awaited_once()
+
+
+def test_register_manual_active_trade_rejects_when_another_trade_is_active():
+    """Manual registration should reject when runtime already tracks a different active contract."""
+    with patch("app.api.trades.bot_manager") as mock_bm:
+        mock_risk_manager = MagicMock()
+        mock_risk_manager.get_active_trade_info.return_value = {"contract_id": "existing-1"}
+        mock_bot = MagicMock()
+        mock_bot.is_running = True
+        mock_bot.risk_manager = mock_risk_manager
+        mock_bot.strategy.get_strategy_name.return_value = "Conservative"
+        mock_bm._bots = {"user123": mock_bot}
+
+        response = client.post(
+            f"{API_PREFIX}/active/manual",
+            json={
+                "open_contract_id": "new-1",
+                "symbol": "R_75",
+                "direction": "UP",
+            },
+        )
+
+        assert response.status_code == 409
+        assert "already has an active contract" in response.json()["detail"]

@@ -4,35 +4,64 @@ View active trades, history, and statistics
 """
 
 from fastapi import APIRouter, Query, Depends, HTTPException
-from typing import List
+from typing import Dict, List, Optional
 from datetime import datetime
+import logging
 
+from app.bot.events import event_manager
 from app.bot.manager import bot_manager
 from app.schemas.trades import (
+    ManualActiveTradeCreate,
     TradeExitControlsResponse,
     TradeExitControlsUpdate,
     TradeResponse,
     TradeStatsResponse,
 )
-from app.core.serializers import prepare_response  # ← ADD THIS LINE
+from app.core.serializers import prepare_response
 from app.core.auth import get_current_active_user
 from app.services.trades_service import UserTradesService
 
 router = APIRouter()
 
+
+def _normalize_direction(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return None
+    raw = str(value).strip().upper()
+    if raw in {"UP", "BUY", "CALL", "RISE"}:
+        return "UP"
+    if raw in {"DOWN", "SELL", "PUT", "FALL"}:
+        return "DOWN"
+    return None
+
+
+def _normalize_strategy(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        from strategy_registry import normalize_strategy_name
+
+        return normalize_strategy_name(text)
+    except Exception:
+        return text
+
+
+def _get_user_bot(user_id: str):
+    bots_map = getattr(bot_manager, "_bots", None)
+    if isinstance(bots_map, dict):
+        return bots_map.get(user_id)
+    return bot_manager.get_bot(user_id)
+
 @router.get("/active", response_model=List[TradeResponse])
 async def get_active_trades(
-    current_user: dict = Depends(get_current_active_user)  # ← ADD AUTH
+    current_user: dict = Depends(get_current_active_user)
 ):
     """Get all active trades"""
     user_id = current_user["id"]
-    bot = None
-    bots_map = getattr(bot_manager, "_bots", None)
-    if isinstance(bots_map, dict):
-        bot = bots_map.get(user_id)
-    else:
-        # Test fallback when bot_manager is mocked
-        bot = bot_manager.get_bot(user_id)
+    bot = _get_user_bot(user_id)
 
     trades = bot.state.get_active_trades() if bot else []
 
@@ -72,8 +101,172 @@ async def get_active_trades(
 
     return prepare_response(
         trades,
-        id_fields=['contract_id']  # ← Convert contract_id to string
+        id_fields=['contract_id']
     )
+
+
+@router.post("/active/manual", response_model=TradeResponse)
+async def register_manual_active_trade(
+    payload: ManualActiveTradeCreate,
+    current_user: dict = Depends(get_current_active_user),
+):
+    """
+    Register a manually opened broker contract for DB persistence and bot monitoring.
+    """
+    user_id = current_user["id"]
+    contract_id = str(payload.open_contract_id or "").strip()
+    symbol = str(payload.symbol or "").strip().upper()
+    direction = _normalize_direction(payload.direction)
+
+    if not contract_id:
+        raise HTTPException(status_code=400, detail="Open contract ID is required")
+    if not symbol:
+        raise HTTPException(status_code=400, detail="Symbol is required")
+    if direction is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Direction must be one of: UP, DOWN, CALL, PUT, BUY, SELL, RISE, FALL",
+        )
+
+    bot = _get_user_bot(user_id)
+    running_strategy = None
+    if bot and getattr(bot, "strategy", None) and hasattr(bot.strategy, "get_strategy_name"):
+        try:
+            running_strategy = _normalize_strategy(bot.strategy.get_strategy_name())
+        except Exception:
+            running_strategy = None
+
+    requested_strategy = _normalize_strategy(payload.strategy_type)
+    strategy_type = running_strategy or requested_strategy or "Conservative"
+    if strategy_type not in {"Conservative", "Scalping"}:
+        raise HTTPException(
+            status_code=400,
+            detail="Manual contract monitoring is supported for Conservative and Scalping only",
+        )
+    if running_strategy and requested_strategy and requested_strategy != running_strategy:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Strategy mismatch: bot is running {running_strategy}, "
+                f"but request provided {requested_strategy}"
+            ),
+        )
+
+    open_time = payload.open_time or datetime.now()
+    trade_payload: Dict[str, object] = {
+        "contract_id": contract_id,
+        "symbol": symbol,
+        "direction": direction,
+        "signal": direction,
+        "stake": payload.stake,
+        "entry_price": payload.entry_price,
+        "entry_spot": payload.entry_price,
+        "open_time": open_time,
+        "timestamp": open_time,
+        "status": "open",
+        "strategy_type": strategy_type,
+    }
+
+    if bot and bot.is_running and bot.risk_manager and hasattr(bot.risk_manager, "get_active_trade_info"):
+        active_info = bot.risk_manager.get_active_trade_info()
+        if isinstance(active_info, dict):
+            active_contract = active_info.get("contract_id")
+            if active_contract not in (None, "") and str(active_contract) != contract_id:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        "Bot already has an active contract "
+                        f"({active_contract}). Close it before registering another."
+                    ),
+                )
+
+    saved = UserTradesService.track_active_trade(user_id, trade_payload)
+    if not saved:
+        raise HTTPException(status_code=500, detail="Failed to persist manual active trade")
+
+    saved_status = str(saved.get("status", "")).strip().lower()
+    if saved_status != "open":
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Contract is already settled in trade history; "
+                "it cannot be registered as an active trade."
+            ),
+        )
+
+    runtime_registered = False
+    if bot and bot.is_running and bot.risk_manager and hasattr(bot.risk_manager, "record_trade_open"):
+        active_info = None
+        if hasattr(bot.risk_manager, "get_active_trade_info"):
+            active_info = bot.risk_manager.get_active_trade_info()
+        active_contract = (
+            str(active_info.get("contract_id"))
+            if isinstance(active_info, dict) and active_info.get("contract_id") not in (None, "")
+            else None
+        )
+
+        if active_contract != contract_id:
+            bot.risk_manager.record_trade_open(trade_payload)
+            runtime_registered = True
+
+            if getattr(bot, "state", None):
+                state_exists = any(
+                    isinstance(row, dict) and str(row.get("contract_id")) == contract_id
+                    for row in list(getattr(bot.state, "active_trades", []))
+                )
+                if not state_exists and hasattr(bot.state, "add_trade"):
+                    bot.state.add_trade(
+                        {
+                            "contract_id": contract_id,
+                            "symbol": symbol,
+                            "direction": direction,
+                            "strategy_type": strategy_type,
+                            "stake": payload.stake,
+                            "entry_price": payload.entry_price,
+                            "status": "open",
+                            "timestamp": open_time,
+                            "trailing_enabled": True,
+                            "stagnation_enabled": True,
+                        }
+                    )
+
+            try:
+                await event_manager.broadcast(
+                    {
+                        "type": "new_trade",
+                        "contract_id": contract_id,
+                        "symbol": symbol,
+                        "direction": direction,
+                        "strategy_type": strategy_type,
+                        "stake": payload.stake,
+                        "entry_price": payload.entry_price,
+                        "status": "open",
+                        "timestamp": open_time.isoformat(),
+                        "account_id": user_id,
+                    }
+                )
+            except Exception as broadcast_error:
+                logging.getLogger(__name__).warning(
+                    "Manual trade registered but WS broadcast failed for %s: %s",
+                    contract_id,
+                    broadcast_error,
+                )
+
+    response_payload: Dict[str, object] = dict(saved or {})
+    response_payload.setdefault("contract_id", contract_id)
+    response_payload.setdefault("symbol", symbol)
+    response_payload.setdefault("direction", direction)
+    response_payload.setdefault("signal", direction)
+    response_payload.setdefault("status", "open")
+    response_payload.setdefault("strategy_type", strategy_type)
+    response_payload.setdefault("stake", payload.stake)
+    response_payload.setdefault("entry_price", payload.entry_price)
+    response_payload.setdefault("timestamp", open_time)
+    if runtime_registered:
+        response_payload.setdefault("trailing_enabled", True)
+        response_payload.setdefault("stagnation_enabled", True)
+
+    return prepare_response(response_payload, id_fields=["contract_id"])
 
 @router.get("/history", response_model=List[TradeResponse])
 async def get_trade_history(
