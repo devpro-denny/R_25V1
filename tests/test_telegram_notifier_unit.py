@@ -157,3 +157,36 @@ async def test_notify_trade_closed_uses_clean_outcome_emoji(mock_bot):
         assert "\u00e2\u2013" not in sent
         assert "\u00e2\u20ac\u00a2" not in sent
 
+
+@pytest.mark.asyncio
+async def test_notify_trade_opened_includes_entry_source_labels(mock_bot):
+    with patch.dict("os.environ", {"TELEGRAM_BOT_TOKEN": "test_token", "TELEGRAM_CHAT_ID": "test_chat"}):
+        notifier = TelegramNotifier()
+        notifier.bot.send_message = AsyncMock()
+
+        await notifier.notify_trade_opened(
+            {
+                "symbol": "R_25",
+                "contract_id": "sys-1",
+                "direction": "UP",
+                "stake": 10.0,
+                "entry_price": 100.0,
+            }
+        )
+        sent_system = notifier.bot.send_message.call_args.kwargs["text"]
+        assert "Entry Source: <b>System Strategy</b>" in sent_system
+
+        await notifier.notify_trade_opened(
+            {
+                "symbol": "R_25",
+                "contract_id": "manual-1",
+                "direction": "DOWN",
+                "stake": 10.0,
+                "entry_price": 100.0,
+                "manual_tracking": True,
+                "entry_source": "manual_tracking",
+            }
+        )
+        sent_manual = notifier.bot.send_message.call_args.kwargs["text"]
+        assert "Entry Source: <b>Manual Tracking</b>" in sent_manual
+

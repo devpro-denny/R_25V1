@@ -282,6 +282,41 @@ async def test_bot_runner_monitor_active_trade_conservative_stays_open(mock_comp
     # Should not close since it's not scalping and not sold
     assert not runner.trade_engine.close_trade.called
 
+
+@pytest.mark.asyncio
+async def test_bot_runner_monitor_active_trade_conservative_risk_exit(mock_components):
+    runner = BotRunner(account_id="test_user")
+    runner.risk_manager = MagicMock()
+    runner.risk_manager.has_active_trade = True
+    runner.risk_manager.get_active_trade_info.return_value = {
+        "symbol": "R_50",
+        "contract_id": "C-1",
+        "stake": 10.0,
+        "entry_price": 100.0,
+        "timestamp": datetime.now().isoformat(),
+    }
+    runner.risk_manager.should_close_trade.return_value = {
+        "should_close": True,
+        "reason": "stagnation_exit",
+        "message": "Stagnation threshold reached",
+    }
+
+    runner.trade_engine = mock_components["te"].return_value
+    runner.trade_engine.get_trade_status = AsyncMock(
+        return_value={"is_sold": False, "profit": -1.0, "current_spot": 99.0}
+    )
+    runner.trade_engine.close_trade = AsyncMock(
+        return_value={"status": "closed", "profit": -1.0, "contract_id": "C-1"}
+    )
+
+    runner.strategy = MagicMock()
+    runner.strategy.get_strategy_name.return_value = "Conservative"
+
+    await runner._monitor_active_trade()
+
+    runner.trade_engine.close_trade.assert_called_once_with("C-1")
+    runner.risk_manager.record_trade_close.assert_called_once()
+
 @pytest.mark.asyncio
 async def test_bot_runner_monitor_active_trade_scalping_stagnation(mock_components):
     # Mock ScalpingRiskManager to pass isinstance check
@@ -463,3 +498,77 @@ async def test_runner_startup_reconcile_settles_stale_open_db_trade(mock_compone
     payload = mock_components["uts"].save_trade.call_args[0][1]
     assert payload["contract_id"] == "C-CLOSED-1"
     assert payload["status"] != "open"
+    assert runner.telegram_bridge.notify_trade_closed.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_runner_startup_reconcile_handles_manual_and_system_entries(mock_components):
+    runner = BotRunner(account_id="test_user")
+    runner.strategy = MagicMock()
+    runner.strategy.get_strategy_name.return_value = "Conservative"
+
+    risk_manager = MagicMock()
+    risk_manager.active_trades = []
+    runner.risk_manager = risk_manager
+
+    runner.trade_engine = mock_components["te"].return_value
+
+    async def _status_by_contract(contract_id):
+        if contract_id == "MANUAL-OPEN-1":
+            return {
+                "contract_id": contract_id,
+                "status": "open",
+                "is_sold": False,
+                "profit": 0.0,
+            }
+        if contract_id == "SYSTEM-CLOSED-1":
+            return {
+                "contract_id": contract_id,
+                "status": "lost",
+                "is_sold": True,
+                "profit": -3.25,
+                "current_spot": 99.1,
+                "sell_time": int(datetime.now().timestamp()),
+            }
+        return None
+
+    runner.trade_engine.get_trade_status = AsyncMock(side_effect=_status_by_contract)
+
+    mock_components["uts"].get_user_active_trades.return_value = [
+        {
+            "contract_id": "MANUAL-OPEN-1",
+            "symbol": "R_25",
+            "signal": "DOWN",
+            "stake": 10.0,
+            "entry_price": 100.0,
+            "status": "open",
+            "entry_source": "manual_tracking",
+            "manual_tracking": True,
+        },
+        {
+            "contract_id": "SYSTEM-CLOSED-1",
+            "symbol": "R_50",
+            "signal": "UP",
+            "stake": 10.0,
+            "entry_price": 101.0,
+            "status": "open",
+            "entry_source": "system",
+        },
+    ]
+    mock_components["uts"].save_trade.return_value = {"contract_id": "SYSTEM-CLOSED-1"}
+
+    await runner._reconcile_active_trades_on_startup()
+
+    # Manual open trade restored into runtime monitoring state.
+    assert any(
+        isinstance(row, dict) and str(row.get("contract_id")) == "MANUAL-OPEN-1"
+        for row in runner.risk_manager.active_trades
+    )
+
+    # System-closed trade settled in DB with non-open status and realized P/L.
+    assert mock_components["uts"].save_trade.called
+    saved_payload = mock_components["uts"].save_trade.call_args[0][1]
+    assert saved_payload["contract_id"] == "SYSTEM-CLOSED-1"
+    assert saved_payload["status"] != "open"
+    assert float(saved_payload["profit"]) == pytest.approx(-3.25)
+    assert runner.telegram_bridge.notify_trade_closed.await_count == 1

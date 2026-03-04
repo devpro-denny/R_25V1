@@ -445,6 +445,12 @@ class RiskManager:
         
         active_count = len(self.active_trades)
         active_symbols = [t['symbol'] for t in self.active_trades]
+        normalized_entry_price = trade_info.get("entry_price", trade_info.get("entry_spot"))
+        try:
+            normalized_entry_price = float(normalized_entry_price) if normalized_entry_price is not None else 0.0
+        except Exception:
+            normalized_entry_price = 0.0
+        trade_info["entry_price"] = normalized_entry_price
         
         logger.info(f"🔒 GLOBAL POSITION LOCKED BY {symbol}")
         logger.info(f"📝 Trade #{self.total_trades}: {trade_info.get('direction')} {symbol} @ {trade_info.get('entry_price'):.4f}")
@@ -975,6 +981,11 @@ class RiskManager:
         elapsed = (datetime.now() - self.last_trade_time).total_seconds()
         remaining = self.cooldown_seconds - elapsed
         return max(0.0, remaining)
+
+    @property
+    def has_active_trade(self) -> bool:
+        """Compatibility property used by runner active-trade monitoring."""
+        return len(self.active_trades) > 0
     
     def get_active_trade_info(self) -> Optional[Dict]:
         """Get information about the current active trade (returns first if multiple)"""

@@ -152,33 +152,73 @@ async def register_manual_active_trade(
             ),
         )
 
+    normalized_stake: Optional[float] = None
+    if payload.stake is not None:
+        try:
+            normalized_stake = float(payload.stake)
+        except Exception:
+            raise HTTPException(status_code=400, detail="Stake must be a valid number")
+        if normalized_stake <= 0:
+            raise HTTPException(status_code=400, detail="Stake must be greater than 0")
+    elif bot:
+        for fallback_stake in (
+            getattr(bot, "user_stake", None),
+            getattr(getattr(bot, "risk_manager", None), "fixed_stake", None),
+            getattr(getattr(bot, "risk_manager", None), "stake", None),
+        ):
+            try:
+                if fallback_stake is not None and float(fallback_stake) > 0:
+                    normalized_stake = float(fallback_stake)
+                    break
+            except Exception:
+                continue
+
     open_time = payload.open_time or datetime.now()
     trade_payload: Dict[str, object] = {
         "contract_id": contract_id,
         "symbol": symbol,
         "direction": direction,
         "signal": direction,
-        "stake": payload.stake,
+        "stake": normalized_stake,
         "entry_price": payload.entry_price,
         "entry_spot": payload.entry_price,
         "open_time": open_time,
         "timestamp": open_time,
         "status": "open",
         "strategy_type": strategy_type,
+        "execution_reason": "Manual contract tracking enabled",
+        "entry_source": "manual_tracking",
+        "manual_tracking": True,
     }
 
-    if bot and bot.is_running and bot.risk_manager and hasattr(bot.risk_manager, "get_active_trade_info"):
-        active_info = bot.risk_manager.get_active_trade_info()
-        if isinstance(active_info, dict):
-            active_contract = active_info.get("contract_id")
-            if active_contract not in (None, "") and str(active_contract) != contract_id:
-                raise HTTPException(
-                    status_code=409,
-                    detail=(
-                        "Bot already has an active contract "
-                        f"({active_contract}). Close it before registering another."
-                    ),
-                )
+    if bot and bot.is_running and bot.risk_manager:
+        active_contract_ids = set()
+        active_trades = getattr(bot.risk_manager, "active_trades", None)
+        if isinstance(active_trades, list):
+            for trade in active_trades:
+                cid = trade.get("contract_id") if isinstance(trade, dict) else trade
+                if cid not in (None, ""):
+                    active_contract_ids.add(str(cid))
+
+        if hasattr(bot.risk_manager, "get_active_trade_info"):
+            active_info = bot.risk_manager.get_active_trade_info()
+            if isinstance(active_info, dict):
+                active_contract = active_info.get("contract_id")
+                if active_contract not in (None, ""):
+                    active_contract_ids.add(str(active_contract))
+
+        conflicting_contracts = [
+            cid for cid in active_contract_ids if cid != contract_id
+        ]
+        if conflicting_contracts:
+            active_contract = conflicting_contracts[0]
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "Bot already has an active contract "
+                    f"({active_contract}). Close it before registering another."
+                ),
+            )
 
     saved = UserTradesService.track_active_trade(user_id, trade_payload)
     if not saved:
@@ -221,13 +261,39 @@ async def register_manual_active_trade(
                             "symbol": symbol,
                             "direction": direction,
                             "strategy_type": strategy_type,
-                            "stake": payload.stake,
+                            "stake": normalized_stake,
                             "entry_price": payload.entry_price,
                             "status": "open",
                             "timestamp": open_time,
                             "trailing_enabled": True,
                             "stagnation_enabled": True,
                         }
+                    )
+
+            if getattr(bot, "telegram_bridge", None) and hasattr(bot.telegram_bridge, "notify_trade_opened"):
+                try:
+                    open_notify_payload = dict(trade_payload)
+                    open_notify_payload.update(
+                        {
+                            "user_id": user_id,
+                            "contract_id": contract_id,
+                            "symbol": symbol,
+                            "direction": direction,
+                            "strategy_type": strategy_type,
+                            "execution_reason": (
+                                "Manual contract tracking activated"
+                            ),
+                        }
+                    )
+                    await bot.telegram_bridge.notify_trade_opened(
+                        open_notify_payload,
+                        strategy_type=strategy_type,
+                    )
+                except Exception as notify_error:
+                    logging.getLogger(__name__).warning(
+                        "Manual trade registered but Telegram open notification failed for %s: %s",
+                        contract_id,
+                        notify_error,
                     )
 
             try:
@@ -238,7 +304,7 @@ async def register_manual_active_trade(
                         "symbol": symbol,
                         "direction": direction,
                         "strategy_type": strategy_type,
-                        "stake": payload.stake,
+                        "stake": normalized_stake,
                         "entry_price": payload.entry_price,
                         "status": "open",
                         "timestamp": open_time.isoformat(),
@@ -259,7 +325,7 @@ async def register_manual_active_trade(
     response_payload.setdefault("signal", direction)
     response_payload.setdefault("status", "open")
     response_payload.setdefault("strategy_type", strategy_type)
-    response_payload.setdefault("stake", payload.stake)
+    response_payload.setdefault("stake", normalized_stake)
     response_payload.setdefault("entry_price", payload.entry_price)
     response_payload.setdefault("timestamp", open_time)
     if runtime_registered:

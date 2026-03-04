@@ -243,6 +243,7 @@ def test_register_manual_active_trade_success():
         mock_bot.risk_manager = mock_risk_manager
         mock_bot.strategy.get_strategy_name.return_value = "Scalping"
         mock_bot.state.active_trades = []
+        mock_bot.telegram_bridge.notify_trade_opened = AsyncMock()
         mock_bm._bots = {"user123": mock_bot}
 
         mock_track.return_value = {
@@ -275,6 +276,7 @@ def test_register_manual_active_trade_success():
         assert data["status"] == "open"
         mock_track.assert_called_once()
         mock_risk_manager.record_trade_open.assert_called_once()
+        mock_bot.telegram_bridge.notify_trade_opened.assert_awaited_once()
         mock_broadcast.assert_awaited_once()
 
 
@@ -300,3 +302,64 @@ def test_register_manual_active_trade_rejects_when_another_trade_is_active():
 
         assert response.status_code == 409
         assert "already has an active contract" in response.json()["detail"]
+
+
+def test_register_manual_active_trade_rejects_when_active_trade_list_is_occupied():
+    """Manual registration should also reject when active_trades list already has another contract."""
+    with patch("app.api.trades.bot_manager") as mock_bm:
+        mock_risk_manager = MagicMock()
+        mock_risk_manager.active_trades = [{"contract_id": "existing-list-1", "symbol": "R_100"}]
+        mock_risk_manager.get_active_trade_info.return_value = None
+        mock_bot = MagicMock()
+        mock_bot.is_running = True
+        mock_bot.risk_manager = mock_risk_manager
+        mock_bot.strategy.get_strategy_name.return_value = "Conservative"
+        mock_bm._bots = {"user123": mock_bot}
+
+        response = client.post(
+            f"{API_PREFIX}/active/manual",
+            json={
+                "open_contract_id": "new-2",
+                "symbol": "R_100",
+                "direction": "UP",
+            },
+        )
+
+        assert response.status_code == 409
+        assert "already has an active contract" in response.json()["detail"]
+
+
+def test_register_manual_active_trade_uses_running_stake_when_missing():
+    """Manual registration should inherit configured running stake when payload stake is omitted."""
+    with patch("app.api.trades.bot_manager") as mock_bm, \
+         patch("app.api.trades.UserTradesService.track_active_trade") as mock_track, \
+         patch("app.api.trades.event_manager.broadcast", new_callable=AsyncMock):
+        mock_risk_manager = MagicMock()
+        mock_risk_manager.active_trades = []
+        mock_risk_manager.get_active_trade_info.return_value = None
+        mock_bot = MagicMock()
+        mock_bot.is_running = True
+        mock_bot.risk_manager = mock_risk_manager
+        mock_bot.user_stake = 15.0
+        mock_bot.strategy.get_strategy_name.return_value = "Conservative"
+        mock_bm._bots = {"user123": mock_bot}
+        mock_track.return_value = {
+            "contract_id": "manual-3",
+            "symbol": "R_75",
+            "signal": "UP",
+            "status": "open",
+            "strategy_type": "Conservative",
+        }
+
+        response = client.post(
+            f"{API_PREFIX}/active/manual",
+            json={
+                "open_contract_id": "manual-3",
+                "symbol": "R_75",
+                "direction": "UP",
+            },
+        )
+
+        assert response.status_code == 200
+        saved_payload = mock_track.call_args.args[1]
+        assert saved_payload["stake"] == 15.0

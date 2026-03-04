@@ -144,6 +144,8 @@ class BotRunner:
         
         # Logging control
         self.last_status_log: Dict[str, Dict] = {} # {symbol: {'msg': str, 'time': datetime}}
+        # Per-contract active monitoring progress logs.
+        self._active_progress_key_prefix = "active:"
         # Structured decision event throttling cache
         self._decision_log_state: Dict[str, Dict] = {}
         # Protect trade execution path when symbol scans run concurrently.
@@ -171,6 +173,26 @@ class BotRunner:
     def _is_scalping_strategy(self) -> bool:
         """Return True when active strategy is scalping."""
         return (self._get_strategy_name() or "").strip().lower() == "scalping"
+
+    def _has_runtime_active_trade(self) -> bool:
+        """Check active-trade state across risk-manager implementations."""
+        if not self.risk_manager:
+            return False
+
+        has_active = getattr(self.risk_manager, "has_active_trade", None)
+        if callable(has_active):
+            try:
+                return bool(has_active())
+            except Exception:
+                return False
+        if has_active is not None:
+            try:
+                return bool(has_active)
+            except Exception:
+                return False
+
+        active_trades = getattr(self.risk_manager, "active_trades", None)
+        return isinstance(active_trades, list) and len(active_trades) > 0
 
     @staticmethod
     def _normalize_rejection_slug(text: str) -> str:
@@ -435,7 +457,8 @@ class BotRunner:
                     "entry_price": entry_price if entry_price is not None else 0.0,
                     "entry_spot": entry_price if entry_price is not None else 0.0,
                     "status": "open",
-                    "strategy": "recovery",
+                    # Keep restored contracts aligned with normal conservative lifecycle.
+                    "strategy": "topdown",
                     "phase": "committed",
                     "cancellation_enabled": False,
                     "cancellation_expiry": None,
@@ -593,6 +616,32 @@ class BotRunner:
                         normalized_status,
                         pnl,
                     )
+                    try:
+                        result_for_notify = dict(reconciled)
+                        result_for_notify.setdefault("contract_id", contract_id)
+                        result_for_notify.setdefault("symbol", persisted_trade.get("symbol"))
+                        result_for_notify.setdefault("user_id", self.account_id)
+                        result_for_notify.setdefault("strategy_type", self._get_strategy_name())
+                        result_for_notify.setdefault(
+                            "execution_reason",
+                            (
+                                persisted_trade.get("execution_reason")
+                                or "Trade tracking restored after restart; broker reported contract already closed"
+                            ),
+                        )
+                        await self.telegram_bridge.notify_trade_closed(
+                            result_for_notify,
+                            pnl,
+                            normalized_status,
+                            strategy_type=self._get_strategy_name(),
+                        )
+                    except Exception as notify_error:
+                        logger.warning(
+                            "[%s][SYSTEM] Failed to send startup-close Telegram notification for %s: %s",
+                            self._get_strategy_name(),
+                            contract_id,
+                            notify_error,
+                        )
                 continue
 
             if self._restore_trade_for_monitoring(persisted_trade):
@@ -1739,253 +1788,306 @@ class BotRunner:
         Monitor the currently active trade
         This runs when a trade is locked, checking its status
         """
-        if not self.risk_manager or not getattr(self.risk_manager, "has_active_trade", False):
+        if not self.risk_manager or not self.trade_engine or not self._has_runtime_active_trade():
             return
-        
+
+        if not hasattr(self.risk_manager, "get_active_trade_info"):
+            return
+
         active_info = self.risk_manager.get_active_trade_info()
-        if not active_info:
+        if not isinstance(active_info, dict):
             return
-        
-        symbol = active_info['symbol']
-        contract_id = active_info['contract_id']
-        
+
+        symbol = str(active_info.get("symbol") or "UNKNOWN")
+        contract_id_raw = active_info.get("contract_id")
+        if contract_id_raw in (None, ""):
+            return
+        contract_id = str(contract_id_raw)
+        progress_key = f"{self._active_progress_key_prefix}{contract_id}"
+
+        def _to_float(value, default=0.0) -> float:
+            try:
+                return float(value)
+            except Exception:
+                return float(default)
+
+        async def _close_trade_with_reason(
+            exit_reason: str,
+            close_message: str,
+            default_execution_reason: str,
+        ) -> bool:
+            self._cycle_step(
+                symbol,
+                4,
+                6,
+                close_message,
+                emoji="\u26A0\uFE0F",
+                level="warning",
+            )
+            try:
+                sell_result = await self.trade_engine.close_trade(contract_id)
+                if not sell_result:
+                    return False
+
+                pnl = _to_float(sell_result.get("profit"), current_pnl)
+                status = "won" if pnl > 0 else ("lost" if pnl < 0 else "break_even")
+
+                if hasattr(self.risk_manager, "record_trade_close"):
+                    self.risk_manager.record_trade_close(contract_id, pnl, status)
+                self.state.update_trade(contract_id, sell_result)
+
+                self._cycle_step(
+                    symbol,
+                    6,
+                    6,
+                    "Trade closed - system unlocked",
+                    emoji="\U0001F513",
+                )
+                logger.info(f"[{self._get_strategy_name()}][{symbol}] P&L: ${pnl:.2f}")
+
+                try:
+                    result_for_db = sell_result.copy()
+                    result_for_db.update(active_info)
+                    result_for_db["strategy_type"] = self._get_strategy_name()
+                    result_for_db["exit_reason"] = exit_reason
+                    UserTradesService.save_trade(self.account_id, result_for_db)
+                except Exception as save_error:
+                    logger.error(
+                        f"[{self._get_strategy_name()}][{symbol}] "
+                        f"DB save failed for active-trade close: {save_error}"
+                    )
+
+                try:
+                    result_for_notify = sell_result.copy()
+                    result_for_notify.update(active_info)
+                    result_for_notify["exit_reason"] = exit_reason
+                    result_for_notify["strategy_type"] = self._get_strategy_name()
+                    result_for_notify["user_id"] = self.account_id
+                    result_for_notify.setdefault("execution_reason", default_execution_reason)
+                    await self.telegram_bridge.notify_trade_closed(
+                        result_for_notify,
+                        pnl,
+                        status,
+                        strategy_type=self._get_strategy_name(),
+                    )
+                except Exception:
+                    pass
+
+                self.last_status_log.pop(progress_key, None)
+                return True
+            except Exception as close_error:
+                self._cycle_step(
+                    symbol,
+                    6,
+                    6,
+                    f"Failed to close active trade: {close_error}",
+                    emoji="\u274C",
+                    level="error",
+                )
+                return False
+
         try:
-            # Fetch current trade status from Deriv
-            # This allows us to detect early closures or updates
-            trade_status = await self.trade_engine.get_trade_status(contract_id)            
-            # Check for stagnation exit (scalping trades only)
-            if trade_status and not trade_status.get('is_sold'):
+            trade_status = await self.trade_engine.get_trade_status(contract_id)
+            if not trade_status:
+                return
+
+            status_name = str(trade_status.get("status", "")).strip().lower()
+            is_sold = bool(trade_status.get("is_sold")) or status_name in {
+                "sold",
+                "won",
+                "lost",
+                "closed",
+                "settled",
+            }
+            current_pnl = _to_float(trade_status.get("profit"), 0.0)
+            current_spot = _to_float(trade_status.get("current_spot"), 0.0)
+
+            open_time = self._parse_trade_datetime(
+                active_info.get("open_time") or active_info.get("timestamp")
+            )
+            elapsed_seconds = (
+                int((datetime.now() - open_time).total_seconds())
+                if isinstance(open_time, datetime)
+                else None
+            )
+
+            # Always emit active-trade progress logs so manual-tracked contracts
+            # have visible monitoring updates in the same lifecycle as setup entries.
+            progress_interval = max(
+                int(getattr(config, "ACTIVE_TRADE_PROGRESS_LOG_INTERVAL_SECONDS", 15)),
+                1,
+            )
+            now = datetime.now()
+            last_progress = self.last_status_log.get(progress_key, {"time": datetime.min})
+            if (now - last_progress.get("time", datetime.min)).total_seconds() >= progress_interval:
+                age_text = f"{elapsed_seconds}s" if elapsed_seconds is not None else "n/a"
+                logger.info(
+                    "[%s][%s] Active contract %s | P&L: $%.2f | Spot: %.5f | Age: %s",
+                    self._get_strategy_name(),
+                    symbol,
+                    contract_id,
+                    current_pnl,
+                    current_spot,
+                    age_text,
+                )
+                self.last_status_log[progress_key] = {
+                    "msg": "active_trade_progress",
+                    "time": now,
+                }
+
+            if not is_sold:
+                trade_info = {
+                    "open_time": open_time or datetime.now(),
+                    "stake": active_info.get("stake"),
+                    "symbol": symbol,
+                    "contract_id": contract_id,
+                    "direction": active_info.get("direction"),
+                    "entry_price": active_info.get("entry_price"),
+                    "multiplier": active_info.get("multiplier"),
+                    "risk_reward_ratio": active_info.get("risk_reward_ratio"),
+                }
+
                 if (
                     hasattr(self.risk_manager, "check_trailing_profit")
                     and hasattr(self.risk_manager, "check_stagnation_exit")
                 ):
-                    current_pnl = trade_status.get('profit', 0.0)
-                    trade_info = {
-                        'open_time': active_info.get('open_time'),
-                        'stake': active_info.get('stake'),
-                        'symbol': symbol,
-                        'contract_id': contract_id,
-                        'direction': active_info.get('direction'),
-                        'entry_price': active_info.get('entry_price'),
-                        'multiplier': active_info.get('multiplier')
-                    }
-                    
-                    # CHECK 1: Trailing profit exit (when trade is in profit)
-                    should_trail_exit, trail_reason, just_activated = self.risk_manager.check_trailing_profit(trade_info, current_pnl)
-                    
-                    # On first activation, remove server-side TP so trailing controls exit
+                    trailing_result = self.risk_manager.check_trailing_profit(
+                        trade_info,
+                        current_pnl,
+                    )
+                    if (
+                        isinstance(trailing_result, (tuple, list))
+                        and len(trailing_result) >= 3
+                    ):
+                        should_trail_exit, trail_reason, just_activated = trailing_result[:3]
+                    else:
+                        should_trail_exit, trail_reason, just_activated = False, "", False
                     if just_activated:
                         try:
                             await self.trade_engine.remove_take_profit(contract_id)
-                        except Exception as e:
+                        except Exception as remove_tp_error:
                             self._cycle_step(
                                 symbol,
                                 4,
                                 6,
-                                f"Failed to remove server-side TP: {e}",
+                                f"Failed to remove server-side TP: {remove_tp_error}",
                                 emoji="\u274C",
                                 level="error",
                             )
-                    
-                    if should_trail_exit:
-                        self._cycle_step(
-                            symbol,
-                            4,
-                            6,
-                            "Trailing profit exit triggered - locking gains",
-                            emoji="\U0001F4C8",
-                            level="warning",
-                        )
-                        
-                        try:
-                            sell_result = await self.trade_engine.close_trade(contract_id)
-                            
-                            if sell_result:
-                                pnl = sell_result.get('profit', current_pnl)
-                                status = 'won' if pnl > 0 else ('lost' if pnl < 0 else 'break_even')
-                                
-                                # Record closure
-                                self.risk_manager.record_trade_close(contract_id, pnl, status)
-                                self.state.update_trade(contract_id, sell_result)
-                                
-                                self._cycle_step(
-                                    symbol,
-                                    6,
-                                    6,
-                                    "Trade closed (trailing profit) - system unlocked",
-                                    emoji="\U0001F512",
-                                )
-                                logger.info(f"[{self._get_strategy_name()}][{symbol}] \U0001F4B0 P&L: ${pnl:.2f}")
-                                
-                                # Persist to DB
-                                try:
-                                    result_for_db = sell_result.copy()
-                                    result_for_db.update(active_info)
-                                    result_for_db['strategy_type'] = self.strategy.get_strategy_name()
-                                    result_for_db['exit_reason'] = trail_reason
-                                    saved = UserTradesService.save_trade(self.account_id, result_for_db)
-                                    if saved:
-                                        logger.info(
-                                            f"[{self._get_strategy_name()}][{symbol}] "
-                                            f"\u2705 Trailing profit trade persisted to DB: {contract_id}"
-                                        )
-                                except Exception as e:
-                                    logger.error(
-                                        f"[{self._get_strategy_name()}][{symbol}] "
-                                        f"\u274C DB save failed for trailing profit trade: {e}"
-                                    )
-                                
-                                # Notify Telegram
-                                try:
-                                    result_for_notify = sell_result.copy()
-                                    result_for_notify.update(active_info)
-                                    result_for_notify['exit_reason'] = trail_reason
-                                    result_for_notify['strategy_type'] = self._get_strategy_name()
-                                    result_for_notify['user_id'] = self.account_id
-                                    result_for_notify.setdefault(
-                                        'execution_reason',
-                                        'Trade opened by signal alignment; closed by trailing profit rule'
-                                    )
-                                    
-                                    await self.telegram_bridge.notify_trade_closed(
-                                        result_for_notify, pnl, status,
-                                        strategy_type=self.strategy.get_strategy_name()
-                                    )
-                                except:
-                                    pass
-                                
-                                return  # Exit monitoring after closing
-                        except Exception as e:
-                            self._cycle_step(
-                                symbol,
-                                6,
-                                6,
-                                f"Failed to close trailing profit trade: {e}",
-                                emoji="\u274C",
-                                level="error",
-                            )
-                    
-                    # CHECK 2: Stagnation exit (when trade is open too long and losing)
-                    should_exit, exit_reason = self.risk_manager.check_stagnation_exit(trade_info, current_pnl)
-                    
-                    if should_exit:
-                        self._cycle_step(
-                            symbol,
-                            4,
-                            6,
-                            "Stagnation exit triggered - closing trade",
-                            emoji="\u23F0",
-                            level="warning",
-                        )
-                        
-                        # Close the trade immediately
-                        try:
-                            sell_result = await self.trade_engine.close_trade(contract_id)
-                            
-                            if sell_result:
-                                pnl = sell_result.get('profit', current_pnl)
-                                status = 'loss' if pnl < 0 else ('win' if pnl > 0 else 'break_even')
-                                
-                                # Record closure with stagnation exit reason
-                                self.risk_manager.record_trade_close(contract_id, pnl, status)
-                                self.state.update_trade(contract_id, sell_result)
-                                
-                                self._cycle_step(
-                                    symbol,
-                                    6,
-                                    6,
-                                    "Trade closed (stagnation) - system unlocked",
-                                    emoji="\U0001F513",
-                                )
-                                logger.info(f"[{self._get_strategy_name()}][{symbol}] \U0001F4B0 P&L: ${pnl:.2f}")
 
-                                # Persist to DB
-                                try:
-                                    result_for_db = sell_result.copy()
-                                    result_for_db.update(active_info)
-                                    result_for_db["strategy_type"] = self.strategy.get_strategy_name()
-                                    result_for_db["exit_reason"] = exit_reason
-                                    UserTradesService.save_trade(self.account_id, result_for_db)
-                                except Exception as e:
-                                    logger.error(
-                                        f"[{self._get_strategy_name()}][{symbol}] "
-                                        f"\u274C DB save failed for stagnation trade: {e}"
-                                    )
-                                
-                                # Notify Telegram with stagnation exit reason
-                                try:
-                                    result_for_notify = sell_result.copy()
-                                    result_for_notify.update(active_info)
-                                    result_for_notify['exit_reason'] = exit_reason
-                                    result_for_notify['strategy_type'] = self._get_strategy_name()
-                                    result_for_notify['user_id'] = self.account_id
-                                    result_for_notify.setdefault(
-                                        'execution_reason',
-                                        'Trade opened by signal alignment; closed by stagnation protection'
-                                    )
-                                    
-                                    await self.telegram_bridge.notify_trade_closed(
-                                        result_for_notify, pnl, status, 
-                                        strategy_type=self.strategy.get_strategy_name()
-                                    )
-                                except:
-                                    pass
-                                
-                                return  # Exit monitoring after closing
-                        except Exception as e:
-                            self._cycle_step(
-                                symbol,
-                                6,
-                                6,
-                                f"Failed to close stagnant trade: {e}",
-                                emoji="\u274C",
-                                level="error",
-                            )
-            
-            if trade_status and trade_status.get('is_sold'):
-                # Trade closed externally or by TP/SL
-                logger.info(f"[{self._get_strategy_name()}][{symbol}] \U0001F4E1 Trade detected as closed")
-                
-                pnl = trade_status.get('profit', 0.0)
-                status = trade_status.get('status', 'sold')
-                
-                # Record closure
-                self.risk_manager.record_trade_close(contract_id, pnl, status)
+                    if should_trail_exit:
+                        closed = await _close_trade_with_reason(
+                            exit_reason=trail_reason or "trailing_profit_exit",
+                            close_message="Trailing profit exit triggered - locking gains",
+                            default_execution_reason=(
+                                "Trade opened by signal alignment; closed by trailing profit rule"
+                            ),
+                        )
+                        if closed:
+                            return
+
+                    stagnation_result = self.risk_manager.check_stagnation_exit(
+                        trade_info,
+                        current_pnl,
+                    )
+                    if (
+                        isinstance(stagnation_result, (tuple, list))
+                        and len(stagnation_result) >= 2
+                    ):
+                        should_stagnation_exit, stagnation_reason = stagnation_result[:2]
+                    else:
+                        should_stagnation_exit, stagnation_reason = False, ""
+                    if should_stagnation_exit:
+                        closed = await _close_trade_with_reason(
+                            exit_reason=stagnation_reason or "stagnation_exit",
+                            close_message="Stagnation exit triggered - closing trade",
+                            default_execution_reason=(
+                                "Trade opened by signal alignment; closed by stagnation protection"
+                            ),
+                        )
+                        if closed:
+                            return
+
+                # Fallback path for conservative and generic risk managers:
+                # apply normal should_close_trade checks for manual-tracked contracts.
+                if hasattr(self.risk_manager, "should_close_trade"):
+                    try:
+                        exit_check = self.risk_manager.should_close_trade(
+                            contract_id,
+                            current_pnl,
+                            current_spot,
+                            current_spot,
+                        )
+                    except Exception as risk_error:
+                        logger.warning(
+                            "[%s][%s] Risk-exit evaluation failed for %s: %s",
+                            self._get_strategy_name(),
+                            symbol,
+                            contract_id,
+                            risk_error,
+                        )
+                        exit_check = None
+
+                    if isinstance(exit_check, dict) and exit_check.get("should_close"):
+                        close_reason = str(exit_check.get("reason") or "risk_manager_exit")
+                        close_message = str(
+                            exit_check.get("message")
+                            or f"Risk manager requested close: {close_reason}"
+                        )
+                        closed = await _close_trade_with_reason(
+                            exit_reason=close_reason,
+                            close_message=close_message,
+                            default_execution_reason=(
+                                "Trade opened by signal alignment; closed by risk protection rule"
+                            ),
+                        )
+                        if closed:
+                            return
+
+            if is_sold:
+                logger.info(f"[{self._get_strategy_name()}][{symbol}] Trade detected as closed")
+                pnl = current_pnl
+                status = trade_status.get("status", "sold")
+                if hasattr(self.risk_manager, "record_trade_close"):
+                    self.risk_manager.record_trade_close(contract_id, pnl, status)
                 self.state.update_trade(contract_id, trade_status)
 
-                logger.info(f"[{self._get_strategy_name()}][{symbol}] \U0001F513 Trade closed - system unlocked")
-                logger.info(f"[{self._get_strategy_name()}][{symbol}] \U0001F4B0 P&L: ${pnl:.2f}")
+                logger.info(f"[{self._get_strategy_name()}][{symbol}] Trade closed - system unlocked")
+                logger.info(f"[{self._get_strategy_name()}][{symbol}] P&L: ${pnl:.2f}")
 
-                # Persist to DB
                 try:
                     result_for_db = trade_status.copy()
                     result_for_db.update(active_info)
-                    result_for_db["strategy_type"] = self.strategy.get_strategy_name()
+                    result_for_db["strategy_type"] = self._get_strategy_name()
                     UserTradesService.save_trade(self.account_id, result_for_db)
-                except Exception as e:
+                except Exception as save_error:
                     logger.error(
                         f"[{self._get_strategy_name()}][{symbol}] "
-                        f"\u274C DB save failed for externally closed trade: {e}"
+                        f"DB save failed for externally closed trade: {save_error}"
                     )
-                
-                # Notify Telegram
+
                 try:
-                    # MERGE complete trade details into result for notification
                     result_for_notify = trade_status.copy()
-                    result_for_notify.update(active_info) # Contains direction, stake, symbol from RiskManager
-                    result_for_notify['strategy_type'] = self._get_strategy_name()
-                    result_for_notify['user_id'] = self.account_id
+                    result_for_notify.update(active_info)
+                    result_for_notify["strategy_type"] = self._get_strategy_name()
+                    result_for_notify["user_id"] = self.account_id
                     result_for_notify.setdefault(
-                        'execution_reason',
-                        'Trade opened by strategy signal and closed at broker settlement/limits'
+                        "execution_reason",
+                        "Trade opened by strategy signal and closed at broker settlement/limits",
                     )
-                    
-                    await self.telegram_bridge.notify_trade_closed(result_for_notify, pnl, status, strategy_type=self.strategy.get_strategy_name())
-                except:
+                    await self.telegram_bridge.notify_trade_closed(
+                        result_for_notify,
+                        pnl,
+                        status,
+                        strategy_type=self._get_strategy_name(),
+                    )
+                except Exception:
                     pass
-            
+
+                self.last_status_log.pop(progress_key, None)
+
         except Exception as e:
-            logger.warning(f"[{self._get_strategy_name()}][{symbol}] \u26A0\ufe0f Could not monitor trade: {e}")
+            logger.warning(f"[{self._get_strategy_name()}][{symbol}] Could not monitor trade: {e}")
 
 # Global bot runner instance - DEPRECATED / DEFAULT
 # We keep this for backward compatibility if needed, using env vars

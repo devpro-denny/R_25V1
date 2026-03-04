@@ -263,6 +263,32 @@ class TelegramNotifier:
         return default_reason
 
     @staticmethod
+    def _extract_entry_source_label(payload: Optional[Dict]) -> str:
+        """Normalize trade entry source for Telegram open notifications."""
+        if not isinstance(payload, dict):
+            return "System Strategy"
+
+        if bool(payload.get("manual_tracking")):
+            return "Manual Tracking"
+
+        raw_source = payload.get("entry_source")
+        if raw_source is None:
+            raw_source = payload.get("source")
+
+        text = str(raw_source or "").strip().lower().replace("-", "_").replace(" ", "_")
+        if text in {"manual", "manual_tracking", "manual_entry", "manual_contract"}:
+            return "Manual Tracking"
+        if text in {"system", "strategy", "strategy_engine", "auto", "automated"}:
+            return "System Strategy"
+        if text:
+            return str(raw_source).strip().replace("_", " ").title()
+
+        execution_reason = str(payload.get("execution_reason") or "").strip().lower()
+        if "manual" in execution_reason:
+            return "Manual Tracking"
+        return "System Strategy"
+
+    @staticmethod
     def _compact_text(value: str, max_len: int = 90) -> str:
         """Normalize whitespace and trim long text for concise Telegram messages."""
         text = " ".join(str(value or "").split())
@@ -493,6 +519,7 @@ class TelegramNotifier:
             trade_info,
             "Signal conditions matched and order sent",
         )
+        entry_source_label = self._extract_entry_source_label(trade_info)
         risk_summary = self._format_risk_summary(trade_info, strategy_name)
         reason_short = self._compact_text(execution_reason, 90)
         risk_short = self._compact_text(risk_summary, 90)
@@ -506,6 +533,7 @@ class TelegramNotifier:
                 f"{prefix}{badge} [OPEN] <b>TRADE OPENED: {symbol}</b>\n"
                 f"Strategy: <b>{strategy_name}</b> | User: <code>{user_id}</code>\n"
                 f"Direction: <b>{direction_label}</b>\n"
+                f"Entry Source: <b>{entry_source_label}</b>\n"
                 f"Stake: {format_currency(stake)} | Duration: {duration}{duration_unit}\n"
                 f"Max Payout: {format_currency(payout) if payout else 'N/A'}\n"
                 f"Risk: {risk_short}\n"
@@ -545,6 +573,7 @@ class TelegramNotifier:
             f"{prefix}{badge} [OPEN] <b>TRADE OPENED: {symbol}</b>\n"
             f"Strategy: <b>{strategy_name}</b> | User: <code>{user_id}</code>\n"
             f"Direction: <b>{direction_label}</b>\n"
+            f"Entry Source: <b>{entry_source_label}</b>\n"
             f"Stake: {format_currency(stake)} (x{mult_display if multiplier else 0}) | Entry: {self._to_float(trade_info.get('entry_price', 0), 0.0):.2f}\n"
             f"Target/Risk: +{format_currency(tp_amount)} / -{format_currency(sl_risk)} ({rr_ratio})\n"
             f"Risk: {risk_short}\n"
