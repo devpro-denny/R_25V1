@@ -5,6 +5,7 @@ from unittest.mock import patch
 from unittest.mock import MagicMock, AsyncMock
 
 from scalping_risk_manager import ScalpingRiskManager
+from scalping_strategy import config as scalping_config
 
 
 @pytest.fixture
@@ -61,12 +62,16 @@ def test_scalping_rm_daily_loss(srm):
     assert "loss limit" in reason.lower()
 
 
-def test_scalping_rm_daily_entry_limit_enforced_at_10(srm):
-    srm.daily_trade_count = 10
+def test_scalping_rm_daily_entry_limit_enforced_at_cap(srm):
+    daily_cap = min(
+        scalping_config.SCALPING_MAX_TRADES_PER_DAY,
+        scalping_config.SCALPING_HARD_MAX_TRADES_PER_DAY,
+    )
+    srm.daily_trade_count = daily_cap
     srm.last_trade_time = None
     can, reason = srm.can_trade("R_75")
     assert can is False
-    assert "daily trade limit reached (10)" in reason.lower()
+    assert f"daily trade limit reached ({daily_cap})" in reason.lower()
 
 
 def test_scalping_rm_daily_entry_limit_hard_caps_config(monkeypatch):
@@ -77,11 +82,15 @@ def test_scalping_rm_daily_entry_limit_hard_caps_config(monkeypatch):
 
 
 def test_scalping_rm_daily_entry_limit_uses_db_synced_count(srm, monkeypatch):
+    daily_cap = min(
+        scalping_config.SCALPING_MAX_TRADES_PER_DAY,
+        scalping_config.SCALPING_HARD_MAX_TRADES_PER_DAY,
+    )
     mock_supabase = MagicMock()
     count_response = MagicMock()
     count_response.data = [
         {"contract_id": f"sys-{i}", "entry_source": "system"}
-        for i in range(10)
+        for i in range(daily_cap)
     ]
     (
         mock_supabase.table.return_value.select.return_value.eq.return_value.gte.return_value
@@ -99,11 +108,15 @@ def test_scalping_rm_daily_entry_limit_uses_db_synced_count(srm, monkeypatch):
 
     can, reason = srm.can_trade("R_75")
     assert can is False
-    assert "daily trade limit reached (10)" in reason.lower()
-    assert srm.daily_trade_count == 10
+    assert f"daily trade limit reached ({daily_cap})" in reason.lower()
+    assert srm.daily_trade_count == daily_cap
 
 
 def test_scalping_rm_daily_entry_limit_restores_from_runtime_state(monkeypatch):
+    daily_cap = min(
+        scalping_config.SCALPING_MAX_TRADES_PER_DAY,
+        scalping_config.SCALPING_HARD_MAX_TRADES_PER_DAY,
+    )
     mock_supabase = MagicMock()
     trades_table = MagicMock()
     state_table = MagicMock()
@@ -118,7 +131,7 @@ def test_scalping_rm_daily_entry_limit_restores_from_runtime_state(monkeypatch):
         count=0,
     )
     state_table.select.return_value.eq.return_value.limit.return_value.execute.return_value = MagicMock(
-        data=[{"daily_trade_count": 10, "daily_trade_count_date": today_iso}]
+        data=[{"daily_trade_count": daily_cap, "daily_trade_count_date": today_iso}]
     )
 
     monkeypatch.setitem(
@@ -133,8 +146,8 @@ def test_scalping_rm_daily_entry_limit_restores_from_runtime_state(monkeypatch):
 
     can, reason = manager.can_trade("R_75")
     assert can is False
-    assert "daily trade limit reached (10)" in reason.lower()
-    assert manager.daily_trade_count == 10
+    assert f"daily trade limit reached ({daily_cap})" in reason.lower()
+    assert manager.daily_trade_count == daily_cap
 
 
 def test_scalping_rm_record_trade_open_persists_runtime_daily_counter(srm):
