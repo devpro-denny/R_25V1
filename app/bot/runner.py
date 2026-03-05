@@ -1225,10 +1225,6 @@ class BotRunner:
             while self.is_running:
                 try:
                     self.scan_count += 1
-                    logger.info(
-                        f"[{self._get_strategy_name()}][SYSTEM] \U0001F50E CYCLE #{self.scan_count} | "
-                        f"Checking {len(self.symbols)} symbols"
-                    )
                     
                     # Execute multi-asset scan cycle
                     await self._multi_asset_scan_cycle()
@@ -1354,6 +1350,10 @@ class BotRunner:
             return
         
         # Step 2: Parallel symbol scanning
+        logger.info(
+            f"[{self._get_strategy_name()}][SYSTEM] \U0001F50E CYCLE #{self.scan_count} | "
+            f"Checking {len(self.symbols)} symbols"
+        )
         logger.info(f"[{self._get_strategy_name()}][SYSTEM] \U0001F50D Scanning symbols for entry signals")
 
         async def _analyze_symbol_safe(symbol: str) -> bool:
