@@ -852,11 +852,20 @@ class RiskManager:
                 or (trade.get('symbol') if isinstance(trade, dict) else None)
                 or 'UNKNOWN'
             )
+            source = (
+                (released_trade.get("entry_source") if isinstance(released_trade, dict) else None)
+                or (trade.get("entry_source") if isinstance(trade, dict) else None)
+                or "manual_imported"
+            )
             logger.info(
-                "Trade closed (%s): %s | P&L: %s (excluded from system cooldown/daily counters)",
+                "Trade closed (%s): %s | P&L: %s | Source: %s",
                 symbol_for_log,
                 str(status).upper(),
                 format_currency(pnl),
+                source,
+            )
+            logger.info(
+                "Trade close excluded from system cooldown/daily counters"
             )
             return
 

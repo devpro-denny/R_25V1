@@ -23,6 +23,7 @@ from app.core.serializers import prepare_response
 from app.core.auth import get_current_active_user
 from app.core.deriv_api_key_crypto import decrypt_deriv_api_key
 from app.core.supabase import supabase
+from app.core.context import user_id_var, bot_type_var
 from app.services.trades_service import UserTradesService
 from trade_engine import TradeEngine
 
@@ -52,6 +53,17 @@ def _normalize_strategy(value: Optional[str]) -> Optional[str]:
         return normalize_strategy_name(text)
     except Exception:
         return text
+
+
+def _strategy_to_bot_type(value: Optional[str]) -> str:
+    normalized = (_normalize_strategy(value) or "").strip().lower()
+    if normalized == "scalping":
+        return "scalping"
+    if normalized == "conservative":
+        return "conservative"
+    if normalized in {"risefall", "rise_fall", "rf"}:
+        return "risefall"
+    return "system"
 
 
 def _get_user_bot(user_id: str):
@@ -219,7 +231,12 @@ def _apply_runtime_exit_controls(
     return enriched
 
 
-def _register_runtime_tracking(bot: Any, trade_payload: Dict[str, Any]) -> bool:
+def _register_runtime_tracking(
+    bot: Any,
+    trade_payload: Dict[str, Any],
+    user_id: Optional[str] = None,
+    strategy_type: Optional[str] = None,
+) -> bool:
     """
     Register imported trades into in-memory runtime so normal monitor/exit logic applies.
     """
@@ -235,7 +252,28 @@ def _register_runtime_tracking(bot: Any, trade_payload: Dict[str, Any]) -> bool:
     if contract_id in _collect_runtime_active_contract_ids(bot):
         return False
 
-    bot.risk_manager.record_trade_open(trade_payload)
+    resolved_user_id = (
+        user_id
+        or str(trade_payload.get("user_id") or "").strip()
+        or str(getattr(bot, "account_id", "") or "").strip()
+        or None
+    )
+    resolved_strategy = (
+        strategy_type
+        or trade_payload.get("strategy_type")
+        or (bot.strategy.get_strategy_name() if getattr(bot, "strategy", None) and hasattr(bot.strategy, "get_strategy_name") else None)
+    )
+
+    user_token = user_id_var.set(resolved_user_id) if resolved_user_id else None
+    bot_token = bot_type_var.set(_strategy_to_bot_type(resolved_strategy))
+    try:
+        bot.risk_manager.record_trade_open(trade_payload)
+    finally:
+        if user_token is not None:
+            user_id_var.reset(user_token)
+        if bot_token is not None:
+            bot_type_var.reset(bot_token)
+
     trailing_enabled = _parse_boolean_flag(trade_payload.get("trailing_enabled"))
     stagnation_enabled = _parse_boolean_flag(trade_payload.get("stagnation_enabled"))
 
@@ -560,7 +598,12 @@ async def sync_active_trades(
             imported_contract_ids.append(contract_id)
 
             try:
-                if _register_runtime_tracking(bot, trade_payload):
+                if _register_runtime_tracking(
+                    bot,
+                    trade_payload,
+                    user_id=user_id,
+                    strategy_type=strategy_type,
+                ):
                     runtime_registered_count += 1
             except Exception as runtime_error:
                 logger.warning(

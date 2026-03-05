@@ -1041,13 +1041,15 @@ class ScalpingRiskManager(BaseRiskManager):
 
         normalized_status = self._normalize_status(raw_status, profit)
         if is_manual_tracking:
+            source = meta.get("entry_source") or result.get("entry_source") or "manual_imported"
             logger.info(
-                (
-                    "Manual/synced trade closed - Status: %s | P&L: $%.2f "
-                    "(excluded from daily cooldown/entry-limit counters)"
-                ),
+                "Trade closed - Status: %s | P&L: $%.2f | Source: %s",
                 normalized_status,
                 profit,
+                source,
+            )
+            logger.info(
+                "Trade close excluded from system daily cooldown/entry-limit counters"
             )
             logger.info(
                 "Active trades: %s/%s",
