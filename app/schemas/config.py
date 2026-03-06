@@ -8,6 +8,10 @@ class ConfigUpdateRequest(BaseModel):
     deriv_api_key: Optional[str] = Field(None, min_length=10, description="Deriv API Token")
     stake_amount: Optional[float] = Field(None, gt=0, description="Stake amount per trade")
     active_strategy: Optional[str] = Field(None, description="Active strategy name")
+    auto_execute_signals: Optional[bool] = Field(
+        None,
+        description="Enable automatic trade execution after signal detection",
+    )
     
     # Risk Management
     max_trades_per_day: Optional[int] = Field(None, gt=0, le=1000, description="Max trades per day")

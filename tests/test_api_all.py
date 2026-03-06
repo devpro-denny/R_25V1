@@ -69,7 +69,8 @@ async def test_bot_start(mock_auth):
         mock_supabase.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value.data = {
             "deriv_api_key": "fake_key",
             "stake_amount": 10.0,
-            "active_strategy": "Conservative"
+            "active_strategy": "Conservative",
+            "auto_execute_signals": True,
         }
         mock_manager.start_bot = AsyncMock(return_value={
             "success": True, 
@@ -81,6 +82,7 @@ async def test_bot_start(mock_auth):
         assert response.status_code == 200
         assert response.json()["success"] is True
         mock_manager.start_bot.assert_called_once()
+        assert mock_manager.start_bot.await_args.kwargs["auto_execute_signals"] is True
 
 
 @pytest.mark.asyncio
@@ -92,7 +94,8 @@ async def test_bot_start_decrypts_encrypted_key(mock_auth):
         mock_supabase.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value.data = {
             "deriv_api_key": encrypted_key,
             "stake_amount": 10.0,
-            "active_strategy": "Conservative"
+            "active_strategy": "Conservative",
+            "auto_execute_signals": False,
         }
         mock_manager.start_bot = AsyncMock(return_value={
             "success": True,
@@ -105,6 +108,7 @@ async def test_bot_start_decrypts_encrypted_key(mock_auth):
         assert response.json()["success"] is True
         assert mock_manager.start_bot.await_count == 1
         assert mock_manager.start_bot.await_args.kwargs["api_token"] == "fake_key_12345"
+        assert mock_manager.start_bot.await_args.kwargs["auto_execute_signals"] is False
 
 @pytest.mark.asyncio
 async def test_bot_stop(mock_auth):
@@ -187,7 +191,8 @@ def test_config_current(mock_auth):
         mock_supabase.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value.data = {
             "deriv_api_key": "secret_key_1234",
             "stake_amount": 25.0,
-            "active_strategy": "RiseFall"
+            "active_strategy": "RiseFall",
+            "auto_execute_signals": True,
         }
         
         response = client.get("/api/v1/config/current")
@@ -195,6 +200,7 @@ def test_config_current(mock_auth):
         # Check masking
         assert response.json()["deriv_api_key"] == "*****1234"
         assert response.json()["stake_amount"] == 25.0
+        assert response.json()["auto_execute_signals"] is True
 
 def test_config_update(mock_auth):
     with patch("app.api.config.supabase") as mock_supabase, \
@@ -202,12 +208,13 @@ def test_config_update(mock_auth):
         
         mock_supabase.table.return_value.update.return_value.eq.return_value.execute.return_value = MagicMock()
         
-        updates = {"stake_amount": 50.0, "active_strategy": "Scalping"}
+        updates = {"stake_amount": 50.0, "active_strategy": "Scalping", "auto_execute_signals": True}
         response = client.put("/api/v1/config/update", json=updates)
         
         assert response.status_code == 200
         assert response.json()["success"] is True
         assert "stake_amount" in response.json()["updated_fields"]
+        assert "auto_execute_signals" in response.json()["updated_fields"]
 
 
 def test_config_update_encrypts_deriv_api_key(mock_auth):
@@ -223,6 +230,22 @@ def test_config_update_encrypts_deriv_api_key(mock_auth):
         payload = mock_supabase.table.return_value.update.call_args.args[0]
         assert payload["deriv_api_key"].startswith("enc:v1:")
         assert payload["deriv_api_key"] != "secret_key_1234"
+
+
+def test_config_update_applies_auto_execute_mode_to_running_bot(mock_auth):
+    with patch("app.api.config.supabase") as mock_supabase, \
+         patch("app.api.config.cache") as mock_cache, \
+         patch("app.api.config.bot_manager") as mock_bot_manager:
+        mock_supabase.table.return_value.update.return_value.eq.return_value.execute.return_value = MagicMock()
+
+        running_bot = MagicMock()
+        running_bot.is_running = True
+        mock_bot_manager._bots = {mock_auth["id"]: running_bot}
+
+        response = client.put("/api/v1/config/update", json={"auto_execute_signals": False})
+
+        assert response.status_code == 200
+        running_bot.set_auto_execute_signals.assert_called_once_with(False)
 
 # --- MONITOR API TESTS ---
 

@@ -155,6 +155,7 @@ async def test_phase6_rf_bot_run_early_failure_paths(monkeypatch):
 @pytest.mark.asyncio
 async def test_phase6_runner_analyze_symbol_additional_branches(monkeypatch):
     r = BotRunner(account_id="u")
+    r.auto_execute_signals = True
     r.symbols = ["R_25"]
     r.asset_config = {"R_25": {"multiplier": 10}}
 

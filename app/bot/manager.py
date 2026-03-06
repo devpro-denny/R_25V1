@@ -60,11 +60,19 @@ class BotManager:
             
         return self._bots[user_id]
 
-    async def start_bot(self, user_id: str, api_token: Optional[str] = None, stake: Optional[float] = None, strategy_name: Optional[str] = None) -> dict:
+    async def start_bot(
+        self,
+        user_id: str,
+        api_token: Optional[str] = None,
+        stake: Optional[float] = None,
+        strategy_name: Optional[str] = None,
+        auto_execute_signals: Optional[bool] = None,
+    ) -> dict:
         """
         Start a bot for a specific user with strategy selection support.
         If api_token is provided, it updates the bot's token.
         If strategy_name is provided, it overrides the user's profile strategy.
+        If auto_execute_signals is provided, it configures entry execution mode.
         """
         # Per-user lock to prevent concurrent start requests
         user_lock = self._get_user_lock(user_id)
@@ -159,7 +167,12 @@ class BotManager:
             
             # Create or get bot with injected instances
             bot = self.get_bot(user_id, strategy=strategy_instance, risk_manager=risk_manager_instance)
-            return await bot.start_bot(api_token=api_token, stake=stake, strategy_name=resolved_strategy)
+            return await bot.start_bot(
+                api_token=api_token,
+                stake=stake,
+                strategy_name=resolved_strategy,
+                auto_execute_signals=auto_execute_signals,
+            )
 
     async def stop_bot(self, user_id: str) -> dict:
         """

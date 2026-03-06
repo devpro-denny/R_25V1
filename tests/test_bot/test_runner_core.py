@@ -217,6 +217,7 @@ async def test_bot_runner_scan_cycle_executes_trade(mock_components, sample_ohlc
     }
     
     runner.user_stake = 10.0
+    runner.auto_execute_signals = True
     runner.is_running = True
     
     # Call scan cycle

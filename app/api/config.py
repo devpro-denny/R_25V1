@@ -11,6 +11,7 @@ import config
 from app.schemas.common import ConfigResponse
 from app.schemas.config import ConfigUpdateRequest
 from app.core.auth import get_current_active_user
+from app.bot.manager import bot_manager
 
 router = APIRouter()
 
@@ -25,16 +26,49 @@ from app.core.deriv_api_key_crypto import (
 
 logger = logging.getLogger(__name__)
 
+
+def _load_profile_with_execution_mode(user_id: str) -> Dict[str, Any]:
+    """
+    Load profile fields with backward-compatible fallback when the
+    auto_execute_signals column is not yet migrated.
+    """
+    try:
+        profile = (
+            supabase.table('profiles')
+            .select('deriv_api_key, stake_amount, active_strategy, auto_execute_signals')
+            .eq('id', user_id)
+            .single()
+            .execute()
+        )
+        return profile.data if profile.data else {}
+    except Exception as e:
+        error_text = str(e).lower()
+        if "auto_execute_signals" not in error_text:
+            raise
+        logger.warning(
+            "profiles.auto_execute_signals missing; falling back to legacy profile select for user %s",
+            user_id,
+        )
+        profile = (
+            supabase.table('profiles')
+            .select('deriv_api_key, stake_amount, active_strategy')
+            .eq('id', user_id)
+            .single()
+            .execute()
+        )
+        data = profile.data if profile.data else {}
+        data.setdefault("auto_execute_signals", False)
+        return data
+
 @router.get("/current", response_model=ConfigResponse)
 async def get_current_config(current_user: dict = Depends(get_current_active_user)):
     """Get current bot configuration"""
     
-    # Fetch user specifics (deriv_api_key, stake_amount, active_strategy)
+    # Fetch user specifics (deriv_api_key, stake_amount, active_strategy, auto_execute_signals)
     deriv_api_key = None
     stake_amount = 50.0 # Default
     active_strategy = "Conservative" # Default
-
-    active_strategy = "Conservative" # Default
+    auto_execute_signals = False
 
     try:
         # Check Cache
@@ -44,8 +78,7 @@ async def get_current_config(current_user: dict = Depends(get_current_active_use
         if profile_data:
             data = profile_data
         else:
-            profile = supabase.table('profiles').select('deriv_api_key, stake_amount, active_strategy').eq('id', current_user['id']).single().execute()
-            data = profile.data if profile.data else {}
+            data = _load_profile_with_execution_mode(current_user['id'])
             # Cache Profile (TTL 10 mins)
             cache.set(cache_key, data, ttl=600)
 
@@ -81,6 +114,7 @@ async def get_current_config(current_user: dict = Depends(get_current_active_use
             
             if data.get('active_strategy'):
                 active_strategy = data['active_strategy']
+            auto_execute_signals = bool(data.get("auto_execute_signals", False))
 
     except Exception as e:
         logger.error(f"Failed to fetch user profile from Supabase: {e}")
@@ -108,7 +142,8 @@ async def get_current_config(current_user: dict = Depends(get_current_active_use
         },
         "deriv_api_key": deriv_api_key,
         "stake_amount": stake_amount,
-        "active_strategy": active_strategy
+        "active_strategy": active_strategy,
+        "auto_execute_signals": auto_execute_signals,
     }
 
 @router.put("/update")
@@ -140,6 +175,10 @@ async def update_config(
             user_updates["active_strategy"] = updates.active_strategy
             updated_fields.append("active_strategy")
 
+        if updates.auto_execute_signals is not None:
+            user_updates["auto_execute_signals"] = bool(updates.auto_execute_signals)
+            updated_fields.append("auto_execute_signals")
+
         if user_updates:
             # Save to Supabase profile
             supabase.table('profiles').update(user_updates).eq("id", current_user["id"]).execute()
@@ -148,6 +187,13 @@ async def update_config(
             cache.delete(f"profile:{current_user['id']}")
             
             # If the bot is running for this user, it might need restart (handled by BotManager/Runner logic on next cycle or restart)
+            if updates.auto_execute_signals is not None:
+                running_bot = bot_manager._bots.get(current_user["id"])
+                if running_bot and running_bot.is_running:
+                    if hasattr(running_bot, "set_auto_execute_signals"):
+                        running_bot.set_auto_execute_signals(bool(updates.auto_execute_signals))
+                    else:
+                        running_bot.auto_execute_signals = bool(updates.auto_execute_signals)
         
         # Risk management (can update live)
         if updates.max_trades_per_day is not None:

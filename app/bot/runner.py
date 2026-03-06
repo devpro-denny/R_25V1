@@ -126,6 +126,7 @@ class BotRunner:
         
         # User Configurable Settings
         self.user_stake: Optional[float] = None
+        self.auto_execute_signals: bool = False
         if self.strategy and hasattr(self.strategy, "get_strategy_name"):
             try:
                 self.active_strategy = self.strategy.get_strategy_name()
@@ -177,6 +178,16 @@ class BotRunner:
     def _is_scalping_strategy(self) -> bool:
         """Return True when active strategy is scalping."""
         return (self._get_strategy_name() or "").strip().lower() == "scalping"
+
+    def set_auto_execute_signals(self, enabled: bool) -> None:
+        """Update signal execution mode at runtime for multiplier strategies."""
+        self.auto_execute_signals = bool(enabled)
+        mode = "AUTO_EXECUTION" if self.auto_execute_signals else "MANUAL_SIGNAL"
+        logger.info(
+            "[%s][SYSTEM] Signal execution mode set to %s",
+            self._get_strategy_name(),
+            mode,
+        )
 
     def _has_runtime_active_trade(self) -> bool:
         """Check active-trade state across risk-manager implementations."""
@@ -820,7 +831,13 @@ class BotRunner:
             logger.debug(f"Decision event broadcast skipped due to error: {e}")
     
     @with_user_context
-    async def start_bot(self, api_token: Optional[str] = None, stake: Optional[float] = None, strategy_name: Optional[str] = None) -> dict:
+    async def start_bot(
+        self,
+        api_token: Optional[str] = None,
+        stake: Optional[float] = None,
+        strategy_name: Optional[str] = None,
+        auto_execute_signals: Optional[bool] = None,
+    ) -> dict:
         """
         Start the trading bot
         Returns status dict
@@ -843,6 +860,8 @@ class BotRunner:
         
         if strategy_name:
             self.active_strategy = strategy_name
+        if auto_execute_signals is not None:
+            self.set_auto_execute_signals(bool(auto_execute_signals))
 
         # Ensure runner scope and logging context reflect active strategy.
         self._sync_strategy_scope()
@@ -871,6 +890,11 @@ class BotRunner:
             )
             logger.info(f"[{self._get_strategy_name()}][SYSTEM] \U0001F4DA Symbols: {', '.join(self.symbols)}")
             logger.info(f"[{self._get_strategy_name()}][SYSTEM] \U0001F4B5 Stake: ${current_stake}")
+            logger.info(
+                "[%s][SYSTEM] %s",
+                self._get_strategy_name(),
+                "Auto signal execution enabled" if self.auto_execute_signals else "Manual signal mode enabled",
+            )
             self.status = BotStatus.STARTING
             self.error_message = None
             self.state.update_status("starting")
@@ -1071,7 +1095,8 @@ class BotRunner:
             "statistics": self.state.get_statistics(),
             "config": {
                 "stake": self.user_stake if self.user_stake else config.FIXED_STAKE,
-                "strategy": self._get_strategy_name()
+                "strategy": self._get_strategy_name(),
+                "auto_execute_signals": self.auto_execute_signals,
             },
             "multi_asset": {
                 "symbols": self.symbols,
@@ -1575,25 +1600,79 @@ class BotRunner:
         
         # Track signal
         self.signals_by_symbol[symbol] = self.signals_by_symbol.get(symbol, 0) + 1
-        
 
-        
+        execution_mode = "auto" if self.auto_execute_signals else "manual"
+        action_taken = "Trade Executed" if self.auto_execute_signals else "Awaiting Manual Entry"
+
         # Broadcast signal to WebSockets
         timestamp = datetime.now().isoformat()
         signal['timestamp'] = timestamp # CRITICAL: Track signal time for result linking
-        
+        signal['symbol'] = symbol
+        signal['execution_mode'] = execution_mode
+        signal['action_taken'] = action_taken
+        signal['auto_execute_signals'] = self.auto_execute_signals
+        signal['execution_reason'] = (
+            "Manual mode active - awaiting manual entry"
+            if not self.auto_execute_signals
+            else "Strategy signal detected - proceeding with auto execution pipeline"
+        )
+
         await event_manager.broadcast({
             "type": "signal",
             "symbol": symbol,
             "signal": signal['signal'],
             "score": signal.get('score', 0),
             "confidence": signal.get('confidence', 0),
+            "execution_mode": execution_mode,
+            "action_taken": action_taken,
+            "auto_execute_signals": self.auto_execute_signals,
             "timestamp": timestamp,
             "account_id": self.account_id
         })
         
         # Record signal in state
         self.state.add_signal(signal)
+
+        # Notify Telegram on every detected signal, regardless of execution mode.
+        try:
+            signal_for_notify = signal.copy()
+            signal_for_notify['strategy_type'] = self._get_strategy_name()
+            signal_for_notify['user_id'] = self.account_id
+            if self.user_stake is not None:
+                signal_for_notify['stake'] = self.user_stake
+            await self.telegram_bridge.notify_signal(signal_for_notify)
+        except Exception as e:
+            logger.warning(f"[{self._get_strategy_name()}][SYSTEM] ⚠️ Signal Telegram notification failed: {e}")
+
+        if not self.auto_execute_signals:
+            self._cycle_step(
+                symbol,
+                4,
+                6,
+                "Manual mode active: signal sent, waiting for manual entry",
+                emoji="🖐️",
+                level="info",
+            )
+            await self._broadcast_decision(
+                symbol=symbol,
+                phase="execution",
+                decision="no_trade",
+                reason="Manual mode active - auto execution disabled",
+                details={
+                    "execution_mode": execution_mode,
+                    "action_taken": action_taken,
+                },
+                min_interval_seconds=0,
+            )
+            await event_manager.broadcast({
+                "type": "notification",
+                "level": "info",
+                "title": "Signal Ready (Manual Entry)",
+                "message": f"{symbol} {signal.get('signal')} detected. Open manually then use Sync to track.",
+                "timestamp": datetime.now().isoformat(),
+                "account_id": self.account_id,
+            })
+            return False
         
         # Get symbol-specific configuration
         multiplier = self.asset_config.get(symbol, {}).get('multiplier')

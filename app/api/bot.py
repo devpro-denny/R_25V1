@@ -22,6 +22,36 @@ from app.core.deriv_api_key_crypto import (
 
 router = APIRouter()
 
+
+def _load_start_profile(user_id: str):
+    """
+    Load profile with backward-compatible fallback when
+    auto_execute_signals column is not yet available.
+    """
+    try:
+        return (
+            supabase.table('profiles')
+            .select('deriv_api_key, stake_amount, active_strategy, auto_execute_signals')
+            .eq('id', user_id)
+            .single()
+            .execute()
+        )
+    except Exception as e:
+        error_text = str(e).lower()
+        if "auto_execute_signals" not in error_text:
+            raise
+        logger.warning(
+            "profiles.auto_execute_signals missing; falling back to legacy start profile select for user %s",
+            user_id,
+        )
+        return (
+            supabase.table('profiles')
+            .select('deriv_api_key, stake_amount, active_strategy')
+            .eq('id', user_id)
+            .single()
+            .execute()
+        )
+
 @router.post("/start", response_model=BotControlResponse)
 async def start_bot(current_user: dict = Depends(get_current_active_user)):
     """
@@ -32,13 +62,14 @@ async def start_bot(current_user: dict = Depends(get_current_active_user)):
     Only authenticated users can start the bot.
     """
     # Fetch API Key from profile
-    # Fetch API Key, Stake, and Strategy from profile
+    # Fetch API Key, Stake, Strategy, and execution mode from profile
     api_key = None
     stake_amount = 50.0
     active_strategy = "Conservative"
+    auto_execute_signals = False
 
     try:
-        profile = supabase.table('profiles').select('deriv_api_key, stake_amount, active_strategy').eq('id', current_user['id']).single().execute()
+        profile = _load_start_profile(current_user['id'])
         if profile.data:
             stored_key = profile.data.get("deriv_api_key")
             api_key = decrypt_deriv_api_key(stored_key)
@@ -46,6 +77,7 @@ async def start_bot(current_user: dict = Depends(get_current_active_user)):
                 stake_amount = float(profile.data['stake_amount'])
             if profile.data.get('active_strategy'):
                 active_strategy = profile.data['active_strategy']
+            auto_execute_signals = bool(profile.data.get("auto_execute_signals", False))
 
             # Backward-compatible migration: auto-encrypt legacy plaintext keys.
             if stored_key and not is_encrypted_deriv_api_key(stored_key):
@@ -72,7 +104,8 @@ async def start_bot(current_user: dict = Depends(get_current_active_user)):
         current_user['id'], 
         api_token=api_key,
         stake=stake_amount,
-        strategy_name=active_strategy
+        strategy_name=active_strategy,
+        auto_execute_signals=auto_execute_signals,
     )
     
     if not result["success"]:

@@ -70,6 +70,7 @@ async def test_runner_analyze_symbol_spam_suppression_and_trade_block(monkeypatc
 @pytest.mark.asyncio
 async def test_runner_analyze_symbol_db_save_false_and_db_exception(monkeypatch):
     r = BotRunner(account_id="u1")
+    r.auto_execute_signals = True
     r.data_fetcher = SimpleNamespace(fetch_all_timeframes=AsyncMock(return_value=_tf_pack()))
     r.strategy = SimpleNamespace(
         get_required_timeframes=lambda: ["1m", "5m", "1h", "4h", "1d", "1w"],

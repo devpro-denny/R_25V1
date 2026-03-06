@@ -21,6 +21,10 @@ begin
   if not exists (select 1 from information_schema.columns where table_name = 'profiles' and column_name = 'active_strategy') then
     alter table public.profiles add column active_strategy text default 'Conservative';
   end if;
+
+  if not exists (select 1 from information_schema.columns where table_name = 'profiles' and column_name = 'auto_execute_signals') then
+    alter table public.profiles add column auto_execute_signals boolean default false;
+  end if;
 end $$;
 
 -- 3. Helper Function: is_admin (Safe & Cached)
