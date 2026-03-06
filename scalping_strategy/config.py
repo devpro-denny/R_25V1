@@ -194,7 +194,7 @@ SCALPING_TRAIL_ACTIVATION_PCT = 6.0
 SCALPING_TRAIL_TIERS = [
     (25.0, 7.0),   # 25%+ profit -> 7% trail distance
     (15.0, 5.0),   # 15-25% profit -> 5% trail distance
-    (8.0, 4.0),    # 8-15% profit -> 4% trail distance
+    (10.0, 4.0),    # 8-15% profit -> 4% trail distance
 ]
 
 # Hard floor after trailing activation: do not allow profitable activated trades
@@ -217,7 +217,7 @@ SCALPING_SYMBOL_TRAIL_OVERRIDES = {
             (35.0, 10.0),
             (25.0, 8.0),
             (15.0, 6.0),
-            (8.0, 4.0),
+            (10.0, 4.0),
         ],
         "breach_confirmations": 2,
         "min_active_seconds": 30,
