@@ -106,6 +106,31 @@ def _to_datetime(value: Optional[object]) -> Optional[datetime]:
     return parsed
 
 
+def _normalize_response_timestamp(value: Optional[object]) -> Optional[str]:
+    """Normalize trade timestamps for API responses without losing timezone info."""
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, (int, float)):
+        parsed = _to_datetime(value)
+        return parsed.isoformat() if parsed else None
+
+    text = str(value).strip()
+    if not text:
+        return None
+    if text.endswith("Z"):
+        return text
+    if " " in text:
+        text = text.replace(" ", "T", 1)
+    if text.endswith("+00"):
+        text += ":00"
+    if text.endswith("-00"):
+        text += ":00"
+    parsed = datetime.fromisoformat(text)
+    return parsed.isoformat()
+
+
 def _parse_boolean_flag(value: Any) -> Optional[bool]:
     if isinstance(value, bool):
         return value
@@ -344,12 +369,43 @@ def _normalize_active_trade_rows(trades: List[Dict[str, Any]]) -> List[Dict[str,
             row["direction"] = direction
             row["signal"] = direction
 
+        if row.get("timestamp") in (None, ""):
+            fallback_ts = (
+                row.get("created_at")
+                or row.get("open_time")
+                or row.get("closed_at")
+            )
+            row["timestamp"] = _normalize_response_timestamp(fallback_ts)
+
         if row.get("trailing_enabled") is None:
             row["trailing_enabled"] = True
         if row.get("stagnation_enabled") is None:
             row["stagnation_enabled"] = True
         if not row.get("entry_source"):
             row["entry_source"] = "system"
+
+        normalized.append(row)
+    return normalized
+
+
+def _normalize_history_trade_rows(trades: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    normalized: List[Dict[str, Any]] = []
+    for trade in trades:
+        if not isinstance(trade, dict):
+            continue
+        row = dict(trade)
+        if row.get("timestamp") in (None, ""):
+            fallback_ts = (
+                row.get("created_at")
+                or row.get("closed_at")
+                or row.get("open_time")
+            )
+            row["timestamp"] = _normalize_response_timestamp(fallback_ts)
+
+        direction = _normalize_direction(row.get("direction") or row.get("signal"))
+        if direction:
+            row["direction"] = direction
+            row["signal"] = direction
 
         normalized.append(row)
     return normalized
@@ -688,6 +744,7 @@ async def get_trade_history(
     # Fetch from Supabase via Service
     from app.services.trades_service import UserTradesService
     history = UserTradesService.get_user_trades(current_user['id'], limit)
+    history = _normalize_history_trade_rows(list(history or []))
     
     return prepare_response(
         history,

@@ -120,6 +120,50 @@ def test_save_trade_normalizes_realized_open_status(mock_supabase, mock_cache):
     payload = mock_supabase.table.return_value.insert.call_args.args[0]
     assert payload["status"] == "loss"
 
+def test_save_trade_uses_sell_time_when_timestamp_missing(mock_supabase, mock_cache):
+    """Realized trades should persist a timestamp from broker sell_time."""
+    user_id = "user123"
+    trade_data = {
+        "contract_id": "c-sell-time-1",
+        "symbol": "R_25",
+        "direction": "DOWN",
+        "profit": 1.25,
+        "status": "won",
+        "sell_time": 1700000000,
+    }
+
+    mock_response = MagicMock()
+    mock_response.data = [{"id": 91, "status": "win"}]
+    mock_supabase.table.return_value.insert.return_value.execute.return_value = mock_response
+
+    result = UserTradesService.save_trade(user_id, trade_data)
+
+    assert result == {"id": 91, "status": "win"}
+    payload = mock_supabase.table.return_value.insert.call_args.args[0]
+    assert payload["timestamp"] == datetime.fromtimestamp(1700000000).isoformat()
+
+def test_save_trade_uses_open_time_when_timestamp_missing(mock_supabase, mock_cache):
+    """Fallback timestamps should be derived from open_time/date_start style fields."""
+    user_id = "user123"
+    trade_data = {
+        "contract_id": "c-open-time-1",
+        "symbol": "R_50",
+        "direction": "UP",
+        "profit": -0.75,
+        "status": "closed",
+        "open_time": datetime(2026, 3, 6, 10, 15, 0),
+    }
+
+    mock_response = MagicMock()
+    mock_response.data = [{"id": 92, "status": "loss"}]
+    mock_supabase.table.return_value.insert.return_value.execute.return_value = mock_response
+
+    result = UserTradesService.save_trade(user_id, trade_data)
+
+    assert result == {"id": 92, "status": "loss"}
+    payload = mock_supabase.table.return_value.insert.call_args.args[0]
+    assert payload["timestamp"] == "2026-03-06T10:15:00"
+
 def test_save_trade_retries_without_optional_columns_on_schema_cache_error(mock_supabase, mock_cache):
     """PGRST204 schema-cache column errors should retry without optional fields."""
     user_id = "user123"

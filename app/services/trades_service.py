@@ -61,6 +61,54 @@ class UserTradesService:
         return None
 
     @staticmethod
+    def _to_datetime(value: Optional[object]) -> Optional[datetime]:
+        """Safely coerce supported timestamp payloads into datetime."""
+        if value is None:
+            return None
+        if isinstance(value, datetime):
+            return value
+        if isinstance(value, (int, float)):
+            try:
+                return datetime.fromtimestamp(float(value))
+            except (TypeError, ValueError, OSError):
+                return None
+        if isinstance(value, str):
+            raw = value.strip()
+            if not raw:
+                return None
+            if raw.endswith("Z"):
+                raw = raw[:-1] + "+00:00"
+            if raw.isdigit():
+                try:
+                    number = float(raw)
+                    if len(raw) >= 13:
+                        number = number / 1000.0
+                    return datetime.fromtimestamp(number)
+                except (TypeError, ValueError, OSError):
+                    return None
+            try:
+                return datetime.fromisoformat(raw)
+            except ValueError:
+                return None
+        return None
+
+    @staticmethod
+    def _resolve_trade_timestamp(trade_data: Dict) -> Optional[str]:
+        """Pick the best available persisted timestamp for a trade row."""
+        candidates = (
+            trade_data.get("timestamp"),
+            trade_data.get("closed_at"),
+            trade_data.get("sell_time"),
+            trade_data.get("open_time"),
+            trade_data.get("date_start"),
+        )
+        for candidate in candidates:
+            parsed = UserTradesService._to_datetime(candidate)
+            if parsed is not None:
+                return parsed.isoformat()
+        return None
+
+    @staticmethod
     def _drop_optional_columns_for_compat(record: Dict, error: Exception) -> Dict:
         """
         Remove optional columns if database schema has not been migrated yet.
@@ -150,10 +198,7 @@ class UserTradesService:
                 logger.debug(f"Trade data keys: {list(trade_data.keys())}")
                 return None
             
-            # Get timestamp and convert to string if it's a datetime object
-            timestamp = trade_data.get("timestamp") or trade_data.get("closed_at")
-            if isinstance(timestamp, datetime):
-                timestamp = timestamp.isoformat()
+            timestamp = UserTradesService._resolve_trade_timestamp(trade_data)
 
             normalized_status = UserTradesService._normalize_trade_status(
                 trade_data.get("status"),

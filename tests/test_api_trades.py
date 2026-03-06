@@ -158,6 +158,28 @@ def test_get_trade_history():
         assert data[0]["contract_id"] == "456"
         assert data[0]["strategy_type"] == "Scalping"
 
+def test_get_trade_history_uses_created_at_when_timestamp_missing():
+    """History rows should expose created_at as timestamp fallback for legacy/manual imports."""
+    with patch("app.services.trades_service.UserTradesService.get_user_trades") as mock_get:
+        mock_get.return_value = [{
+            "contract_id": "manual-1",
+            "symbol": "R_75",
+            "signal": "DOWN",
+            "strategy_type": "Scalping",
+            "status": "win",
+            "profit": 0.02,
+            "timestamp": None,
+            "created_at": "2026-03-06 09:45:29.813446+00",
+            "entry_source": "manual_imported",
+        }]
+
+        response = client.get(f"{API_PREFIX}/history?limit=10")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data[0]["contract_id"] == "manual-1"
+        assert data[0]["timestamp"] == "2026-03-06T09:45:29.813446Z"
+
 def test_get_trade_stats():
     """Test /stats endpoint."""
     with patch("app.services.trades_service.UserTradesService.get_user_stats") as mock_stats:
