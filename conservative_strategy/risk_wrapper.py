@@ -151,6 +151,19 @@ class ConservativeRiskManager(BaseRiskManager):
             current_price,
             previous_price,
         )
+
+    def set_trade_exit_controls(
+        self,
+        contract_id: str,
+        trailing_enabled: Optional[bool] = None,
+        stagnation_enabled: Optional[bool] = None,
+    ) -> Optional[Dict]:
+        """Delegate runtime exit-control updates to the wrapped manager."""
+        return self.risk_manager.set_trade_exit_controls(
+            contract_id=contract_id,
+            trailing_enabled=trailing_enabled,
+            stagnation_enabled=stagnation_enabled,
+        )
     
     async def check_for_existing_positions(self, trade_engine):
         """

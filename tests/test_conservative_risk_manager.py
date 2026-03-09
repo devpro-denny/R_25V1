@@ -32,6 +32,32 @@ def test_crm_record_trade(crm):
     assert crm.risk_manager.record_trade_open.called
     assert crm.risk_manager.record_trade_close.call_count == 2
 
+def test_crm_set_trade_exit_controls(crm):
+    crm.risk_manager.set_trade_exit_controls = MagicMock(
+        return_value={
+            "contract_id": "manual-toggle-1",
+            "trailing_enabled": False,
+            "stagnation_enabled": True,
+        }
+    )
+
+    updated = crm.set_trade_exit_controls(
+        "manual-toggle-1",
+        trailing_enabled=False,
+        stagnation_enabled=True,
+    )
+
+    assert updated == {
+        "contract_id": "manual-toggle-1",
+        "trailing_enabled": False,
+        "stagnation_enabled": True,
+    }
+    crm.risk_manager.set_trade_exit_controls.assert_called_once_with(
+        contract_id="manual-toggle-1",
+        trailing_enabled=False,
+        stagnation_enabled=True,
+    )
+
 @pytest.mark.asyncio
 async def test_crm_check_existing(crm):
     crm.risk_manager.check_for_existing_positions = AsyncMock(return_value=True)
