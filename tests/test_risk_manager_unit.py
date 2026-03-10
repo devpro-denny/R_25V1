@@ -216,6 +216,7 @@ def test_manual_import_get_active_trade_info_preserves_source_and_open_time(rm):
             "direction": "DOWN",
             "stake": 5.0,
             "entry_price": 33004.7788,
+            "multiplier": 200,
             "timestamp": imported_open_time.isoformat(),
             "entry_source": "manual_imported",
             "manual_tracking": True,
@@ -227,6 +228,7 @@ def test_manual_import_get_active_trade_info_preserves_source_and_open_time(rm):
     assert active_info["contract_id"] == "manual-info-1"
     assert active_info["entry_source"] == "manual_imported"
     assert active_info["manual_tracking"] is True
+    assert active_info["multiplier"] == 200
     assert active_info["open_time"] == imported_open_time
     assert active_info["timestamp"] == imported_open_time
 

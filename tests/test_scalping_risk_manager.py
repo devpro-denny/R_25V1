@@ -232,6 +232,31 @@ def test_scalping_manual_import_trade_honors_disabled_exit_controls_on_open(srm)
     assert metadata["trailing_enabled"] is False
     assert metadata["stagnation_enabled"] is False
 
+def test_scalping_manual_import_get_active_trade_info_preserves_multiplier_and_source(srm):
+    """Scalping runtime metadata should keep imported multiplier/source for close persistence."""
+    imported_open_time = datetime(2026, 3, 10, 10, 39, 38)
+    srm.record_trade_open(
+        {
+            "contract_id": "MANUAL-INFO-1",
+            "symbol": "R_75",
+            "direction": "DOWN",
+            "stake": 5.0,
+            "entry_price": 32881.3786,
+            "multiplier": 200,
+            "open_time": imported_open_time,
+            "entry_source": "manual_imported",
+            "manual_tracking": True,
+        }
+    )
+
+    active_info = srm.get_active_trade_info()
+
+    assert active_info["contract_id"] == "MANUAL-INFO-1"
+    assert active_info["entry_source"] == "manual_imported"
+    assert active_info["manual_tracking"] is True
+    assert active_info["multiplier"] == 200
+    assert active_info["open_time"] == imported_open_time
+
 def test_scalping_coerce_exit_flag_handles_supported_types(srm):
     """Exit-flag coercion should preserve explicit bool-like values."""
     assert srm._coerce_exit_flag(False) is False

@@ -619,6 +619,7 @@ class BotRunner:
                     "stake": stake if stake is not None else 0.0,
                     "entry_price": entry_price if entry_price is not None else 0.0,
                     "entry_spot": entry_price if entry_price is not None else 0.0,
+                    "multiplier": persisted_trade.get("multiplier"),
                     "status": "open",
                     # Keep restored contracts aligned with normal conservative lifecycle.
                     "strategy": "topdown",
@@ -645,6 +646,7 @@ class BotRunner:
                     "direction": direction,
                     "stake": stake,
                     "entry_price": entry_price,
+                    "multiplier": persisted_trade.get("multiplier"),
                     "open_time": open_time.isoformat(),
                     "status": "open",
                     "strategy_type": self._get_strategy_name(),

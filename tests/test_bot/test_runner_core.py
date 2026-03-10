@@ -471,6 +471,7 @@ async def test_bot_runner_manual_sync_external_close_persists_exit_price_and_dur
         "stake": 10.0,
         "direction": "UP",
         "entry_price": 101.0,
+        "multiplier": 200,
         "signal": "UP",
         "status": "open",
         "entry_source": "manual_imported",
@@ -502,7 +503,58 @@ async def test_bot_runner_manual_sync_external_close_persists_exit_price_and_dur
     assert saved_payload["status"] == "lost"
     assert float(saved_payload["profit"]) == pytest.approx(-2.0)
     assert float(saved_payload["exit_price"]) == pytest.approx(97.5)
+    assert saved_payload["multiplier"] == 200
     assert saved_payload["duration"] == 65
+
+@pytest.mark.asyncio
+async def test_bot_runner_scalping_manual_sync_external_close_persists_multiplier(mock_components):
+    from scalping_risk_manager import ScalpingRiskManager
+
+    runner = BotRunner(account_id="test_user")
+    runner.strategy = MagicMock()
+    runner.strategy.get_strategy_name.return_value = "Scalping"
+
+    active_info = {
+        "symbol": "R_75",
+        "contract_id": "SCALP-MANUAL-CLOSE-1",
+        "stake": 5.0,
+        "direction": "DOWN",
+        "entry_price": 32881.3786,
+        "multiplier": 200,
+        "signal": "DOWN",
+        "status": "open",
+        "entry_source": "manual_imported",
+        "manual_tracking": True,
+    }
+
+    risk_manager = MagicMock(spec=ScalpingRiskManager)
+    risk_manager.has_active_trade = True
+    risk_manager.active_trades = ["SCALP-MANUAL-CLOSE-1"]
+    risk_manager.get_active_trade_info.return_value = active_info
+    runner.risk_manager = risk_manager
+
+    runner.trade_engine = mock_components["te"].return_value
+    runner.trade_engine.get_trade_status = AsyncMock(
+        return_value={
+            "contract_id": "SCALP-MANUAL-CLOSE-1",
+            "status": "lost",
+            "is_sold": True,
+            "profit": -0.02,
+            "current_spot": 32869.4669,
+            "sell_time": 1065,
+            "date_start": 1032,
+        }
+    )
+
+    await runner._monitor_active_trade()
+
+    saved_payload = mock_components["uts"].save_trade.call_args[0][1]
+    assert saved_payload["contract_id"] == "SCALP-MANUAL-CLOSE-1"
+    assert saved_payload["status"] == "lost"
+    assert float(saved_payload["profit"]) == pytest.approx(-0.02)
+    assert float(saved_payload["exit_price"]) == pytest.approx(32869.4669)
+    assert saved_payload["multiplier"] == 200
+    assert saved_payload["duration"] == 33
 
 @pytest.mark.asyncio
 async def test_bot_runner_monitor_active_trade_scalping_trailing_activation(mock_components):
