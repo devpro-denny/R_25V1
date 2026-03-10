@@ -2,6 +2,7 @@ import logging
 from typing import Dict, List, Optional
 from datetime import datetime
 from app.core.supabase import supabase
+import config
 
 logger = logging.getLogger(__name__)
 
@@ -109,6 +110,39 @@ class UserTradesService:
         return None
 
     @staticmethod
+    def _normalize_entry_source(value: Optional[object]) -> str:
+        """Persist a stable non-null source marker for trade rows."""
+        if value is None:
+            return "system"
+        raw = str(value).strip()
+        return raw if raw else "system"
+
+    @staticmethod
+    def _resolve_multiplier(trade_data: Dict) -> Optional[float]:
+        """
+        Resolve multiplier from the payload first, then fall back to configured
+        symbol metadata when the close path omitted it.
+        """
+        explicit_multiplier = UserTradesService._to_float(
+            trade_data.get("multiplier") or trade_data.get("contract_multiplier")
+        )
+        if explicit_multiplier is not None and explicit_multiplier > 0:
+            return explicit_multiplier
+
+        symbol = str(trade_data.get("symbol") or "").strip()
+        if not symbol:
+            return None
+
+        asset_config = getattr(config, "ASSET_CONFIG", {}).get(symbol, {})
+        if not isinstance(asset_config, dict):
+            return None
+
+        configured_multiplier = UserTradesService._to_float(asset_config.get("multiplier"))
+        if configured_multiplier is not None and configured_multiplier > 0:
+            return configured_multiplier
+        return None
+
+    @staticmethod
     def _drop_optional_columns_for_compat(record: Dict, error: Exception) -> Dict:
         """
         Remove optional columns if database schema has not been migrated yet.
@@ -205,6 +239,10 @@ class UserTradesService:
                 trade_data.get("profit"),
                 trade_data.get("exit_price"),
             )
+            entry_source = UserTradesService._normalize_entry_source(
+                trade_data.get("entry_source")
+            )
+            multiplier = UserTradesService._resolve_multiplier(trade_data)
             trailing_enabled = UserTradesService._to_bool(trade_data.get("trailing_enabled"))
             stagnation_enabled = UserTradesService._to_bool(trade_data.get("stagnation_enabled"))
             
@@ -224,9 +262,10 @@ class UserTradesService:
                 "timestamp": timestamp,
                 "duration": trade_data.get("duration"),
                 "strategy_type": trade_data.get("strategy_type", "Conservative"),
-                "entry_source": trade_data.get("entry_source"),
-                "multiplier": trade_data.get("multiplier"),
+                "entry_source": entry_source,
             }
+            if multiplier is not None:
+                record["multiplier"] = multiplier
             if trailing_enabled is not None:
                 record["trailing_enabled"] = trailing_enabled
             if stagnation_enabled is not None:
@@ -300,6 +339,10 @@ class UserTradesService:
             )
             if isinstance(timestamp, datetime):
                 timestamp = timestamp.isoformat()
+            entry_source = UserTradesService._normalize_entry_source(
+                trade_data.get("entry_source")
+            )
+            multiplier = UserTradesService._resolve_multiplier(trade_data)
             trailing_enabled = UserTradesService._to_bool(trade_data.get("trailing_enabled"))
             stagnation_enabled = UserTradesService._to_bool(trade_data.get("stagnation_enabled"))
 
@@ -316,9 +359,10 @@ class UserTradesService:
                 "timestamp": timestamp,
                 "duration": None,
                 "strategy_type": trade_data.get("strategy_type", "Conservative"),
-                "entry_source": trade_data.get("entry_source"),
-                "multiplier": trade_data.get("multiplier"),
+                "entry_source": entry_source,
             }
+            if multiplier is not None:
+                record["multiplier"] = multiplier
             if trailing_enabled is not None:
                 record["trailing_enabled"] = trailing_enabled
             if stagnation_enabled is not None:

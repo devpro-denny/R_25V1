@@ -397,3 +397,43 @@ async def test_execute_trade_sets_reason_when_signal_rr_below_minimum():
     out = await engine.execute_trade(signal, rm)
     assert out is None
     assert engine.last_execution_reason == "signal_rr_below_minimum"
+
+
+@pytest.mark.asyncio
+async def test_execute_trade_carries_trade_metadata_to_final_status():
+    engine = TradeEngine(api_token="TEST", app_id="1089")
+    rm = DummyRiskManager()
+
+    engine.open_trade = AsyncMock(
+        return_value={
+            "contract_id": "c-1",
+            "stake": 5.0,
+            "entry_spot": 100.0,
+            "multiplier": 160,
+            "symbol": "R_25",
+        }
+    )
+    engine.monitor_trade = AsyncMock(
+        return_value={
+            "contract_id": "c-1",
+            "profit": 1.5,
+            "status": "won",
+            "current_spot": 101.0,
+            "sell_time": 1700000000,
+        }
+    )
+
+    signal = {
+        "signal": "UP",
+        "symbol": "R_25",
+        "take_profit": 101.0,
+        "stop_loss": 99.0,
+        "stake": 5.0,
+    }
+
+    out = await engine.execute_trade(signal, rm)
+
+    assert out is not None
+    assert out["multiplier"] == 160
+    assert out["entry_source"] == "system"
+    assert out["symbol"] == "R_25"

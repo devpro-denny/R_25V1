@@ -164,6 +164,28 @@ def test_save_trade_uses_open_time_when_timestamp_missing(mock_supabase, mock_ca
     payload = mock_supabase.table.return_value.insert.call_args.args[0]
     assert payload["timestamp"] == "2026-03-06T10:15:00"
 
+def test_save_trade_defaults_entry_source_and_derives_multiplier(mock_supabase, mock_cache):
+    """Completed trades should not persist null metadata when it can be inferred."""
+    user_id = "user123"
+    trade_data = {
+        "contract_id": "c-meta-1",
+        "symbol": "R_25",
+        "direction": "UP",
+        "profit": 2.5,
+        "status": "won",
+    }
+
+    mock_response = MagicMock()
+    mock_response.data = [{"id": 93, "status": "win"}]
+    mock_supabase.table.return_value.insert.return_value.execute.return_value = mock_response
+
+    result = UserTradesService.save_trade(user_id, trade_data)
+
+    assert result == {"id": 93, "status": "win"}
+    payload = mock_supabase.table.return_value.insert.call_args.args[0]
+    assert payload["entry_source"] == "system"
+    assert payload["multiplier"] == 160.0
+
 def test_save_trade_retries_without_optional_columns_on_schema_cache_error(mock_supabase, mock_cache):
     """PGRST204 schema-cache column errors should retry without optional fields."""
     user_id = "user123"
@@ -215,6 +237,8 @@ def test_track_active_trade_upsert_success(mock_supabase, mock_cache):
     payload = mock_supabase.table.return_value.upsert.call_args.args[0]
     assert payload["status"] == "open"
     assert payload["signal"] == "UP"
+    assert payload["entry_source"] == "system"
+    assert payload["multiplier"] == 160.0
     mock_cache.delete_pattern.assert_called_with(f"trades:{user_id}:*")
     mock_cache.delete.assert_any_call(f"stats:{user_id}")
     mock_cache.delete.assert_any_call(f"trades:{user_id}:active")

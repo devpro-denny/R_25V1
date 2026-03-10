@@ -1188,6 +1188,12 @@ class TradeEngine:
                 final_status['exit_price'] = final_status.get('current_spot')
                 final_status['direction'] = direction
                 final_status['symbol'] = symbol
+                final_status['multiplier'] = trade_info.get('multiplier')
+                final_status['entry_source'] = (
+                    trade_info.get('entry_source')
+                    or signal.get('entry_source')
+                    or "system"
+                )
                 final_status['strategy_type'] = strategy_type
                 final_status['user_id'] = user_id
                 final_status['execution_reason'] = execution_reason

@@ -8,7 +8,7 @@ create table if not exists public.trades (
   stake numeric null,
   entry_price numeric null,
   multiplier numeric null,
-  entry_source text null,
+  entry_source text null default 'system',
   trailing_enabled boolean null default true,
   stagnation_enabled boolean null default true,
   exit_price numeric null,
@@ -65,3 +65,34 @@ create policy "Users and Admins can view trades"
     or
     (select public.is_admin())
   );
+
+-- Backfill stable metadata defaults for older rows.
+alter table public.trades alter column entry_source set default 'system';
+
+update public.trades
+set entry_source = 'system'
+where entry_source is null;
+
+update public.trades
+set trailing_enabled = true
+where trailing_enabled is null;
+
+update public.trades
+set stagnation_enabled = true
+where stagnation_enabled is null;
+
+update public.trades
+set multiplier = case symbol
+  when 'R_25' then 160
+  when 'R_50' then 80
+  when 'R_75' then 50
+  when 'R_100' then 40
+  when '1HZ25V' then 160
+  when '1HZ50V' then 80
+  when '1HZ75V' then 50
+  when '1HZ90V' then 45
+  when 'stpRNG5' then 100
+  when 'stpRNG4' then 200
+  else multiplier
+end
+where multiplier is null;

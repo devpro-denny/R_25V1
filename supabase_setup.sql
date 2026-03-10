@@ -114,7 +114,7 @@ create trigger on_auth_user_created
 DO $$
 BEGIN
   IF NOT EXISTS (
-    SELECT 1 FROM information_schema.columns 
+    SELECT 1 FROM information_schema.columns
     WHERE table_name = 'trades' AND column_name = 'strategy_type'
   ) THEN
     ALTER TABLE public.trades 
@@ -183,6 +183,45 @@ BEGIN
     RAISE NOTICE 'Added stagnation_enabled column to trades table';
   END IF;
 END $$;
+
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'trades' AND column_name = 'entry_source'
+  ) THEN
+    ALTER TABLE public.trades
+    ALTER COLUMN entry_source SET DEFAULT 'system';
+  END IF;
+END $$;
+
+UPDATE public.trades
+SET entry_source = 'system'
+WHERE entry_source IS NULL;
+
+UPDATE public.trades
+SET trailing_enabled = TRUE
+WHERE trailing_enabled IS NULL;
+
+UPDATE public.trades
+SET stagnation_enabled = TRUE
+WHERE stagnation_enabled IS NULL;
+
+UPDATE public.trades
+SET multiplier = CASE symbol
+  WHEN 'R_25' THEN 160
+  WHEN 'R_50' THEN 80
+  WHEN 'R_75' THEN 50
+  WHEN 'R_100' THEN 40
+  WHEN '1HZ25V' THEN 160
+  WHEN '1HZ50V' THEN 80
+  WHEN '1HZ75V' THEN 50
+  WHEN '1HZ90V' THEN 45
+  WHEN 'stpRNG5' THEN 100
+  WHEN 'stpRNG4' THEN 200
+  ELSE multiplier
+END
+WHERE multiplier IS NULL;
 
 -- 6. Scalping runtime state persistence
 create table if not exists public.scalping_runtime_state (
