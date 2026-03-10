@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
   pull-requests: write
 
 concurrency:
@@ -89,3 +89,66 @@ jobs:
       - name: PR link
         run: |
           echo "Open PR URL: ${{ steps.create_pr.outputs.compare_url }}"
+
+      - name: Enable auto-merge on PR
+        uses: actions/github-script@v7
+        env:
+          PR_URL: ${{ steps.create_pr.outputs.compare_url }}
+        with:
+          github-token: ${{ secrets.PR_CREATOR_TOKEN || github.token }}
+          script: |
+            const prUrl = process.env.PR_URL || '';
+            if (!prUrl.startsWith('https://github.com/')) {
+              core.info('No PR URL available; skipping auto-merge enablement.');
+              return;
+            }
+
+            const match = prUrl.match(/\/pull\/(\d+)$/);
+            if (!match) {
+              core.info(`PR URL did not contain a pull number: ${prUrl}`);
+              return;
+            }
+
+            const pull_number = Number(match[1]);
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const { data: pr } = await github.rest.pulls.get({
+              owner,
+              repo,
+              pull_number,
+            });
+
+            if (pr.state !== 'open') {
+              core.info(`PR #${pull_number} is not open; skipping auto-merge enablement.`);
+              return;
+            }
+
+            if (pr.draft) {
+              core.info(`PR #${pull_number} is draft; skipping auto-merge enablement.`);
+              return;
+            }
+
+            try {
+              await github.graphql(
+                `
+                  mutation EnableAutoMerge($pullRequestId: ID!) {
+                    enablePullRequestAutoMerge(input: {
+                      pullRequestId: $pullRequestId,
+                      mergeMethod: SQUASH
+                    }) {
+                      pullRequest {
+                        number
+                        autoMergeRequest {
+                          enabledAt
+                        }
+                      }
+                    }
+                  }
+                `,
+                { pullRequestId: pr.node_id }
+              );
+              core.info(`Auto-merge enabled for PR #${pull_number}.`);
+            } catch (error) {
+              core.warning(`Could not enable auto-merge for PR #${pull_number}: ${error.message}`);
+              core.warning('Make sure repository settings allow auto-merge and the token can manage pull requests.');
+            }

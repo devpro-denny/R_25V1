@@ -1,0 +1,175 @@
+name: PR Sync And Auto-Merge
+
+on:
+  pull_request_target:
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - ready_for_review
+  workflow_run:
+    workflows:
+      - CI/CD
+    types:
+      - completed
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: pr-sync-automerge-${{ github.event.pull_request.number || github.event.workflow_run.id }}
+  cancel-in-progress: true
+
+jobs:
+  sync_and_enable:
+    name: Update PR Branch And Enable Auto-Merge
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve PR context
+        id: resolve
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.PR_CREATOR_TOKEN || github.token }}
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+
+            let pr = null;
+
+            if (context.eventName === 'pull_request_target') {
+              pr = context.payload.pull_request;
+            } else if (context.eventName === 'workflow_run') {
+              const workflowRun = context.payload.workflow_run;
+              if (workflowRun.conclusion !== 'success') {
+                core.info(`Workflow run conclusion is ${workflowRun.conclusion}; skipping.`);
+                core.setOutput('should_continue', 'false');
+                return;
+              }
+
+              const prs = workflowRun.pull_requests || [];
+              if (prs.length === 0) {
+                core.info('Workflow run is not associated with a pull request.');
+                core.setOutput('should_continue', 'false');
+                return;
+              }
+
+              const prNumber = prs[0].number;
+              const response = await github.rest.pulls.get({
+                owner,
+                repo,
+                pull_number: prNumber,
+              });
+              pr = response.data;
+            }
+
+            if (!pr) {
+              core.info('No pull request context available.');
+              core.setOutput('should_continue', 'false');
+              return;
+            }
+
+            if (pr.state !== 'open') {
+              core.info(`PR #${pr.number} is not open.`);
+              core.setOutput('should_continue', 'false');
+              return;
+            }
+
+            if (pr.head.repo.full_name !== `${owner}/${repo}`) {
+              core.info(`PR #${pr.number} head repo differs from base repo; skipping branch updates.`);
+              core.setOutput('should_continue', 'false');
+              return;
+            }
+
+            if (pr.base.ref !== 'main') {
+              core.info(`PR #${pr.number} targets ${pr.base.ref}; skipping.`);
+              core.setOutput('should_continue', 'false');
+              return;
+            }
+
+            core.setOutput('should_continue', 'true');
+            core.setOutput('pr_number', String(pr.number));
+            core.setOutput('pr_node_id', pr.node_id);
+            core.setOutput('head_sha', pr.head.sha);
+
+      - name: Update branch from main when behind
+        if: steps.resolve.outputs.should_continue == 'true'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.PR_CREATOR_TOKEN || github.token }}
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const pull_number = Number('${{ steps.resolve.outputs.pr_number }}');
+
+            const { data: pr } = await github.rest.pulls.get({
+              owner,
+              repo,
+              pull_number,
+            });
+
+            if (pr.mergeable_state !== 'behind') {
+              core.info(`PR #${pull_number} mergeable_state=${pr.mergeable_state}; no branch update needed.`);
+              return;
+            }
+
+            try {
+              await github.rest.pulls.updateBranch({
+                owner,
+                repo,
+                pull_number,
+                expected_head_sha: pr.head.sha,
+              });
+              core.info(`Triggered branch update for PR #${pull_number}.`);
+            } catch (error) {
+              if (error.status === 422) {
+                core.info(`Branch update skipped for PR #${pull_number}: ${error.message}`);
+                return;
+              }
+              throw error;
+            }
+
+      - name: Enable auto-merge
+        if: steps.resolve.outputs.should_continue == 'true'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.PR_CREATOR_TOKEN || github.token }}
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const pull_number = Number('${{ steps.resolve.outputs.pr_number }}');
+
+            const { data: pr } = await github.rest.pulls.get({
+              owner,
+              repo,
+              pull_number,
+            });
+
+            if (pr.draft) {
+              core.info(`PR #${pull_number} is draft; skipping auto-merge enablement.`);
+              return;
+            }
+
+            try {
+              await github.graphql(
+                `
+                  mutation EnableAutoMerge($pullRequestId: ID!) {
+                    enablePullRequestAutoMerge(input: {
+                      pullRequestId: $pullRequestId,
+                      mergeMethod: SQUASH
+                    }) {
+                      pullRequest {
+                        number
+                        autoMergeRequest {
+                          enabledAt
+                        }
+                      }
+                    }
+                  }
+                `,
+                { pullRequestId: pr.node_id }
+              );
+              core.info(`Auto-merge enabled for PR #${pull_number}.`);
+            } catch (error) {
+              core.warning(`Could not enable auto-merge for PR #${pull_number}: ${error.message}`);
+            }
