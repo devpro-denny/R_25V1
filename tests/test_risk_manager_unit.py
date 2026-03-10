@@ -206,6 +206,30 @@ def test_manual_import_trade_honors_disabled_exit_controls_on_open(rm):
     assert active["trailing_enabled"] is False
     assert active["stagnation_enabled"] is False
 
+def test_manual_import_get_active_trade_info_preserves_source_and_open_time(rm):
+    """Runtime monitor metadata should preserve sync source and broker open time."""
+    imported_open_time = datetime(2026, 3, 10, 10, 4, 6)
+    rm.record_trade_open(
+        {
+            "symbol": "R_75",
+            "contract_id": "manual-info-1",
+            "direction": "DOWN",
+            "stake": 5.0,
+            "entry_price": 33004.7788,
+            "timestamp": imported_open_time.isoformat(),
+            "entry_source": "manual_imported",
+            "manual_tracking": True,
+        }
+    )
+
+    active_info = rm.get_active_trade_info()
+
+    assert active_info["contract_id"] == "manual-info-1"
+    assert active_info["entry_source"] == "manual_imported"
+    assert active_info["manual_tracking"] is True
+    assert active_info["open_time"] == imported_open_time
+    assert active_info["timestamp"] == imported_open_time
+
 def test_conservative_coerce_exit_flag_handles_supported_types(rm):
     """Exit-flag coercion should preserve explicit bool-like values."""
     assert rm._coerce_exit_flag(True) is True
