@@ -369,6 +369,118 @@ class BotRunner:
             parsed = parsed.astimezone().replace(tzinfo=None)
         return parsed
 
+    @staticmethod
+    def _coerce_trade_float(value: Optional[object]) -> Optional[float]:
+        """Best-effort numeric coercion for broker trade payloads."""
+        if value in (None, ""):
+            return None
+        try:
+            return float(value)
+        except Exception:
+            return None
+
+    def _build_closed_trade_payload(
+        self,
+        active_info: Optional[Dict],
+        broker_result: Optional[Dict],
+        *,
+        contract_id: str,
+        symbol: str,
+        profit_fallback: Optional[float] = None,
+        status_fallback: Optional[str] = None,
+        exit_reason: Optional[str] = None,
+        exit_price_fallback: Optional[float] = None,
+    ) -> Dict:
+        """
+        Build a stable closed-trade payload for DB persistence/notifications.
+
+        Broker responses vary by path. Status polling exposes `sell_time` and
+        `current_spot`, while manual close responses can be sparse. This helper
+        merges those payloads with runtime metadata and derives close fields.
+        """
+        base_info = dict(active_info or {})
+        payload = dict(base_info)
+        if isinstance(broker_result, dict):
+            payload.update(broker_result)
+
+        payload["contract_id"] = contract_id
+        payload["symbol"] = str(payload.get("symbol") or symbol or "UNKNOWN")
+        payload["signal"] = (
+            payload.get("signal")
+            or payload.get("direction")
+            or base_info.get("signal")
+            or base_info.get("direction")
+        )
+        payload["direction"] = (
+            payload.get("direction")
+            or payload.get("signal")
+            or base_info.get("direction")
+            or base_info.get("signal")
+        )
+        payload["strategy_type"] = self._get_strategy_name()
+        if exit_reason:
+            payload["exit_reason"] = exit_reason
+
+        profit = self._coerce_trade_float(payload.get("profit"))
+        if profit is None:
+            profit = self._coerce_trade_float(profit_fallback)
+        if profit is not None:
+            payload["profit"] = profit
+
+        normalized_status = str(payload.get("status") or status_fallback or "").strip().lower()
+        if normalized_status in {"", "closed", "sold", "settled", "complete", "completed"}:
+            if profit is not None:
+                if profit > 0:
+                    normalized_status = "won"
+                elif profit < 0:
+                    normalized_status = "lost"
+                else:
+                    normalized_status = "closed"
+            else:
+                normalized_status = "closed"
+        payload["status"] = normalized_status
+
+        open_time = self._parse_trade_datetime(
+            base_info.get("open_time")
+            or base_info.get("timestamp")
+            or payload.get("open_time")
+        )
+        close_time = self._parse_trade_datetime(payload.get("sell_time"))
+        if close_time is None:
+            close_time = self._parse_trade_datetime(payload.get("close_time"))
+        if close_time is None:
+            close_time = self._parse_trade_datetime(payload.get("closed_at"))
+        if close_time is None and normalized_status != "open":
+            close_time = datetime.now()
+        if close_time is not None:
+            payload["timestamp"] = close_time
+            payload["closed_at"] = close_time
+
+        exit_price = self._coerce_trade_float(payload.get("exit_price"))
+        if exit_price is None:
+            exit_price = self._coerce_trade_float(payload.get("sell_price"))
+        if exit_price is None:
+            exit_price = self._coerce_trade_float(payload.get("current_spot"))
+        if exit_price is None:
+            exit_price = self._coerce_trade_float(payload.get("bid_price"))
+        if exit_price is None:
+            exit_price = self._coerce_trade_float(exit_price_fallback)
+        if exit_price is not None:
+            payload["exit_price"] = exit_price
+
+        duration_seconds = self._coerce_trade_float(payload.get("duration"))
+        if duration_seconds is None:
+            start_epoch = self._coerce_trade_float(payload.get("date_start"))
+            sell_epoch = self._coerce_trade_float(payload.get("sell_time"))
+            if start_epoch is not None and sell_epoch is not None:
+                duration_seconds = max(0.0, sell_epoch - start_epoch)
+        if duration_seconds is None and open_time is not None and close_time is not None:
+            duration_seconds = max(0.0, (close_time - open_time).total_seconds())
+        if duration_seconds is not None:
+            payload["duration"] = int(duration_seconds)
+
+        return payload
+
     def _get_runtime_active_contract_ids(self) -> Set[str]:
         """
         Collect active contract IDs from risk manager state.
@@ -669,39 +781,20 @@ class BotRunner:
                             close_error,
                         )
 
-                reconciled = dict(persisted_trade)
-                if isinstance(live_status, dict):
-                    reconciled.update(live_status)
-                reconciled["contract_id"] = contract_id
-                reconciled["symbol"] = reconciled.get("symbol") or persisted_trade.get("symbol")
-                reconciled["signal"] = (
-                    reconciled.get("signal")
-                    or persisted_trade.get("signal")
-                    or persisted_trade.get("direction")
+                reconciled = self._build_closed_trade_payload(
+                    persisted_trade,
+                    live_status,
+                    contract_id=contract_id,
+                    symbol=str(persisted_trade.get("symbol") or "UNKNOWN"),
+                    profit_fallback=pnl,
+                    status_fallback=normalized_status,
+                    exit_price_fallback=self._coerce_trade_float((live_status or {}).get("current_spot")),
                 )
-                reconciled["direction"] = reconciled.get("direction") or reconciled.get("signal")
-                reconciled["profit"] = pnl
-                reconciled["status"] = normalized_status
-                reconciled["strategy_type"] = self._get_strategy_name()
                 reconciled["entry_price"] = (
                     reconciled.get("entry_price")
                     or persisted_trade.get("entry_price")
                     or persisted_trade.get("entry_spot")
                 )
-                if reconciled.get("exit_price") is None:
-                    reconciled["exit_price"] = (
-                        (live_status or {}).get("current_spot")
-                        or (live_status or {}).get("bid_price")
-                    )
-
-                sell_time = (live_status or {}).get("sell_time")
-                if sell_time not in (None, ""):
-                    try:
-                        reconciled["timestamp"] = datetime.fromtimestamp(int(sell_time))
-                    except Exception:
-                        reconciled["timestamp"] = datetime.now()
-                else:
-                    reconciled["timestamp"] = datetime.now()
 
                 saved_row = UserTradesService.save_trade(self.account_id, reconciled)
                 if saved_row:
@@ -2012,10 +2105,25 @@ class BotRunner:
 
                 pnl = _to_float(sell_result.get("profit"), current_pnl)
                 status = "won" if pnl > 0 else ("lost" if pnl < 0 else "break_even")
+                result_for_db = self._build_closed_trade_payload(
+                    active_info,
+                    {
+                        **sell_result,
+                        "profit": pnl,
+                        "status": status,
+                        "current_spot": current_spot,
+                    },
+                    contract_id=contract_id,
+                    symbol=symbol,
+                    profit_fallback=pnl,
+                    status_fallback=status,
+                    exit_reason=exit_reason,
+                    exit_price_fallback=current_spot,
+                )
 
                 if hasattr(self.risk_manager, "record_trade_close"):
                     self.risk_manager.record_trade_close(contract_id, pnl, status)
-                self.state.update_trade(contract_id, sell_result)
+                self.state.update_trade(contract_id, result_for_db)
 
                 self._cycle_step(
                     symbol,
@@ -2027,10 +2135,6 @@ class BotRunner:
                 logger.info(f"[{self._get_strategy_name()}][{symbol}] P&L: ${pnl:.2f}")
 
                 try:
-                    result_for_db = sell_result.copy()
-                    result_for_db.update(active_info)
-                    result_for_db["strategy_type"] = self._get_strategy_name()
-                    result_for_db["exit_reason"] = exit_reason
                     UserTradesService.save_trade(self.account_id, result_for_db)
                 except Exception as save_error:
                     logger.error(
@@ -2039,10 +2143,7 @@ class BotRunner:
                     )
 
                 try:
-                    result_for_notify = sell_result.copy()
-                    result_for_notify.update(active_info)
-                    result_for_notify["exit_reason"] = exit_reason
-                    result_for_notify["strategy_type"] = self._get_strategy_name()
+                    result_for_notify = dict(result_for_db)
                     result_for_notify["user_id"] = self.account_id
                     result_for_notify.setdefault("execution_reason", default_execution_reason)
                     await self.telegram_bridge.notify_trade_closed(
@@ -2292,17 +2393,23 @@ class BotRunner:
                 logger.info(f"[{self._get_strategy_name()}][{symbol}] Trade detected as closed")
                 pnl = current_pnl
                 status = trade_status.get("status", "sold")
+                result_for_db = self._build_closed_trade_payload(
+                    active_info,
+                    trade_status,
+                    contract_id=contract_id,
+                    symbol=symbol,
+                    profit_fallback=pnl,
+                    status_fallback=str(status),
+                    exit_price_fallback=current_spot,
+                )
                 if hasattr(self.risk_manager, "record_trade_close"):
                     self.risk_manager.record_trade_close(contract_id, pnl, status)
-                self.state.update_trade(contract_id, trade_status)
+                self.state.update_trade(contract_id, result_for_db)
 
                 logger.info(f"[{self._get_strategy_name()}][{symbol}] Trade closed - system unlocked")
                 logger.info(f"[{self._get_strategy_name()}][{symbol}] P&L: ${pnl:.2f}")
 
                 try:
-                    result_for_db = trade_status.copy()
-                    result_for_db.update(active_info)
-                    result_for_db["strategy_type"] = self._get_strategy_name()
                     UserTradesService.save_trade(self.account_id, result_for_db)
                 except Exception as save_error:
                     logger.error(
@@ -2311,9 +2418,7 @@ class BotRunner:
                     )
 
                 try:
-                    result_for_notify = trade_status.copy()
-                    result_for_notify.update(active_info)
-                    result_for_notify["strategy_type"] = self._get_strategy_name()
+                    result_for_notify = dict(result_for_db)
                     result_for_notify["user_id"] = self.account_id
                     result_for_notify.setdefault(
                         "execution_reason",

@@ -1,7 +1,7 @@
 import pytest
 import asyncio
 from unittest.mock import MagicMock, AsyncMock, patch
-from datetime import datetime
+from datetime import datetime, timedelta
 from app.bot.runner import BotRunner, BotStatus
 
 @pytest.fixture
@@ -415,6 +415,94 @@ async def test_bot_runner_monitor_active_trade_scalping_trailing_profit(mock_com
     # Should call close_trade because trailing profit triggered
     assert runner.trade_engine.close_trade.called
     assert runner.risk_manager.record_trade_close.called
+
+@pytest.mark.asyncio
+async def test_bot_runner_manual_sync_risk_close_persists_exit_price_and_duration(mock_components):
+    runner = BotRunner(account_id="test_user")
+    runner.strategy = MagicMock()
+    runner.strategy.get_strategy_name.return_value = "Conservative"
+
+    active_info = {
+        "symbol": "R_25",
+        "contract_id": "MANUAL-CLOSE-1",
+        "open_time": datetime.now() - timedelta(seconds=75),
+        "stake": 10.0,
+        "direction": "DOWN",
+        "entry_price": 100.0,
+        "signal": "DOWN",
+        "status": "open",
+        "entry_source": "manual_imported",
+        "manual_tracking": True,
+    }
+
+    risk_manager = MagicMock()
+    risk_manager.active_trades = [{"contract_id": "MANUAL-CLOSE-1"}]
+    risk_manager.get_active_trade_info.return_value = active_info
+    risk_manager.check_trailing_profit.return_value = (False, "", False)
+    risk_manager.check_stagnation_exit.return_value = (True, "stagnation_exit")
+    runner.risk_manager = risk_manager
+
+    runner.trade_engine = mock_components["te"].return_value
+    runner.trade_engine.get_trade_status = AsyncMock(
+        return_value={"is_sold": False, "profit": -1.25, "current_spot": 98.75}
+    )
+    runner.trade_engine.close_trade = AsyncMock(
+        return_value={"contract_id": "MANUAL-CLOSE-1", "sold_for": 8.75}
+    )
+
+    await runner._monitor_active_trade()
+
+    saved_payload = mock_components["uts"].save_trade.call_args[0][1]
+    assert saved_payload["contract_id"] == "MANUAL-CLOSE-1"
+    assert saved_payload["status"] == "lost"
+    assert float(saved_payload["profit"]) == pytest.approx(-1.25)
+    assert float(saved_payload["exit_price"]) == pytest.approx(98.75)
+    assert int(saved_payload["duration"]) >= 75
+
+@pytest.mark.asyncio
+async def test_bot_runner_manual_sync_external_close_persists_exit_price_and_duration(mock_components):
+    runner = BotRunner(account_id="test_user")
+    runner.strategy = MagicMock()
+    runner.strategy.get_strategy_name.return_value = "Conservative"
+
+    active_info = {
+        "symbol": "R_50",
+        "contract_id": "MANUAL-CLOSE-2",
+        "stake": 10.0,
+        "direction": "UP",
+        "entry_price": 101.0,
+        "signal": "UP",
+        "status": "open",
+        "entry_source": "manual_imported",
+        "manual_tracking": True,
+    }
+
+    risk_manager = MagicMock()
+    risk_manager.active_trades = [{"contract_id": "MANUAL-CLOSE-2"}]
+    risk_manager.get_active_trade_info.return_value = active_info
+    runner.risk_manager = risk_manager
+
+    runner.trade_engine = mock_components["te"].return_value
+    runner.trade_engine.get_trade_status = AsyncMock(
+        return_value={
+            "contract_id": "MANUAL-CLOSE-2",
+            "status": "lost",
+            "is_sold": True,
+            "profit": -2.0,
+            "current_spot": 97.5,
+            "sell_time": 1065,
+            "date_start": 1000,
+        }
+    )
+
+    await runner._monitor_active_trade()
+
+    saved_payload = mock_components["uts"].save_trade.call_args[0][1]
+    assert saved_payload["contract_id"] == "MANUAL-CLOSE-2"
+    assert saved_payload["status"] == "lost"
+    assert float(saved_payload["profit"]) == pytest.approx(-2.0)
+    assert float(saved_payload["exit_price"]) == pytest.approx(97.5)
+    assert saved_payload["duration"] == 65
 
 @pytest.mark.asyncio
 async def test_bot_runner_monitor_active_trade_scalping_trailing_activation(mock_components):
