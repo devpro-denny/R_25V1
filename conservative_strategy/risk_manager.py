@@ -126,6 +126,20 @@ class RiskManager:
             if normalized in {"false", "0", "no", "off"}:
                 return False
         return fallback
+
+    @staticmethod
+    def _resolve_open_timestamp(value: object) -> datetime:
+        """Preserve imported trade open times when runtime tracking is rebuilt."""
+        if isinstance(value, datetime):
+            return value
+        if isinstance(value, str):
+            raw = value.strip()
+            if raw:
+                try:
+                    return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+                except ValueError:
+                    pass
+        return datetime.now()
     
     def update_risk_settings(self, stake: float):
         """
@@ -445,7 +459,9 @@ class RiskManager:
         entry cooldown/limit counters so bot-owned entries remain unaffected.
         """
         symbol = trade_info.get('symbol', 'UNKNOWN')
-        now = datetime.now()
+        now = self._resolve_open_timestamp(
+            trade_info.get("open_time") or trade_info.get("timestamp")
+        )
         is_manual_tracking = self._is_manual_tracking_trade(trade_info)
         trailing_enabled = self._coerce_exit_flag(trade_info.get("trailing_enabled"), True)
         stagnation_enabled = self._coerce_exit_flag(trade_info.get("stagnation_enabled"), True)
@@ -1062,11 +1078,14 @@ class RiskManager:
             'direction': trade.get('direction'),
             'entry_price': trade.get('entry_price'),
             'stake': trade.get('stake'),
+            'open_time': trade.get('timestamp'),
             'timestamp': trade.get('timestamp'),
             'strategy': trade.get('strategy'),
             'phase': trade.get('phase'),
             'trailing_enabled': trade.get('trailing_enabled', True),
             'stagnation_enabled': trade.get('stagnation_enabled', True),
+            'entry_source': trade.get('entry_source'),
+            'manual_tracking': trade.get('manual_tracking', False),
         }
     
     def print_status(self):
