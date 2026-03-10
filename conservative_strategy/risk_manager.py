@@ -107,6 +107,25 @@ class RiskManager:
             "sync_import",
             "broker_sync",
         }
+
+    @staticmethod
+    def _coerce_exit_flag(value: object, fallback: bool = True) -> bool:
+        """Preserve explicit exit-control flags while defaulting system trades to enabled."""
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)):
+            if value == 1:
+                return True
+            if value == 0:
+                return False
+            return fallback
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in {"true", "1", "yes", "on"}:
+                return True
+            if normalized in {"false", "0", "no", "off"}:
+                return False
+        return fallback
     
     def update_risk_settings(self, stake: float):
         """
@@ -428,6 +447,8 @@ class RiskManager:
         symbol = trade_info.get('symbol', 'UNKNOWN')
         now = datetime.now()
         is_manual_tracking = self._is_manual_tracking_trade(trade_info)
+        trailing_enabled = self._coerce_exit_flag(trade_info.get("trailing_enabled"), True)
+        stagnation_enabled = self._coerce_exit_flag(trade_info.get("stagnation_enabled"), True)
 
         trade_record = {
             'timestamp': now,
@@ -446,8 +467,8 @@ class RiskManager:
             'cancellation_expiry': None,
             'highest_unrealized_pnl': 0.0,
             'has_been_profitable': False,
-            'trailing_enabled': True,
-            'stagnation_enabled': True,
+            'trailing_enabled': trailing_enabled,
+            'stagnation_enabled': stagnation_enabled,
             'entry_source': trade_info.get('entry_source') or ('manual_imported' if is_manual_tracking else 'system'),
             'manual_tracking': is_manual_tracking,
         }

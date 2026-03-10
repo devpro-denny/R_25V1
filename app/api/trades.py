@@ -638,6 +638,8 @@ async def sync_active_trades(
                 "strategy_type": strategy_type,
                 "multiplier": multiplier,
                 "execution_reason": "Detected open broker contract via sync",
+                "trailing_enabled": False,
+                "stagnation_enabled": False,
                 "entry_source": "manual_imported",
                 "manual_tracking": True,
             }

@@ -422,7 +422,13 @@ def test_sync_active_trades_imports_new_multiplier_contracts():
         assert data["imported_contract_ids"] == ["new-mult-1"]
         assert data["skipped_non_multiplier_ids"] == ["new-nonmult-1"]
         mock_track.assert_called_once()
+        tracked_payload = mock_track.call_args.args[1]
+        assert tracked_payload["trailing_enabled"] is False
+        assert tracked_payload["stagnation_enabled"] is False
         mock_risk_manager.record_trade_open.assert_called_once()
+        runtime_payload = mock_risk_manager.record_trade_open.call_args.args[0]
+        assert runtime_payload["trailing_enabled"] is False
+        assert runtime_payload["stagnation_enabled"] is False
         mock_broadcast.assert_awaited_once()
 
 

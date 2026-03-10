@@ -129,6 +129,25 @@ class ScalpingRiskManager(BaseRiskManager):
             "broker_sync",
         }
 
+    @staticmethod
+    def _coerce_exit_flag(value: object, fallback: bool = True) -> bool:
+        """Preserve explicit exit-control flags while defaulting unspecified values on."""
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)):
+            if value == 1:
+                return True
+            if value == 0:
+                return False
+            return fallback
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in {"true", "1", "yes", "on"}:
+                return True
+            if normalized in {"false", "0", "no", "off"}:
+                return False
+        return fallback
+
     def _load_daily_stats_from_db(self) -> None:
         """
         Load today's trade stats from DB.
@@ -897,6 +916,8 @@ class ScalpingRiskManager(BaseRiskManager):
         stake = float(trade_info.get("stake", self.stake) or self.stake)
         symbol = trade_info.get("symbol", "UNKNOWN")
         direction = str(trade_info.get("direction", trade_info.get("signal", ""))).upper()
+        trailing_enabled = self._coerce_exit_flag(trade_info.get("trailing_enabled"), True)
+        stagnation_enabled = self._coerce_exit_flag(trade_info.get("stagnation_enabled"), True)
         open_time = trade_info.get("open_time")
         if not isinstance(open_time, datetime):
             open_time = now
@@ -912,8 +933,8 @@ class ScalpingRiskManager(BaseRiskManager):
                 "multiplier": trade_info.get("multiplier"),
                 "risk_reward_ratio": trade_info.get("risk_reward_ratio"),
                 "min_rr_required": trade_info.get("min_rr_required"),
-                "trailing_enabled": True,
-                "stagnation_enabled": True,
+                "trailing_enabled": trailing_enabled,
+                "stagnation_enabled": stagnation_enabled,
                 "entry_source": trade_info.get("entry_source") or ("manual_imported" if is_manual_tracking else "system"),
                 "manual_tracking": is_manual_tracking,
             }

@@ -213,6 +213,34 @@ def test_scalping_manual_import_trade_exit_controls_toggle(srm):
     assert metadata["trailing_enabled"] is False
     assert metadata["stagnation_enabled"] is False
 
+def test_scalping_manual_import_trade_honors_disabled_exit_controls_on_open(srm):
+    """Manual sync imports should preserve disabled trail/stagnation flags at open."""
+    srm.record_trade_open(
+        {
+            "contract_id": "MANUAL-FLAGS-1",
+            "symbol": "R_75",
+            "direction": "DOWN",
+            "stake": 10.0,
+            "entry_source": "manual_imported",
+            "manual_tracking": True,
+            "trailing_enabled": False,
+            "stagnation_enabled": False,
+        }
+    )
+
+    metadata = srm._trade_metadata["MANUAL-FLAGS-1"]
+    assert metadata["trailing_enabled"] is False
+    assert metadata["stagnation_enabled"] is False
+
+def test_scalping_coerce_exit_flag_handles_supported_types(srm):
+    """Exit-flag coercion should preserve explicit bool-like values."""
+    assert srm._coerce_exit_flag(False) is False
+    assert srm._coerce_exit_flag(1) is True
+    assert srm._coerce_exit_flag("0") is False
+    assert srm._coerce_exit_flag("on") is True
+    assert srm._coerce_exit_flag(None, fallback=False) is False
+    assert srm._coerce_exit_flag(2, fallback=True) is True
+
 
 def test_scalping_manual_import_trade_respects_active_trade_lock_when_single_slot(srm):
     """Manual/synced trades should block new entries when max concurrent is one."""

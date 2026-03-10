@@ -186,6 +186,35 @@ def test_manual_import_trade_exit_controls_toggle(rm):
     assert active["trailing_enabled"] is False
     assert active["stagnation_enabled"] is False
 
+def test_manual_import_trade_honors_disabled_exit_controls_on_open(rm):
+    """Manual sync imports should start with trail/stagnation disabled when requested."""
+    rm.record_trade_open(
+        {
+            "symbol": "R_25",
+            "contract_id": "manual-flags-1",
+            "direction": "PUT",
+            "stake": 10.0,
+            "entry_price": 100.0,
+            "entry_source": "manual_imported",
+            "manual_tracking": True,
+            "trailing_enabled": False,
+            "stagnation_enabled": False,
+        }
+    )
+
+    active = next(t for t in rm.active_trades if str(t.get("contract_id")) == "manual-flags-1")
+    assert active["trailing_enabled"] is False
+    assert active["stagnation_enabled"] is False
+
+def test_conservative_coerce_exit_flag_handles_supported_types(rm):
+    """Exit-flag coercion should preserve explicit bool-like values."""
+    assert rm._coerce_exit_flag(True) is True
+    assert rm._coerce_exit_flag(0) is False
+    assert rm._coerce_exit_flag("off") is False
+    assert rm._coerce_exit_flag("yes") is True
+    assert rm._coerce_exit_flag("unexpected", fallback=False) is False
+    assert rm._coerce_exit_flag(2, fallback=True) is True
+
 def test_record_trade_close_loss(rm):
     """Test recording a losing trade."""
     rm.active_trades = [{"symbol": "R_25", "contract_id": "c2"}]
