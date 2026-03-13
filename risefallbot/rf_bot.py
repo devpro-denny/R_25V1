@@ -1027,62 +1027,37 @@ async def _process_symbol(
     UserTradesService,
 ):
     """
-    Process one symbol through the STRICT 6-step lifecycle.
-    
-    LIFECYCLE:
-        Step 1 — Acquire trade lock (asyncio.Lock mutex)
-        Step 2 — Execute trade (buy Rise/Fall contract)
-        Step 3 — Track trade (record open, begin monitoring)
-        Step 4 — Contract monitoring until maturity (expiry or manual close)
-        Step 5 — DB write with retry (halt on failure)
-        Step 6 — Release lock, resume scanning
-    
-    At NO POINT can two trades exist simultaneously.
-    If any step fails, the system halts rather than proceeding.
+    Process one symbol through the strict 6-step lifecycle.
     """
-    # ── Pre-check: Risk gate (daily cap, cooldown, daily loss, etc.) ──
-    can_trade, reason = risk_manager.can_trade(symbol=symbol, stake=stake)
-    if not can_trade:
-        logger.info(f"[RF][{symbol}] ⏸️ Cannot trade: {reason}")
-        await _broadcast_rf_decision(
-            event_manager=event_manager,
-            user_id=user_id,
-            symbol=symbol,
-            phase="risk",
-            decision="no_trade",
-            reason=reason,
-            details={"gate": "can_trade"},
-            severity="warning",
-        )
-        return
-
-    # ── Pre-check: Fetch data and check for signal BEFORE acquiring lock ──
-    # (avoid holding the lock during data fetching / analysis)
     ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     logger.info(
         f"[RF][{symbol}] SCAN | {ts} | "
-        f"Checking trading opportunities (fetching {rf_config.RF_TIMEFRAME} candles)"
+        f"Checking Step Index tick-sequence setup "
+        f"(fetching {rf_config.RF_TICK_HISTORY_COUNT} ticks)"
     )
 
-    df = await data_fetcher.fetch_timeframe(
-        symbol, rf_config.RF_TIMEFRAME, count=rf_config.RF_CANDLE_COUNT
+    tick_data = await data_fetcher.fetch_tick_history(
+        symbol,
+        count=rf_config.RF_TICK_HISTORY_COUNT,
     )
-    if df is None or df.empty:
-        logger.warning(f"[RF][{symbol}] No data returned")
+    if tick_data is None or tick_data.empty:
+        logger.warning(f"[RF][{symbol}] No tick data returned")
         await _broadcast_rf_decision(
             event_manager=event_manager,
             user_id=user_id,
             symbol=symbol,
             phase="data",
             decision="no_trade",
-            reason="No market data returned",
-            details={"timeframe": rf_config.RF_TIMEFRAME},
+            reason="No tick data returned",
+            details={
+                "data_type": "ticks",
+                "ticks_requested": rf_config.RF_TICK_HISTORY_COUNT,
+            },
             severity="warning",
         )
         return
 
-    # Strategy analysis
-    signal = strategy.analyze(data_1m=df, symbol=symbol, stake=stake)
+    signal = strategy.analyze(data_ticks=tick_data, symbol=symbol, stake=stake)
     if signal is None:
         analysis_meta = {}
         if hasattr(strategy, "get_last_analysis"):
@@ -1098,10 +1073,6 @@ async def _process_symbol(
             if isinstance(analysis_meta.get("details"), dict)
             else {}
         )
-        mode = "zone_candle_optimized" if (
-            getattr(rf_config, "RF_ENABLE_ZONE_FILTER", False)
-            or getattr(rf_config, "RF_ENABLE_CANDLE_FILTER", False)
-        ) else "triple_confirmation"
 
         logger.info(
             f"[RF][{symbol}] SCAN | No opportunity: {skip_reason} "
@@ -1115,31 +1086,60 @@ async def _process_symbol(
             decision="no_trade",
             reason=skip_reason,
             details={
-                "mode": mode,
+                "mode": "tick_sequence_reversal",
                 "skip_code": skip_code,
                 **skip_details,
             },
         )
-        return  # Strategy rejected setup; reason emitted above
+        return
 
-    # ══════════════════════════════════════════════════════════════════════
-    # SIGNAL CONFIRMED — Enter strict 6-step lifecycle
-    # From this point, the lock is held until DB write completes.
-    # ══════════════════════════════════════════════════════════════════════
+    if hasattr(risk_manager, "note_qualifying_signal"):
+        try:
+            risk_manager.note_qualifying_signal(symbol, signal)
+        except Exception as exc:
+            logger.warning(f"[RF][{symbol}] Failed to register qualifying signal: {exc}")
 
     direction = signal["direction"]
     stake_val = signal["stake"]
     duration = signal["duration"]
     duration_unit = signal["duration_unit"]
+    execution_reason = (
+        f"Step reversal {signal.get('sequence_direction', 'n/a')} -> "
+        f"{signal.get('trade_label', 'n/a')} | ticks={signal.get('tick_sequence', [])}"
+    )
+    pnl = 0.0
+
     logger.info(
-        f"[RF][{symbol}] ✅ Opportunity detected | "
+        f"[RF][{symbol}] Opportunity detected | "
         f"direction={direction} stake=${stake_val} duration={duration}{duration_unit}"
     )
 
-    # ── Pre-check: Stake validation (use actual signal stake) ──
+    can_trade, reason = risk_manager.can_trade(symbol=symbol, stake=stake_val)
+    if not can_trade:
+        logger.info(f"[RF][{symbol}] Cannot trade: {reason}")
+        await _broadcast_rf_decision(
+            event_manager=event_manager,
+            user_id=user_id,
+            symbol=symbol,
+            phase="risk",
+            decision="no_trade",
+            reason=reason,
+            details={
+                "gate": "can_trade",
+                "skip_code": reason,
+                "direction": direction,
+                "trade_label": signal.get("trade_label"),
+                "sequence_signature": signal.get("sequence_signature"),
+            },
+            severity="warning",
+        )
+        return
+
     max_stake = getattr(rf_config, "RF_MAX_STAKE", 100.0)
     if stake_val > max_stake:
-        logger.warning(f"[RF][{symbol}] ⏸️ Stake ${stake_val} exceeds max ${max_stake} — rejecting")
+        logger.warning(
+            f"[RF][{symbol}] Stake ${stake_val} exceeds max ${max_stake} - rejecting"
+        )
         await _broadcast_rf_decision(
             event_manager=event_manager,
             user_id=user_id,
@@ -1158,24 +1158,20 @@ async def _process_symbol(
         symbol=symbol,
         phase="signal",
         decision="opportunity_detected",
-        reason="All Rise/Fall strategy checks aligned",
+        reason="Fresh Step Index reversal sequence detected",
         details={
             "direction": direction,
+            "trade_label": signal.get("trade_label"),
+            "sequence_direction": signal.get("sequence_direction"),
+            "tick_sequence": signal.get("tick_sequence"),
+            "tick_movements": signal.get("tick_movements"),
+            "sequence_signature": signal.get("sequence_signature"),
             "stake": stake_val,
             "confidence": signal.get("confidence"),
-            "rsi": signal.get("rsi"),
-            "stoch": signal.get("stoch"),
-            "scenario": signal.get("scenario"),
-            "market_bias": signal.get("market_bias"),
-            "zone_type": signal.get("zone_type"),
-            "zone_level": signal.get("zone_level"),
-            "candle_momentum": signal.get("candle_momentum"),
-            "candle_direction": signal.get("candle_direction"),
         },
         min_interval_seconds=0,
     )
 
-    # ── STEP 1: Acquire trade lock ──
     lock_acquired = await risk_manager.acquire_trade_lock(
         symbol,
         "pending",
@@ -1183,21 +1179,20 @@ async def _process_symbol(
         wait_for_lock=False,
     )
     if not lock_acquired:
-        logger.error(f"[RF][{symbol}] ❌ Could not acquire trade lock — system may be halted")
+        logger.error(f"[RF][{symbol}] Could not acquire trade lock")
         await _broadcast_rf_decision(
             event_manager=event_manager,
             user_id=user_id,
             symbol=symbol,
             phase="risk",
             decision="no_trade",
-            reason="Trade lock not acquired",
+            reason="trade_lock_active",
             details={"gate": "trade_lock"},
             severity="warning",
         )
         return
 
     try:
-        # Broadcast signal event
         await event_manager.broadcast({
             "type": "signal",
             "symbol": symbol,
@@ -1207,13 +1202,8 @@ async def _process_symbol(
             "account_id": user_id,
         })
 
-        # Notify via Telegram
         if TELEGRAM_ENABLED:
             try:
-                execution_reason = (
-                    f"Triple confirmation aligned; scenario={signal.get('scenario', 'n/a')}, "
-                    f"bias={signal.get('market_bias', 'n/a')}"
-                )
                 signal_info = {
                     "signal": direction,
                     "symbol": symbol,
@@ -1225,28 +1215,24 @@ async def _process_symbol(
                     "user_id": user_id,
                     "execution_reason": execution_reason,
                     "details": {
-                        "rsi": signal.get("rsi", 0),
-                        "adx": signal.get("stoch", 0),
-                        "scenario": signal.get("scenario"),
-                        "market_bias": signal.get("market_bias"),
+                        "trade_label": signal.get("trade_label"),
+                        "sequence_direction": signal.get("sequence_direction"),
+                        "tick_sequence": signal.get("tick_sequence"),
                     },
                 }
                 await notifier.notify_signal(signal_info)
             except Exception as e:
-                logger.error(f"❌ Telegram notification failed: {e}")
+                logger.error(f"Telegram notification failed: {e}")
 
-        # ── STEP 2: Execute trade ──
-        # Defensive: never buy if active_trades non-empty (should never happen with mutex)
         if len(risk_manager.active_trades) > 0:
             logger.critical(
-                f"[RF][{symbol}] 🚨 DEFENSIVE BLOCK: active_trades={len(risk_manager.active_trades)} "
-                f"before buy — rejecting to prevent multiple trades"
+                f"[RF][{symbol}] DEFENSIVE BLOCK: active_trades={len(risk_manager.active_trades)}"
             )
-            return  # finally block will release lock
+            return
 
-        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         logger.info(
-            f"[RF] STEP 2/6 | {ts} | EXECUTING TRADE {symbol} {direction} ${stake_val}"
+            f"[RF] STEP 2/6 | {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} | "
+            f"EXECUTING TRADE {symbol} {direction} ${stake_val}"
         )
         await _broadcast_rf_decision(
             event_manager=event_manager,
@@ -1268,7 +1254,7 @@ async def _process_symbol(
         )
 
         if not result:
-            logger.error(f"[RF][{symbol}] ❌ Trade execution FAILED at Step 2")
+            logger.error(f"[RF][{symbol}] Trade execution failed at Step 2")
             await _broadcast_rf_decision(
                 event_manager=event_manager,
                 user_id=user_id,
@@ -1279,15 +1265,14 @@ async def _process_symbol(
                 severity="error",
                 min_interval_seconds=0,
             )
-            # HALT: Trade execution failed — release lock and halt
             risk_manager.halt(f"Trade execution failed for {symbol} {direction}")
             await event_manager.broadcast({
                 "type": "error",
-                "message": f"🚨 Trade execution failed for {symbol} — system halted",
+                "message": f"Trade execution failed for {symbol} - system halted",
                 "timestamp": datetime.now().isoformat(),
                 "account_id": user_id,
             })
-            return  # finally block will release lock
+            return
 
         contract_id = result["contract_id"]
         logger.info(
@@ -1295,10 +1280,8 @@ async def _process_symbol(
             f"EXECUTION CONFIRMED {symbol}#{contract_id} direction={direction}"
         )
 
-        # Update locked trade info with real contract ID
         risk_manager._locked_trade_info = {"contract_id": contract_id, "symbol": symbol}
 
-        # ── STEP 3: Track trade (record open + confirm monitoring) ──
         risk_manager.record_trade_open({
             "contract_id": contract_id,
             "symbol": symbol,
@@ -1306,12 +1289,11 @@ async def _process_symbol(
             "stake": stake_val,
         })
 
-        # Broadcast lock status + trade opened events
         await event_manager.broadcast({
             "type": "trade_lock_active",
             "symbol": symbol,
             "contract_id": contract_id,
-            "message": f"🔒 Trade LOCKED on {symbol} — full lifecycle active",
+            "message": f"Trade LOCKED on {symbol} - full lifecycle active",
             "timestamp": datetime.now().isoformat(),
             "account_id": user_id,
         })
@@ -1327,7 +1309,6 @@ async def _process_symbol(
             "account_id": user_id,
         })
 
-        # Notify via Telegram
         if TELEGRAM_ENABLED:
             try:
                 trade_info = {
@@ -1342,20 +1323,15 @@ async def _process_symbol(
                     "payout": result.get("payout"),
                     "strategy_type": "RiseFall",
                     "user_id": user_id,
-                    "execution_reason": (
-                        f"Triple confirmation aligned; scenario={signal.get('scenario', 'n/a')}, "
-                        f"bias={signal.get('market_bias', 'n/a')}"
-                    ),
+                    "execution_reason": execution_reason,
                 }
                 await notifier.notify_trade_opened(trade_info, strategy_type="RiseFall")
             except Exception as e:
-                logger.error(f"❌ Telegram notification failed: {e}")
+                logger.error(f"Telegram notification failed: {e}")
 
-        # ── STEP 4: Contract monitoring until maturity ──
-        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         logger.info(
-            f"[RF] STEP 4/6 | {ts} | MONITORING contract #{contract_id} "
-            f"— system LOCKED for other trades"
+            f"[RF] STEP 4/6 | {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} | "
+            f"MONITORING contract #{contract_id} - system LOCKED for other trades"
         )
         await _broadcast_rf_decision(
             event_manager=event_manager,
@@ -1370,11 +1346,9 @@ async def _process_symbol(
 
         settlement = await trade_engine.wait_for_result(contract_id, stake=stake_val)
 
-        # Record trade closure in risk manager
         if settlement:
             pnl = settlement["profit"]
             status = settlement["status"]
-            # Closure type is always returned from wait_for_result
             closure_reason = settlement.get("closure_type", "unknown")
             risk_manager.record_trade_closed({
                 "contract_id": contract_id,
@@ -1383,8 +1357,7 @@ async def _process_symbol(
                 "symbol": symbol,
             })
         else:
-            # Settlement unknown — conservatively mark as loss
-            logger.warning(f"[RF][{symbol}] ⚠️ Settlement unknown for #{contract_id}")
+            logger.warning(f"[RF][{symbol}] Settlement unknown for #{contract_id}")
             pnl = -stake_val
             status = "loss"
             closure_reason = "settlement_unknown"
@@ -1410,14 +1383,12 @@ async def _process_symbol(
             min_interval_seconds=0,
         )
 
-        # ── STEP 5: DB write with retry — lock stays held until confirmed ──
-        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         logger.info(
-            f"[RF] STEP 5/6 | {ts} | WRITING TRADE TO DB | contract={contract_id} "
-            f"pnl={pnl:+.2f} status={status} closure={closure_reason}"
+            f"[RF] STEP 5/6 | {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} | "
+            f"WRITING TRADE TO DB | contract={contract_id} pnl={pnl:+.2f} "
+            f"status={status} closure={closure_reason}"
         )
 
-        db_write_success = False
         if user_id:
             db_write_success = await _write_trade_to_db_with_retry(
                 user_id=user_id,
@@ -1435,11 +1406,10 @@ async def _process_symbol(
                 UserTradesService=UserTradesService,
             )
         else:
-            logger.warning("[RF] ⚠️ No user_id — skipping DB write (trade lock will release)")
-            db_write_success = True  # No user context — allow lock release
+            logger.warning("[RF] No user_id - skipping DB write (trade lock will release)")
+            db_write_success = True
 
         if not db_write_success:
-            # DB write failed after all retries — HALT the system
             risk_manager.halt(
                 f"DB write failed for contract {contract_id} after "
                 f"{rf_config.RF_DB_WRITE_MAX_RETRIES} retries"
@@ -1447,17 +1417,14 @@ async def _process_symbol(
             await event_manager.broadcast({
                 "type": "error",
                 "message": (
-                    f"🚨 SYSTEM HALTED: DB write failed for {symbol}#{contract_id}. "
+                    f"SYSTEM HALTED: DB write failed for {symbol}#{contract_id}. "
                     f"Trade lock held. Manual intervention required."
                 ),
                 "timestamp": datetime.now().isoformat(),
                 "account_id": user_id,
             })
-            # Lock stays held — do NOT release! The finally block handles cleanup.
             return
 
-        # ── DB write succeeded — now broadcast notifications ──
-        # Broadcast trade_closed + unlock notification
         await event_manager.broadcast({
             "type": "trade_closed",
             "symbol": symbol,
@@ -1485,7 +1452,6 @@ async def _process_symbol(
             min_interval_seconds=0,
         )
 
-        # Notify via Telegram
         if TELEGRAM_ENABLED:
             try:
                 result_info = {
@@ -1497,10 +1463,7 @@ async def _process_symbol(
                     "exit_reason": closure_reason,
                     "strategy_type": "RiseFall",
                     "user_id": user_id,
-                    "execution_reason": (
-                        f"Triple confirmation aligned; scenario={signal.get('scenario', 'n/a')}, "
-                        f"bias={signal.get('market_bias', 'n/a')}"
-                    ),
+                    "execution_reason": execution_reason,
                 }
                 await notifier.notify_trade_closed(result_info, {
                     "symbol": symbol,
@@ -1510,23 +1473,19 @@ async def _process_symbol(
                     "duration_unit": signal.get("duration_unit"),
                     "strategy_type": "RiseFall",
                     "user_id": user_id,
-                    "execution_reason": (
-                        f"Triple confirmation aligned; scenario={signal.get('scenario', 'n/a')}, "
-                        f"bias={signal.get('market_bias', 'n/a')}"
-                    ),
+                    "execution_reason": execution_reason,
                     "closure_reason": closure_reason,
                 }, strategy_type="RiseFall")
             except Exception as e:
-                logger.error(f"❌ Telegram notification failed: {e}")
+                logger.error(f"Telegram notification failed: {e}")
 
-        # Broadcast manual close alert so dashboard surfaces it clearly
         if closure_reason == "manual":
             await event_manager.broadcast({
                 "type": "notification",
                 "level": "warning",
                 "title": "Manual Trade Close Detected",
                 "message": (
-                    f"⚠️ {symbol} contract #{contract_id} was manually closed on Deriv. "
+                    f"{symbol} contract #{contract_id} was manually closed on Deriv. "
                     f"Trade has been recorded in DB. P&L: ${pnl:.2f}"
                 ),
                 "timestamp": datetime.now().isoformat(),
@@ -1544,8 +1503,7 @@ async def _process_symbol(
         })
 
     except Exception as e:
-        # Unexpected error during lifecycle — halt
-        logger.error(f"[RF][{symbol}] ❌ Lifecycle error: {e}")
+        logger.error(f"[RF][{symbol}] Lifecycle error: {e}")
         await _broadcast_rf_decision(
             event_manager=event_manager,
             user_id=user_id,
@@ -1559,41 +1517,36 @@ async def _process_symbol(
         risk_manager.halt(f"Unexpected lifecycle error: {e}")
         await event_manager.broadcast({
             "type": "error",
-            "message": f"🚨 SYSTEM HALTED: Lifecycle error on {symbol}: {e}",
+            "message": f"SYSTEM HALTED: Lifecycle error on {symbol}: {e}",
             "timestamp": datetime.now().isoformat(),
             "account_id": user_id,
         })
         return
 
     finally:
-        # ── STEP 6: Release lock (only if not halted) ──
         if risk_manager.is_halted():
-            # Check if this is a transient error that might recover
-            halt_reason_lower = risk_manager._halt_reason.lower()
             halt_reason = risk_manager._halt_reason
+            halt_reason_lower = halt_reason.lower()
             is_transient = any(x in halt_reason_lower for x in [
                 "trade execution failed",
                 "lifecycle error",
-                "duplicate trade"  # Should never happen with new fixes, but be safe
+                "duplicate trade",
             ])
-            
+
             if is_transient:
-                # Transient errors: release lock so next cycle can retry
                 logger.warning(
-                    f"[RF] ⚠️ System halted due to transient error. "
-                    f"Releasing lock to allow recovery on next cycle. "
+                    f"[RF] System halted due to transient error. Releasing lock. "
                     f"Reason: {halt_reason}"
                 )
                 risk_manager.release_trade_lock(
-                    reason=f"transient error recovery — {halt_reason_lower}"
+                    reason=f"transient error recovery - {halt_reason_lower}"
                 )
-                # Auto-clear halt so next cycle can proceed
                 risk_manager.clear_halt()
                 await event_manager.broadcast({
                     "type": "trade_lock_released",
                     "symbol": symbol,
                     "message": (
-                        f"🔓 Trade lock released for transient error recovery on {symbol} "
+                        f"Trade lock released for transient error recovery on {symbol} "
                         f"(reason: {halt_reason})"
                     ),
                     "timestamp": datetime.now().isoformat(),
@@ -1609,10 +1562,8 @@ async def _process_symbol(
                     min_interval_seconds=0,
                 )
             else:
-                # Permanent errors (DB write failure, critical violations): hold lock
                 logger.error(
-                    f"[RF] 🚨 System halted due to critical error. "
-                    f"Trade lock HELD — manual intervention may be required. "
+                    f"[RF] System halted due to critical error. Trade lock held. "
                     f"Reason: {halt_reason}"
                 )
                 await _broadcast_rf_decision(
@@ -1629,30 +1580,25 @@ async def _process_symbol(
                     "type": "bot_status",
                     "status": "running",
                     "message": (
-                        f"🚨 SYSTEM LOCKED: {halt_reason}. "
+                        f"SYSTEM LOCKED: {halt_reason}. "
                         "Trade lock remains held until manual intervention."
                     ),
                     "timestamp": datetime.now().isoformat(),
                     "account_id": user_id,
                 })
         else:
-            # Broadcast lock released
             await event_manager.broadcast({
                 "type": "trade_lock_released",
                 "symbol": symbol,
-                "message": f"🔓 Trade UNLOCKED on {symbol} — scan resuming",
+                "message": f"Trade UNLOCKED on {symbol} - scan resuming",
                 "timestamp": datetime.now().isoformat(),
                 "account_id": user_id,
             })
             risk_manager.release_trade_lock(
-                reason=f"{symbol} lifecycle complete — pnl={pnl:+.2f}"
+                reason=f"{symbol} lifecycle complete - pnl={pnl:+.2f}"
             )
 
 
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# Database write retry (Step 5 of 6-step lifecycle)
-# ═══════════════════════════════════════════════════════════════════════════════
 async def _write_trade_to_db_with_retry(
     user_id: str,
     contract_id: str,

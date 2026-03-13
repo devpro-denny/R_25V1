@@ -47,21 +47,33 @@ async def test_process_symbol_lifecycle_failure():
     mock_em.broadcast = AsyncMock()
     
     mock_df = AsyncMock()
-    mock_df.fetch_timeframe.return_value = MagicMock(empty=False)
+    mock_df.fetch_tick_history.return_value = MagicMock(empty=False)
     
     mock_strategy = MagicMock()
     mock_strategy.analyze.return_value = {
-        "direction": "CALL", "stake": 1.0, "duration": 5, "duration_unit": "m"
+        "direction": "CALL",
+        "stake": 1.0,
+        "duration": 3,
+        "duration_unit": "t",
+        "trade_label": "RISE",
+        "sequence_direction": "down",
+        "tick_sequence": [100.4, 100.3, 100.2, 100.1, 100.2, 100.2],
+        "sequence_signature": "sig-combined",
     }
     
-    # Trigger exception inside try block
-    mock_em.broadcast.side_effect = Exception("Lifecycle crash")
+    calls = {"n": 0}
+
+    async def _broadcast_side_effect(*_args, **_kwargs):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise Exception("Lifecycle crash")
+        return None
+
+    mock_em.broadcast.side_effect = _broadcast_side_effect
     mock_te = AsyncMock()
     
     with patch("risefallbot.rf_bot.logger"):
-        # Wrap in raises because for some reason it's bubbling up in this environment
-        with pytest.raises(Exception, match="Lifecycle crash"):
-            await rf_bot._process_symbol("R_25", mock_strategy, rm, mock_df, mock_te, 1.0, "user123", mock_em, MagicMock())
+        await rf_bot._process_symbol("stpRNG1", mock_strategy, rm, mock_df, mock_te, 1.0, "user123", mock_em, MagicMock())
     
     # In rf_bot.py, "lifecycle error" is in the transient list, so it clears the halt in finally
     assert not rm.is_halted()
@@ -162,9 +174,9 @@ async def test_write_trade_to_db_failure(fetcher):
     with patch("risefallbot.rf_bot.rf_config.RF_DB_WRITE_MAX_RETRIES", 2), \
          patch("risefallbot.rf_bot.rf_config.RF_DB_WRITE_RETRY_DELAY", 0.001):
         success = await rf_bot._write_trade_to_db_with_retry(
-            user_id="u1", contract_id="c1", symbol="R_25", direction="CALL",
+            user_id="u1", contract_id="c1", symbol="stpRNG1", direction="CALL",
             stake_val=1.0, pnl=0.5, status="won", closure_reason="target",
-            duration=1, duration_unit="m", result={}, settlement={},
+            duration=3, duration_unit="t", result={}, settlement={},
             UserTradesService=mock_service
         )
         assert success is False
@@ -176,12 +188,19 @@ async def test_process_symbol_win_lifecycle():
     mock_df = AsyncMock()
     
     import pandas as pd
-    mock_frame = pd.DataFrame({"open": [1.0], "close": [1.1]}) # dummy
-    mock_df.fetch_timeframe.return_value = mock_frame
+    mock_frame = pd.DataFrame({"quote": [100.4, 100.3, 100.2, 100.1, 100.2, 100.2]})
+    mock_df.fetch_tick_history.return_value = mock_frame
     
     mock_strategy = MagicMock()
     mock_strategy.analyze.return_value = {
-        "direction": "CALL", "stake": 1.0, "duration": 5, "duration_unit": "m"
+        "direction": "CALL",
+        "stake": 1.0,
+        "duration": 3,
+        "duration_unit": "t",
+        "trade_label": "RISE",
+        "sequence_direction": "down",
+        "tick_sequence": [100.4, 100.3, 100.2, 100.1, 100.2, 100.2],
+        "sequence_signature": "sig-win",
     }
     
     mock_te = AsyncMock()
@@ -195,7 +214,7 @@ async def test_process_symbol_win_lifecycle():
     # Mock successful DB write
     with patch("risefallbot.rf_bot._write_trade_to_db_with_retry", return_value=True), \
          patch("risefallbot.rf_bot.logger"):
-        await rf_bot._process_symbol("R_25", mock_strategy, rm, mock_df, mock_te, 1.0, "user1", mock_em, mock_uts)
+        await rf_bot._process_symbol("stpRNG1", mock_strategy, rm, mock_df, mock_te, 1.0, "user1", mock_em, mock_uts)
     
     assert not rm.is_halted()
     # Check that trade was recorded and then removed from active_trades

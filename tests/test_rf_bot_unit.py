@@ -142,9 +142,9 @@ async def test_write_trade_to_db_retry_success():
     
     with patch("risefallbot.rf_bot.rf_config.RF_DB_WRITE_RETRY_DELAY", 0.01):
         success = await rf_bot._write_trade_to_db_with_retry(
-            user_id="user123", contract_id="c1", symbol="R_25", direction="CALL",
+            user_id="user123", contract_id="c1", symbol="stpRNG1", direction="CALL",
             stake_val=1.0, pnl=0.5, status="won", closure_reason="target",
-            duration=1, duration_unit="m", result={}, settlement={},
+            duration=3, duration_unit="t", result={}, settlement={},
             UserTradesService=mock_service
         )
         assert success is True
@@ -158,11 +158,17 @@ async def test_process_symbol_lifecycle_failure():
     mock_strategy = MagicMock()
     
     mock_df = AsyncMock()
-    # Ensure it doesn't return empty df to move past line 641
-    mock_df.fetch_timeframe.return_value = MagicMock(empty=False)
+    mock_df.fetch_tick_history.return_value = MagicMock(empty=False)
     
     mock_strategy.analyze.return_value = {
-        "direction": "CALL", "stake": 1.0, "duration": 5, "duration_unit": "m"
+        "direction": "CALL",
+        "stake": 1.0,
+        "duration": 3,
+        "duration_unit": "t",
+        "trade_label": "RISE",
+        "sequence_direction": "down",
+        "tick_sequence": [100.3, 100.2, 100.1, 100.0],
+        "sequence_signature": "sig-1",
     }
     
     # Trigger one lifecycle broadcast failure, allow all later broadcasts
@@ -176,7 +182,7 @@ async def test_process_symbol_lifecycle_failure():
     mock_te = AsyncMock()
     
     with patch("risefallbot.rf_bot.logger") as mock_logger:
-        await rf_bot._process_symbol("R_25", mock_strategy, rm, mock_df, mock_te, 1.0, "user123", mock_em, mock_uts)
+        await rf_bot._process_symbol("stpRNG1", mock_strategy, rm, mock_df, mock_te, 1.0, "user123", mock_em, mock_uts)
     
     # It should not be halted because "Lifecycle crash" is caught as a transient "lifecycle error"
     # and auto-cleared in the finally block.
@@ -211,22 +217,24 @@ def test_bot_stop_specific_user_does_not_stop_other_users():
 async def test_process_symbol_no_data():
     rm = RiseFallRiskManager()
     mock_df = AsyncMock()
-    mock_df.fetch_timeframe.return_value = None
+    mock_df.fetch_tick_history.return_value = None
     
-    await rf_bot._process_symbol("R_25", MagicMock(), rm, mock_df, AsyncMock(), 1.0, "user123", AsyncMock(), MagicMock())
+    await rf_bot._process_symbol("stpRNG1", MagicMock(), rm, mock_df, AsyncMock(), 1.0, "user123", AsyncMock(), MagicMock())
     assert not rm.is_halted()
 
 @pytest.mark.asyncio
 async def test_process_symbol_no_signal():
     rm = RiseFallRiskManager()
     mock_df = AsyncMock()
-    mock_df.fetch_timeframe.return_value = MagicMock(empty=False)
+    mock_df.fetch_tick_history.return_value = MagicMock(empty=False)
     mock_strategy = MagicMock()
     mock_strategy.analyze.return_value = None
     mock_em = AsyncMock()
     mock_em.broadcast = AsyncMock()
     
-    await rf_bot._process_symbol("R_25", mock_strategy, rm, mock_df, AsyncMock(), 1.0, "user123", mock_em, MagicMock())
+    mock_strategy.get_last_analysis.return_value = {"reason": "Mixed tick sequence", "code": "mixed_tick_sequence", "details": {}}
+
+    await rf_bot._process_symbol("stpRNG1", mock_strategy, rm, mock_df, AsyncMock(), 1.0, "user123", mock_em, MagicMock())
     payloads = [c.args[0] for c in mock_em.broadcast.await_args_list if c.args]
     assert any(
         p.get("type") == "bot_decision"

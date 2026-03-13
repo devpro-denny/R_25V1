@@ -294,6 +294,54 @@ class DataFetcher:
             logger.error(f"❌ TICK_FETCH_EXCEPTION | Symbol: {symbol} | Error: {type(e).__name__}: {e}", exc_info=True)
             return None
     
+    async def fetch_tick_history(self, symbol: str, count: int) -> Optional[pd.DataFrame]:
+        """Fetch recent tick history for a symbol."""
+        try:
+            request = {
+                "ticks_history": symbol,
+                "adjust_start_time": 1,
+                "count": count,
+                "end": "latest",
+                "start": 1,
+                "style": "ticks"
+            }
+
+            response = await self.send_request(request)
+
+            if "error" in response:
+                logger.error(
+                    f"\u274c TICK_HISTORY_FETCH_FAILED | Symbol: {symbol} | Count: {count} | "
+                    f"Reason: {response['error']['message']}"
+                )
+                return None
+
+            history = response.get("history") or {}
+            prices = history.get("prices") or []
+            timestamps = history.get("times") or history.get("timestamps") or []
+
+            if not prices or not timestamps or len(prices) != len(timestamps):
+                logger.error(
+                    f"\u274c TICK_HISTORY_RESPONSE_MISSING | Symbol: {symbol} | "
+                    f"Got keys: {list(response.keys())}"
+                )
+                return None
+
+            df = pd.DataFrame({
+                "timestamp": [int(ts) for ts in timestamps],
+                "quote": [float(price) for price in prices],
+            })
+            df["datetime"] = pd.to_datetime(df["timestamp"], unit="s")
+            logger.debug(f"[OK] Fetched {len(df)} ticks for {symbol}")
+            return df
+
+        except Exception as e:
+            logger.error(
+                f"\u274c TICK_HISTORY_FETCH_EXCEPTION | Symbol: {symbol} | Count: {count} | "
+                f"Error: {type(e).__name__}: {e}",
+                exc_info=True,
+            )
+            return None
+
     async def get_balance(self) -> Optional[float]:
         """Get account balance"""
         try:

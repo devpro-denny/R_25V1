@@ -1,124 +1,125 @@
-"""
-Unit tests for risefallbot.rf_strategy
-Tests triple-confirmation logic, indicator handling, and signal generation.
-"""
-
-import pytest
 import pandas as pd
-import numpy as np
-from unittest.mock import MagicMock, patch
+import pytest
+from unittest.mock import patch
+
 from risefallbot.rf_strategy import RiseFallStrategy
+
 
 @pytest.fixture
 def strategy():
     with patch("risefallbot.rf_strategy.rf_config") as mock_config:
-        # Set default config values
-        mock_config.RF_EMA_FAST = 5
-        mock_config.RF_EMA_SLOW = 13
-        mock_config.RF_RSI_PERIOD = 7
-        mock_config.RF_RSI_OVERSOLD = 30
-        mock_config.RF_RSI_OVERBOUGHT = 70
-        mock_config.RF_STOCH_K_PERIOD = 5
-        mock_config.RF_STOCH_D_PERIOD = 3
-        mock_config.RF_STOCH_OVERSOLD = 20
-        mock_config.RF_STOCH_OVERBOUGHT = 80
-        mock_config.RF_MIN_BARS = 20
+        mock_config.RF_SYMBOLS = ["stpRNG1", "stpRNG2"]
+        mock_config.RF_TICK_SEQUENCE_LENGTH = 3
+        mock_config.RF_CONFIRMATION_TICKS = 2
+        mock_config.RF_TICK_HISTORY_COUNT = 6
+        mock_config.RF_REQUIRE_CONSECUTIVE_DIRECTION = True
+        mock_config.RF_REQUIRE_FRESH_SIGNAL_AFTER_COOLDOWN = True
         mock_config.RF_DEFAULT_STAKE = 10.0
-        mock_config.RF_CONTRACT_DURATION = 5
+        mock_config.RF_CONTRACT_DURATION = 3
         mock_config.RF_DURATION_UNIT = "t"
         yield RiseFallStrategy()
 
-@pytest.fixture
-def sample_df():
-    """Create a sample DF with enough bars."""
-    return pd.DataFrame({
-        "close": np.linspace(100, 110, 30),
-        "high": np.linspace(101, 111, 30),
-        "low": np.linspace(99, 109, 30),
-        "open": np.linspace(100, 110, 30)
-    })
 
-def test_analyze_insufficient_data(strategy):
-    """Test when data is shorter than min_bars."""
-    df = pd.DataFrame({"close": [1, 2, 3]})
-    result = strategy.analyze(data_1m=df, symbol="R_10")
-    assert result is None
+def _ticks(prices):
+    return pd.DataFrame(
+        {
+            "quote": prices,
+            "timestamp": [1700000000 + idx for idx in range(len(prices))],
+            "datetime": pd.date_range("2026-01-01", periods=len(prices), freq="s"),
+        }
+    )
+
+
+def test_analyze_insufficient_tick_history(strategy):
+    assert strategy.analyze(
+        data_ticks=_ticks([100.0, 100.1, 100.2, 100.3, 100.4]),
+        symbol="stpRNG1",
+    ) is None
+    meta = strategy.get_last_analysis("stpRNG1")
+    assert meta["code"] == "insufficient_tick_history"
+
 
 def test_analyze_empty_data(strategy):
-    """Test with empty or None data."""
-    assert strategy.analyze(data_1m=None, symbol="R_10") is None
-    assert strategy.analyze(data_1m=pd.DataFrame(), symbol="R_10") is None
+    assert strategy.analyze(data_ticks=None, symbol="stpRNG1") is None
+    assert strategy.analyze(data_ticks=pd.DataFrame(), symbol="stpRNG1") is None
 
-@patch("risefallbot.rf_strategy.calculate_ema")
-@patch("risefallbot.rf_strategy.calculate_rsi")
-@patch("risefallbot.rf_strategy.calculate_stochastic")
-def test_analyze_call_signal(mock_stoch, mock_rsi, mock_ema, strategy, sample_df):
-    """Test successful CALL signal generation."""
-    # EMA Fast > EMA Slow
-    mock_ema.side_effect = [
-        pd.Series([10.0] * 30), # Fast
-        pd.Series([9.0] * 30)   # Slow
-    ]
-    # RSI < 30 (oversold)
-    mock_rsi.return_value = pd.Series([25.0] * 30)
-    # Stoch < 20 (oversold)
-    mock_stoch.return_value = (pd.Series([15.0] * 30), pd.Series([15.0] * 30))
-    
-    result = strategy.analyze(data_1m=sample_df, symbol="R_10")
-    
-    assert result is not None
-    assert result["direction"] == "CALL"
-    assert result["symbol"] == "R_10"
-    assert result["stake"] == 10.0
-    assert result["ema_fast"] == 10.0
-    assert result["rsi"] == 25.0
 
-@patch("risefallbot.rf_strategy.calculate_ema")
-@patch("risefallbot.rf_strategy.calculate_rsi")
-@patch("risefallbot.rf_strategy.calculate_stochastic")
-def test_analyze_put_signal(mock_stoch, mock_rsi, mock_ema, strategy, sample_df):
-    """Test successful PUT signal generation."""
-    # EMA Fast < EMA Slow
-    mock_ema.side_effect = [
-        pd.Series([9.0] * 30),  # Fast
-        pd.Series([10.0] * 30)  # Slow
-    ]
-    # RSI > 70 (overbought)
-    mock_rsi.return_value = pd.Series([75.0] * 30)
-    # Stoch > 80 (overbought)
-    mock_stoch.return_value = (pd.Series([85.0] * 30), pd.Series([85.0] * 30))
-    
-    result = strategy.analyze(data_1m=sample_df, symbol="R_10")
-    
+def test_analyze_upward_sequence_generates_fall(strategy):
+    result = strategy.analyze(
+        data_ticks=_ticks([100.0, 100.2, 100.4, 100.8, 100.8, 100.7]),
+        symbol="stpRNG1",
+    )
+
     assert result is not None
     assert result["direction"] == "PUT"
-    assert result["rsi"] == 75.0
+    assert result["trade_label"] == "FALL"
+    assert result["sequence_direction"] == "up"
+    assert result["burst_movements"] == [0.2, 0.2, 0.4]
+    assert result["confirmation_movements"] == [0.0, -0.1]
+    assert result["stake"] == 10.0
+    assert result["duration"] == 3
+    assert result["duration_unit"] == "t"
 
-@patch("risefallbot.rf_strategy.calculate_ema")
-@patch("risefallbot.rf_strategy.calculate_rsi")
-@patch("risefallbot.rf_strategy.calculate_stochastic")
-def test_analyze_no_signal(mock_stoch, mock_rsi, mock_ema, strategy, sample_df):
-    """Test case where only some conditions are met."""
-    # Bullish EMA cross but RSI not oversold
-    mock_ema.side_effect = [pd.Series([10.0]*30), pd.Series([9.0]*30)]
-    mock_rsi.return_value = pd.Series([50.0]*30)
-    mock_stoch.return_value = (pd.Series([15.0]*30), pd.Series([15.0]*30))
-    
-    result = strategy.analyze(data_1m=sample_df, symbol="R_10")
-    assert result is None
 
-@patch("risefallbot.rf_strategy.calculate_ema")
-@patch("risefallbot.rf_strategy.calculate_rsi")
-@patch("risefallbot.rf_strategy.calculate_stochastic")
-def test_analyze_nan_indicator(mock_stoch, mock_rsi, mock_ema, strategy, sample_df):
-    """Test handling of NaN indicator values."""
-    mock_ema.side_effect = [pd.Series([np.nan]*30), pd.Series([9.0]*30)]
-    mock_rsi.return_value = pd.Series([25.0]*30)
-    mock_stoch.return_value = (pd.Series([15.0]*30), pd.Series([15.0]*30))
-    
-    assert strategy.analyze(data_1m=sample_df, symbol="R_10") is None
+def test_analyze_downward_sequence_generates_rise(strategy):
+    result = strategy.analyze(
+        data_ticks=_ticks([100.8, 100.6, 100.4, 100.1, 100.2, 100.2]),
+        symbol="stpRNG2",
+    )
+
+    assert result is not None
+    assert result["direction"] == "CALL"
+    assert result["trade_label"] == "RISE"
+    assert result["sequence_direction"] == "down"
+    assert result["confirmation_movements"] == [0.1, 0.0]
+
+
+def test_analyze_mixed_or_flat_sequence_rejected(strategy):
+    assert strategy.analyze(
+        data_ticks=_ticks([100.0, 100.2, 100.1, 100.3, 100.2, 100.1]),
+        symbol="stpRNG1",
+    ) is None
+    assert strategy.get_last_analysis("stpRNG1")["code"] == "mixed_tick_sequence"
+
+    assert strategy.analyze(
+        data_ticks=_ticks([100.0, 100.2, 100.2, 100.4, 100.3, 100.2]),
+        symbol="stpRNG1",
+    ) is None
+    assert strategy.get_last_analysis("stpRNG1")["code"] == "mixed_tick_sequence"
+
+
+def test_confirmation_that_continues_burst_is_rejected(strategy):
+    assert strategy.analyze(
+        data_ticks=_ticks([100.0, 100.2, 100.4, 100.6, 100.8, 101.0]),
+        symbol="stpRNG1",
+    ) is None
+    assert strategy.get_last_analysis("stpRNG1")["code"] == "confirmation_rejected"
+
+    assert strategy.analyze(
+        data_ticks=_ticks([100.8, 100.6, 100.4, 100.2, 100.0, 99.8]),
+        symbol="stpRNG2",
+    ) is None
+    assert strategy.get_last_analysis("stpRNG2")["code"] == "confirmation_rejected"
+
+
+def test_reuses_of_same_sequence_are_rejected_as_not_fresh(strategy):
+    ticks = _ticks([100.0, 100.2, 100.4, 100.8, 100.8, 100.7])
+    first = strategy.analyze(data_ticks=ticks, symbol="stpRNG1")
+    second = strategy.analyze(data_ticks=ticks, symbol="stpRNG1")
+
+    assert first is not None
+    assert second is None
+    assert strategy.get_last_analysis("stpRNG1")["code"] == "signal_not_fresh"
+
+
+def test_symbol_not_allowed_rejected(strategy):
+    assert strategy.analyze(
+        data_ticks=_ticks([100.0, 100.2, 100.4, 100.8, 100.8, 100.7]),
+        symbol="R_25",
+    ) is None
+    assert strategy.get_last_analysis("R_25")["code"] == "symbol_not_allowed"
+
 
 def test_metadata(strategy):
-    """Test strategy metadata methods."""
     assert strategy.get_strategy_name() == "RiseFall"
-    assert strategy.get_required_timeframes() == ["1m"]
+    assert strategy.get_required_timeframes() == ["ticks"]

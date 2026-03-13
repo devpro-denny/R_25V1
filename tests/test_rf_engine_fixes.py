@@ -21,7 +21,7 @@ async def test_ghost_contract_recovery(engine):
     Simulate a buy failure where the contract was actually opened on Deriv.
     The engine should query the portfolio and recover the 'ghost' contract.
     """
-    symbol = "R_100"
+    symbol = "stpRNG1"
     direction = "CALL"
     stake = 1.0
     contract_id = "ghost_999"

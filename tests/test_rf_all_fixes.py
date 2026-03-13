@@ -82,14 +82,14 @@ async def test_01_clean_single_trade_lifecycle(risk_manager, caplog):
     """
     with caplog.at_level(logging.INFO, logger="risefallbot"):
         # Step 1: Acquire lock
-        acquired = await risk_manager.acquire_trade_lock("R_100", "pending")
+        acquired = await risk_manager.acquire_trade_lock("stpRNG1", "pending")
         assert acquired is True
         assert risk_manager.trade_mutex.locked()
 
         # Step 3: Record trade open
         risk_manager.record_trade_open({
             "contract_id": "12345678",
-            "symbol": "R_100",
+            "symbol": "stpRNG1",
             "direction": "CALL",
             "stake": 1.00,
         })
@@ -100,14 +100,14 @@ async def test_01_clean_single_trade_lifecycle(risk_manager, caplog):
             "contract_id": "12345678",
             "profit": 0.50,
             "status": "win",
-            "symbol": "R_100",
+            "symbol": "stpRNG1",
         })
         assert len(risk_manager.active_trades) == 0
         # Mutex still held — DB write not done yet
         assert risk_manager.trade_mutex.locked()
 
         # Step 6: Release lock (after DB write)
-        risk_manager.release_trade_lock(reason="R_100 lifecycle complete")
+        risk_manager.release_trade_lock(reason="stpRNG1 lifecycle complete")
 
     # Assertions
     assert not risk_manager.trade_mutex.locked(), "Mutex should be free after Step 6"
@@ -217,7 +217,7 @@ async def test_04_ghost_mutex_watchdog_recovery(risk_manager, caplog):
 
     with caplog.at_level(logging.WARNING, logger="risefallbot"):
         # Simulate: acquire lock for pending entry
-        acquired = await risk_manager.acquire_trade_lock("R_50", "pending")
+        acquired = await risk_manager.acquire_trade_lock("stpRNG1", "pending")
         assert acquired is True
         assert risk_manager.trade_mutex.locked()
 
@@ -309,9 +309,9 @@ async def test_config_values():
     assert rf_config.RF_MAX_CONCURRENT_TOTAL == 1
     assert rf_config.RF_MAX_CONCURRENT_PER_SYMBOL == 1
     assert rf_config.RF_PENDING_TIMEOUT_SECONDS == 60
-    assert rf_config.RF_SCAN_INTERVAL == 10
+    assert rf_config.RF_SCAN_INTERVAL == 1
     assert rf_config.RF_MAX_CONSECUTIVE_LOSSES == 2  # Block after 2 losses to prevent 3rd
-    assert rf_config.RF_LOSS_COOLDOWN_SECONDS == 21600
+    assert rf_config.RF_LOSS_COOLDOWN_SECONDS == 600
 
     print("\n[CONFIG] [PASS] All config values correct")
 
@@ -323,10 +323,10 @@ async def test_duplicate_trade_rejection_releases_mutex(risk_manager, caplog):
     """
     with caplog.at_level(logging.CRITICAL, logger="risefallbot"):
         # Open a valid trade
-        await risk_manager.acquire_trade_lock("R_10", "first_contract")
+        await risk_manager.acquire_trade_lock("stpRNG1", "first_contract")
         risk_manager.record_trade_open({
             "contract_id": "first_contract",
-            "symbol": "R_10",
+            "symbol": "stpRNG1",
             "direction": "CALL",
             "stake": 1.0,
         })
@@ -335,7 +335,7 @@ async def test_duplicate_trade_rejection_releases_mutex(risk_manager, caplog):
         # Attempt duplicate — should be rejected and mutex released
         risk_manager.record_trade_open({
             "contract_id": "duplicate_contract",
-            "symbol": "R_10",
+            "symbol": "stpRNG1",
             "direction": "CALL",
             "stake": 1.0,
         })
@@ -364,13 +364,13 @@ async def test_post_acquire_rejects_when_active_trade_exists():
     # Manually inject an active trade without going through acquire
     rm.active_trades["existing_123"] = {
         "contract_id": "existing_123",
-        "symbol": "R_50",
+        "symbol": "stpRNG2",
         "direction": "CALL",
         "stake": 1.0,
     }
 
     # Attempt to acquire — post-acquire check should catch the active trade
-    acquired = await rm.acquire_trade_lock("R_100", "new_trade")
+    acquired = await rm.acquire_trade_lock("stpRNG1", "new_trade")
     assert acquired is False
     # Mutex must have been released by the post-acquire check
     assert not rm.trade_mutex.locked()

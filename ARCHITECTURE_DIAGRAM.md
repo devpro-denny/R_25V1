@@ -1,314 +1,195 @@
-# Single Concurrent Trade Enforcement - Architecture Diagram
+# RiseFall Architecture Diagram
 
-## Trade Execution Flow with Lock Enforcement
+This diagram-focused document reflects the current RiseFall implementation in the codebase.
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                     RF_BOT MAIN CYCLE LOOP                          │
-└─────────────────────────────────────────────────────────────────────┘
-                              ↓
-                ┌─────────────────────────────────┐
-                │ CYCLE START                     │
-                │ Check: risk_manager.is_trade_  │
-                │        active()?                │
-                └─────────────────────────────────┘
-                         ↓              ↓
-              YES ─────→ │  ←─── NO
-                         │
-    ┌────────────────────┴─────────────────────┐
-    │                                          │
-    ↓                                          ↓
-┌──────────────────────────┐    ┌──────────────────────────────────┐
-│ TRADE IS LOCKED          │    │ NO ACTIVE TRADE                  │
-│                          │    │ SAFE TO SCAN                     │
-│ 🔒 STATE                 │    │                                  │
-│ ─────────────────────    │    │ ✅ STATE                         │
-│ • Skip symbol scan       │    │ ─────────────────────────────    │
-│ • Wait for settlement    │    │ • For each symbol:               │
-│ • Log: LOCKED            │    │   R_10, R_25, R_50, R_100      │
-│ • Broadcast: LOCKED      │    │                                  │
-│ • Monitor: TP/SL hits    │    │ Double-check: is_trade_active() │
-│                          │    │           ↓                      │
-│ Duration: Until trade    │    │   NO ─→ Continue                │
-│ settles or 10min timeout │    │   YES → Break loop              │
-│                          │    └──────────────────────────────────┘
-│                          │                    ↓
-│                          │    ┌────────────────────────────────┐
-│                          │    │ SYMBOL: R_10                   │
-│                          │    │ Analyze market data            │
-│                          │    │ Check: can_trade(R_10)? ✅     │
-│                          │    │ Check: is_trade_active()? ✅   │
-│                          │    │ Generate signal? ✅            │
-│                          │    │ Execute trade                  │
-│                          │    └────────────────────────────────┘
-│                          │                    ↓
-│                          │    ┌────────────────────────────────┐
-│                          │    │ TRADE OPENED                   │
-│                          │    │ record_trade_open()            │
-│                          │    │ Sets: _trade_lock_active=True  │
-│                          │    │ Broadcast: trade_lock_active   │
-│                          │    │ Log: 🔒 TRADE LOCKED           │
-│                          │    └────────────────────────────────┘
-│                          │                    ↓
-│                          │    *** TRANSITION TO LOCKED STATE ***
-│                          │
-└──────────────────────────────────────────────────────────────→
-                                (LOOP BACK TO CYCLE START)
-                                (Check is_trade_active() = YES)
-                                (Skip symbol scan)
-                                       ↓
-                    ┌─────────────────────────────┐
-                    │ MONITOR TRADE UNTIL CLOSE   │
-                    │ wait_for_result()           │
-                    │                             │
-                    │ Watch contract:             │
-                    │ • bid_price (current)       │
-                    │ • Check TP: +50%            │
-                    │ • Check SL: -40%            │
-                    │ • Check: settled?           │
-                    └─────────────────────────────┘
-                              ↓
-        ┌─────────────────────┴─────────────────────┐
-        │                                           │
-    TP HIT (50%)                            SETTLED/SL HIT
-        ↓                                      or TIMEOUT
-    Sell Early                                    ↓
-        │                          ┌──────────────────────────────┐
-        └─────────────────────────→ TRADE CLOSED                  │
-                                   record_trade_closed()         │
-                                   Sets: _trade_lock_active=False│
-                                   Broadcast: trade_lock_released│
-                                   Log: 🔓 TRADE UNLOCKED         │
-                                   Update: Win/Loss/Stats        │
-                                   ↓
-                                   *** TRANSITION TO UNLOCKED ***
-                                   (Loop back to cycle start)
-                                   (Check is_trade_active() = NO)
-                                   (Resume symbol scanning)
-                                   ↓
-                            Ready for next trade ✅
+It replaces the older box-drawing version and aligns with the current 6-step trade lifecycle enforced by:
+
+- `app/bot/manager.py`
+- `risefallbot/rf_bot.py`
+- `risefallbot/rf_risk_manager.py`
+- `risefallbot/rf_trade_engine.py`
+
+## 1. System Context
+
+```mermaid
+flowchart TD
+    A[Client / API Request] --> B[BotManager]
+    B --> C[risefallbot.rf_bot.run]
+
+    C --> D[DataFetcher]
+    C --> E[RiseFallStrategy]
+    C --> F[RiseFallRiskManager]
+    C --> G[RFTradeEngine]
+    C --> H[Event Manager]
+    C --> I[UserTradesService]
+    C --> J[Telegram / Logging]
+
+    D --> K[Deriv Market Data WS]
+    G --> L[Deriv Trading WS]
+    I --> M[Supabase / DB]
+    H --> N[Frontend / Dashboard]
 ```
 
----
+## 2. Runtime Control Flow
 
-## Lock State Machine
+```mermaid
+flowchart TD
+    A[BotManager.start_bot] --> B[Acquire session lock]
+    B --> C[Create asyncio task]
+    C --> D[rf_bot.run]
+    D --> E[Build runtime objects]
+    E --> F[Connect data and trade sockets]
+    F --> G[Broadcast running status]
+    G --> H[Enter scan loop]
 
-```
-                        ┌─────────────────┐
-                        │   NO TRADE      │ ← Initial State
-                        │   ACTIVE        │
-                        └────────┬────────┘
-                                 │
-                                 │ Signal + Trade Execute
-                                 │ record_trade_open()
-                                 │ _trade_lock_active = True
-                                 ↓
-                        ┌─────────────────┐
-                        │   TRADE         │ ← Other Symbols Blocked
-                        │   LOCKED        │   Monitoring: ON
-                        └────────┬────────┘   TP/SL Active
-                                 │
-                    ┌────────────┴────────────┐
-                    │                        │
-            WON     │                   RUN TIMEOUT
-          (TP HIT)  │                   (10 min)
-                    │                        │
-                    ↓                        ↓
-            ┌──────────────┐      ┌──────────────────┐
-            │ SETTLEMENT   │      │ SETTLEMENT       │
-            │ PROFIT: +50% │      │ PROFIT: UNKNOWN  │
-            │              │      │ (Mark as LOSS)   │
-            └──────┬───────┘      └────────┬─────────┘
-                   │                       │
-            LOST   │                       │
-          (SL HIT) │                       │
-                   │                       │
-                   ↓                       ↓
-            ┌──────────────────────────────────────┐
-            │ record_trade_closed()                │
-            │ _trade_lock_active = False           │
-            │ Update: win/loss stats               │
-            │ Release lock, broadcast unlock       │
-            │ Log: 🔓 TRADE UNLOCKED               │
-            └──────┬───────────────────────────────┘
-                   │
-                   ↓
-            ┌─────────────────┐
-            │   NO TRADE      │ ← Ready for Next
-            │   ACTIVE        │   Return to Scanning
-            │   (AGAIN)       │
-            └─────────────────┘
+    H --> I{System halted?}
+    I -- Yes --> H
+    I -- No --> J{Trade active or mutex held?}
+    J -- Yes --> K[Skip symbol scan]
+    K --> H
+    J -- No --> L[Iterate configured symbols]
+    L --> M[_process_symbol(symbol)]
+    M --> H
 ```
 
----
+## 3. Single-Trade Lifecycle
 
-## Enforcement Checkpoints
+The key rule is simple: only one RiseFall trade lifecycle may be active at a time for a bot instance.
 
-```
-RF_BOT.RUN()
-    ↓
-WHILE LOOP (Cycles)
-    ↓
-    [CHECKPOINT 1: Cycle Start]
-    if risk_manager.is_trade_active()
-        → YES: Skip all symbols, wait
-        → NO: Proceed to symbol loop
-    ↓
-    FOR EACH SYMBOL (R_10, R_25, R_50, R_100)
-        ↓
-        [CHECKPOINT 2: Per-Symbol Entry]
-        if risk_manager.is_trade_active()
-            → YES: Stop loop, break
-            → NO: Continue
-        ↓
-        _PROCESS_SYMBOL()
-            ↓
-            [CHECKPOINT 3: Process Start]
-            if risk_manager.is_trade_active()
-                → YES: Return early, skip this symbol
-                → NO: Continue to signal analysis
-            ↓
-            [CHECKPOINT 4: Risk Gate]
-            can_trade, reason = risk_manager.can_trade(symbol)
-                • Checks: Daily cap reached?
-                • Checks: Loss cooldown active?
-                • Checks: Total concurrent limit? (MAX 1)
-                • Checks: Per-symbol concurrent? (MAX 1)
-                • Checks: Per-symbol cooldown?
-            ↓
-            [CHECKPOINT 5: Signal Analysis]
-            if signal found
-                ↓
-                [CHECKPOINT 6: Trade Execution]
-                Execute trade
-                    ↓
-                    record_trade_open()
-                    ↓
-                    SET: _trade_lock_active = True
-                    SET: _locked_symbol = symbol
-                    SET: _locked_trade_info = {...}
-                    ↓
-                    BROADCAST: trade_lock_active
-                    LOG: 🔒 TRADE LOCKED
-                    ↓
-                    [LOCKED - OTHER SYMBOLS NOW BLOCKED]
-                    ↓
-                [CHECKPOINT 7: Monitor Trade]
-                wait_for_result(contract_id)
-                    ↓ [Loop continues cycling...]
-                    ↓ [Checkpoint 1 finds lock = YES]
-                    ↓ [Skips symbol scan, monitoring continues]
-                    ↓
-                Settlement received
-                    ↓
-                [CHECKPOINT 8: Trade Complete]
-                record_trade_closed()
-                    ↓
-                    SET: _trade_lock_active = False
-                    SET: _locked_symbol = None
-                    SET: _locked_trade_info = {}
-                    ↓
-                    BROADCAST: trade_lock_released
-                    LOG: 🔓 TRADE UNLOCKED
-                    ↓
-                    [UNLOCKED - SYSTEM READY FOR NEXT TRADE]
-                    ↓
-                    [Loop back to Checkpoint 1]
-                    [Checkpoint 1: is_trade_active() = NO]
-                    [Resume symbol scanning]
+```mermaid
+sequenceDiagram
+    participant Loop as rf_bot scan loop
+    participant Risk as RiseFallRiskManager
+    participant Strat as RiseFallStrategy
+    participant Engine as RFTradeEngine
+    participant DB as UserTradesService
+    participant UI as Event Manager
+
+    Loop->>Risk: can_trade(symbol, stake)
+    Risk-->>Loop: allowed / blocked
+    Loop->>Strat: analyze(candles)
+    Strat-->>Loop: signal or reject
+
+    Loop->>Risk: STEP 1 acquire_trade_lock(symbol, "pending", wait_for_lock=False)
+    Risk-->>Loop: mutex acquired
+
+    Loop->>Engine: STEP 2 buy_rise_fall(...)
+    Engine-->>Loop: contract_id, buy result
+
+    Loop->>Risk: STEP 3 record_trade_open(...)
+    Loop->>UI: broadcast trade_lock_active + trade_opened
+
+    Loop->>Engine: STEP 4 wait_for_result(contract_id)
+    Engine-->>Loop: settlement
+    Loop->>Risk: record_trade_closed(...)
+
+    Loop->>DB: STEP 5 write trade with retry
+    DB-->>Loop: persisted
+
+    Loop->>UI: broadcast trade_closed
+    Loop->>Risk: STEP 6 release_trade_lock(...)
+    Loop->>UI: broadcast trade_lock_released
 ```
 
----
+## 4. Risk State Model
 
-## Code Implementation Points
+```mermaid
+stateDiagram-v2
+    [*] --> Idle
 
-### Risk Manager (`rf_risk_manager.py`)
+    Idle --> PreChecked: can_trade + strategy signal passed
+    PreChecked --> Locked: acquire_trade_lock succeeded
+    Locked --> OpenTrade: buy_rise_fall succeeded
+    OpenTrade --> Monitoring: record_trade_open completed
+    Monitoring --> Closing: settlement received
+    Closing --> Persisting: record_trade_closed completed
+    Persisting --> Idle: DB write succeeded and lock released
 
-```python
-class RiseFallRiskManager:
-    def __init__(self):
-        self._trade_lock_active: bool = False
-        self._locked_symbol: str = None
-        self._locked_trade_info: Dict = {}
-    
-    def is_trade_active(self) -> bool:
-        """Checkpoint helper - check if locked"""
-        return self._trade_lock_active or len(self.active_trades) > 0
-    
-    def get_active_trade_info(self) -> Dict:
-        """Get details of locked trade"""
-        return self._locked_trade_info if self._trade_lock_active else {}
-    
-    def record_trade_open(self, trade_info):
-        """LOCK: Called when trade opens"""
-        self._trade_lock_active = True
-        self._locked_symbol = trade_info.get("symbol")
-        self._locked_trade_info = {...}
-        logger.info("🔒 TRADE LOCKED")
-    
-    def record_trade_closed(self, result):
-        """UNLOCK: Called when trade closes"""
-        self._trade_lock_active = False
-        self._locked_symbol = None
-        self._locked_trade_info = {}
-        logger.info("🔓 TRADE UNLOCKED")
+    Locked --> Halted: execution failure
+    OpenTrade --> Halted: lifecycle error
+    Persisting --> Halted: DB write failed after retries
+
+    Halted --> Idle: transient error recovered and lock released
 ```
 
-### Bot Cycle (`rf_bot.py`)
+## 5. Decision Gates Inside `_process_symbol(...)`
 
-```python
-while _running:
-    # CHECKPOINT 1: Cycle Start
-    if risk_manager.is_trade_active():
-        logger.warning("🔒 TRADE LOCKED — Skipping signal scan")
-    else:
-        logger.info("✅ No active trades | Scanning symbols...")
-        
-        for symbol in RF_SYMBOLS:
-            # CHECKPOINT 2: Per-Symbol Entry
-            if risk_manager.is_trade_active():
-                logger.info(f"[{symbol}] Trade opened mid-scan — stopping")
-                break
-            
-            await _process_symbol(...)
+```text
+1. can_trade(symbol, stake)
+   - blocks if halted
+   - blocks if mutex already held
+   - blocks on daily caps / cooldowns / loss limits
+
+2. strategy.analyze(...)
+   - returns a CALL/PUT setup or a structured rejection reason
+
+3. acquire_trade_lock(...)
+   - fast-fail if another symbol already owns the lifecycle
+   - re-checks risk after mutex acquisition
+   - rejects race-window duplicates before execution
+
+4. buy_rise_fall(...)
+   - sends the Deriv contract request
+   - confirms contract_id before tracking
+
+5. record_trade_open(...)
+   - asserts mutex is held
+   - rejects duplicate active trades
+   - marks the trade as tracked
+
+6. wait_for_result(...)
+   - monitors until settlement / expiry / manual close
+
+7. record_trade_closed(...)
+   - updates PnL, streaks, cooldowns, and active trade state
+
+8. write to DB
+   - retries before giving up
+   - lock stays held until persistence succeeds
+
+9. release_trade_lock(...)
+   - only after the lifecycle is complete
 ```
 
-### Symbol Processing (`rf_bot.py`)
+## 6. Important Error Paths
 
-```python
-async def _process_symbol(...):
-    # CHECKPOINT 3: Process Start
-    if risk_manager.is_trade_active():
-        logger.warning(f"[{symbol}] 🔒 LOCKED — other trade active")
-        return
-    
-    # CHECKPOINT 4: Risk Gate
-    can_trade, reason = risk_manager.can_trade(symbol)
-    if not can_trade:
-        return
-    
-    # ... signal analysis ...
-    
-    # CHECKPOINT 6: Trade Execution
-    result = await trade_engine.buy_rise_fall(...)
-    
-    # CHECKPOINT 7: Record & Lock
-    risk_manager.record_trade_open(...)  # ACTIVATES LOCK
-    
-    # CHECKPOINT 8: Monitor & Unlock
-    settlement = await trade_engine.wait_for_result(...)
-    risk_manager.record_trade_closed(...)  # RELEASES LOCK
+```mermaid
+flowchart TD
+    A[Trade lifecycle error] --> B{Error type}
+
+    B -->|Transient execution or lifecycle error| C[release_trade_lock]
+    C --> D[clear_halt]
+    D --> E[Resume next cycle]
+
+    B -->|Critical DB write failure| F[Keep halt active]
+    F --> G[Keep lock held]
+    G --> H[Manual intervention required]
 ```
 
----
+## 7. Practical Mental Model
 
-## Summary
+Think of RiseFall as four layers:
 
-✅ **8 Enforcement Checkpoints** ensure only 1 trade can execute
-✅ **Three mechanisms**: Lock state, is_trade_active() checks, can_trade() limits
-✅ **Automatic lock/unlock** on trade open/close
-✅ **Other symbols blocked** while one trade is locked
-✅ **Full audit trail** with logs and event broadcasts
-✅ **Production-ready** with comprehensive testing
+```text
+Layer 1: Orchestration
+BotManager + rf_bot
 
-The system is foolproof - no concurrent trades possible! 🔒
+Layer 2: Signal generation
+rf_strategy
+
+Layer 3: Safety and lifecycle control
+rf_risk_manager
+
+Layer 4: External I/O
+DataFetcher + RFTradeEngine + DB + events + Telegram
+```
+
+And one operating rule sits above everything:
+
+```text
+No new trade may start unless:
+- strategy approves the setup
+- risk manager allows it
+- the trade mutex is acquired
+- the previous trade lifecycle has been fully closed and persisted
+```

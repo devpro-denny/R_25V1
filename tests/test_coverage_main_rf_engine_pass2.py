@@ -141,28 +141,28 @@ async def test_rf_engine_ghost_and_buy_branches(monkeypatch):
 
     # ghost check direction mismatch and empty portfolio
     rf_mod._last_buy_attempt.clear()
-    rf_mod._last_buy_attempt["R_25"] = {"direction": "PUT", "timestamp": rf_mod.datetime.now()}
-    assert await eng._check_for_ghost_contract("R_25", "CALL") is None
+    rf_mod._last_buy_attempt["stpRNG1"] = {"direction": "PUT", "timestamp": rf_mod.datetime.now()}
+    assert await eng._check_for_ghost_contract("stpRNG1", "CALL") is None
 
-    rf_mod._last_buy_attempt["R_25"] = {"direction": "CALL", "timestamp": rf_mod.datetime.now()}
+    rf_mod._last_buy_attempt["stpRNG1"] = {"direction": "CALL", "timestamp": rf_mod.datetime.now()}
     eng.ensure_connected = AsyncMock(return_value=True)
     eng._send = AsyncMock(return_value={"portfolio": {"contracts": []}})
-    assert await eng._check_for_ghost_contract("R_25", "CALL") is None
+    assert await eng._check_for_ghost_contract("stpRNG1", "CALL") is None
 
     # invalid direction in buy
     eng.ensure_connected = AsyncMock(return_value=True)
-    assert await eng.buy_rise_fall("R_25", "SIDEWAYS", 1.0) is None
+    assert await eng.buy_rise_fall("stpRNG1", "SIDEWAYS", 1.0) is None
 
     # no connection branch in buy
     eng.ensure_connected = AsyncMock(return_value=False)
-    assert await eng.buy_rise_fall("R_25", "CALL", 1.0) is None
+    assert await eng.buy_rise_fall("stpRNG1", "CALL", 1.0) is None
 
     # primary buy success path
     eng.ensure_connected = AsyncMock(return_value=True)
     eng._send = AsyncMock(
         return_value={"buy": {"contract_id": "c1", "buy_price": 1.0, "payout": 1.9}}
     )
-    ok = await eng.buy_rise_fall("R_25", "CALL", 1.0)
+    ok = await eng.buy_rise_fall("stpRNG1", "CALL", 1.0)
     assert ok["contract_id"] == "c1"
     assert ok["ghost"] is False
 
