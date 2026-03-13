@@ -382,7 +382,13 @@ class RFTradeEngine:
             logger.error(f"[RF-Engine] Symbol blocked from trading: {symbol}")
             return None
 
-        allowed_symbols = set(getattr(rf_config, "RF_SYMBOLS", []))
+        allowed_symbols = set(
+            getattr(
+                rf_config,
+                "RF_SUPPORTED_SYMBOLS",
+                getattr(rf_config, "RF_SYMBOLS", []),
+            )
+        )
         if symbol not in allowed_symbols:
             logger.error(f"[RF-Engine] Unsupported symbol: {symbol}")
             return None

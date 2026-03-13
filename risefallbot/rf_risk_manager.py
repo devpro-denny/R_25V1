@@ -271,7 +271,13 @@ class RiseFallRiskManager(BaseRiskManager):
     ) -> Tuple[bool, str]:
         now = datetime.now()
         ref_stake = stake if stake is not None and stake > 0 else rf_config.RF_DEFAULT_STAKE
-        allowed_symbols = set(getattr(rf_config, "RF_SYMBOLS", []))
+        allowed_symbols = set(
+            getattr(
+                rf_config,
+                "RF_SUPPORTED_SYMBOLS",
+                getattr(rf_config, "RF_SYMBOLS", []),
+            )
+        )
         blocked_symbols = set(getattr(rf_config, "RF_BLOCKED_SYMBOLS", set()))
 
         if self._halted:

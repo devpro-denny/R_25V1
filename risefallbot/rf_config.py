@@ -5,7 +5,17 @@ Rise/Fall bot configuration for Step Index tick-sequence reversals.
 import os
 
 # ==================== SYMBOLS ====================
-RF_SYMBOLS = ["R_100S", "R_200S"]
+RF_SYMBOLS = [
+    "stpRNG",
+    "stpRNG2",
+]
+RF_LEGACY_SYMBOL_ALIASES = {
+    "R_100S": "stpRNG",
+    "R_200S": "stpRNG2",
+}
+RF_SUPPORTED_SYMBOLS = tuple(RF_SYMBOLS) + tuple(RF_LEGACY_SYMBOL_ALIASES)
+# Keep the generic alias in sync for modules/tests that read SYMBOLS.
+SYMBOLS = RF_SYMBOLS
 RF_BLOCKED_SYMBOLS = set()
 
 # ==================== STEP INDEX ENTRY MODEL ====================

@@ -61,7 +61,9 @@ class RiseFallStrategy(BaseStrategy):
     """Step Index tick-sequence reversal strategy."""
 
     def __init__(self):
-        self.allowed_symbols = tuple(_cfg_value("RF_SYMBOLS", []))
+        self.allowed_symbols = tuple(
+            _cfg_value("RF_SUPPORTED_SYMBOLS", _cfg_value("RF_SYMBOLS", []))
+        )
         self.sequence_length = _cfg_int("RF_TICK_SEQUENCE_LENGTH", 3)
         self.confirmation_ticks = max(_cfg_int("RF_CONFIRMATION_TICKS", 2), 1)
         self.burst_noise_lookback_moves = max(
