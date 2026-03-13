@@ -50,8 +50,8 @@ RF_MAX_CONCURRENT_TRADES = 1
 RF_COOLDOWN_SECONDS = 0
 RF_GLOBAL_COOLDOWN_SECONDS = 0
 
-# Legacy caps are disabled so the Step Index session rules are the authority.
-RF_MAX_TRADES_PER_DAY = 0
+# Cap Rise/Fall entries to 10 per day.
+RF_MAX_TRADES_PER_DAY = 10
 RF_DAILY_LOSS_LIMIT_MULTIPLIER = 0.0
 
 RF_PENDING_TIMEOUT_SECONDS = 60
